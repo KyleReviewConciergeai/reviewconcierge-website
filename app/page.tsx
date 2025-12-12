@@ -1,6 +1,45 @@
 "use client";
 
+import React, { useState } from "react";
+
 export default function Home() {
+ 
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [units, setUnits] = useState("");
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function handleWaitlistSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setStatus("loading");
+    setErrorMessage("");
+
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, email, units }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Something went wrong. Please try again.");
+      }
+
+      setStatus("success");
+      setName("");
+      setEmail("");
+      setUnits("");
+    } catch (err: any) {
+      setStatus("error");
+      setErrorMessage(err.message || "Something went wrong. Please try again.");
+    }
+  }
+
   return (
     <main className="page">
       <header className="nav">
@@ -12,12 +51,12 @@ export default function Home() {
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
         </nav>
-        <a href="#cta" className="nav-cta">
+        <a href="#waitlist" className="nav-cta">
           Get early access
         </a>
       </header>
 
-      <section className="hero">
+     <section id="waitlist" className="hero">
         <div className="hero-text">
           <h1>
             Turn online reviews into
@@ -30,14 +69,57 @@ export default function Home() {
             reputation and focus on running your business.
           </p>
 
-          <div className="hero-actions" id="cta">
-            <a className="primary-btn" href="#pricing">
-              Join the beta waitlist
-            </a>
-            <p className="hero-note">
-              No spam. We’ll only email when we launch.
-            </p>
-          </div>
+            <div className="hero-actions">
+  <form onSubmit={handleWaitlistSubmit} className="waitlist-form">
+    <div className="waitlist-row">
+      <input
+        type="text"
+        placeholder="Name (optional)"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        className="waitlist-input"
+      />
+      <input
+        type="email"
+        placeholder="Work email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        className="waitlist-input"
+        required
+      />
+      <input
+        type="number"
+        min={1}
+        placeholder="# of units / listings"
+        value={units}
+        onChange={(e) => setUnits(e.target.value)}
+        className="waitlist-input"
+      />
+      <button
+        type="submit"
+        className="primary-btn"
+        disabled={status === "loading"}
+      >
+        {status === "loading" ? "Joining..." : "Join the beta waitlist"}
+      </button>
+    </div>
+
+    {status === "success" && (
+      <p className="hero-note">You’re in! We’ll email you when slots open.</p>
+    )}
+
+    {status === "error" && (
+      <p className="hero-note" style={{ color: "#ffb3b3" }}>
+        {errorMessage}
+      </p>
+    )}
+
+    {status === "idle" && (
+      <p className="hero-note">No spam. Early access invites only.</p>
+    )}
+  </form>
+</div>
+
         </div>
 
         <div className="hero-card">
@@ -125,7 +207,7 @@ export default function Home() {
             <li>Priority feature requests &amp; roadmap input</li>
             <li>Founding-partner pricing locked in for life</li>
           </ul>
-          <a className="primary-btn" href="#cta">
+          <a className="primary-btn" href="#waitlist">
             Join the waitlist
           </a>
           <p className="pricing-note">
@@ -144,6 +226,15 @@ export default function Home() {
       </footer>
 
       <style jsx>{`
+      .hero-text {
+  position: relative;
+  z-index: 2;
+}
+
+.hero-card {
+  position: relative;
+  z-index: 1;
+}
         :global(body) {
           margin: 0;
           font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro",
@@ -215,10 +306,10 @@ export default function Home() {
 
         .hero {
           display: grid;
-          grid-template-columns: minmax(0, 1.7fr) minmax(0, 1.2fr);
-          gap: 40px;
-          align-items: center;
-          margin-bottom: 64px;
+  grid-template-columns: minmax(0, 1.9fr) minmax(360px, 1.1fr);
+  gap: 48px;
+  align-items: center;
+  margin-bottom: 64px;
         }
 
         .hero-text h1 {
@@ -244,19 +335,24 @@ export default function Home() {
           gap: 8px;
         }
 
-        .primary-btn {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 12px 22px;
-          border-radius: 999px;
-          background: linear-gradient(135deg, #2563eb, #7c3aed);
-          color: white;
-          text-decoration: none;
-          font-weight: 500;
-          font-size: 14px;
-          box-shadow: 0 10px 30px rgba(37, 99, 235, 0.35);
-        }
+     .primary-btn {
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 22px;
+  border-radius: 999px;
+
+  white-space: nowrap;
+  min-width: 210px;
+
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: white;
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 14px;
+  box-shadow: 0 10px 30px rgba(37, 99, 235, 0.35);
+}
 
         .primary-btn:hover {
           filter: brightness(1.05);
@@ -394,23 +490,68 @@ export default function Home() {
           margin: 0;
         }
 
-        @media (max-width: 900px) {
-          .hero {
-            grid-template-columns: minmax(0, 1fr);
-          }
+.waitlist-form {
+  width: 100%;
+}
 
-          .hero-card {
-            order: -1;
-          }
+.waitlist-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(200px, 1fr) minmax(180px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
 
-          .grid-3 {
-            grid-template-columns: minmax(0, 1fr);
-          }
+.waitlist-input {
+  height: 44px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.6);
+  color: #f9fafb;
+  font-size: 14px;
+  outline: none;
+}
 
-          .page {
-            padding: 24px 18px 40px;
-          }
-        }
+.waitlist-input::placeholder {
+  color: rgba(203, 213, 225, 0.6);
+}
+
+.waitlist-input:focus {
+  border-color: rgba(96, 165, 250, 0.7);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+}
+
+.primary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hero-card {
+    order: -1;
+  }
+
+  .grid-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .waitlist-row {
+    grid-template-columns: 1fr;
+  }
+
+  .primary-btn {
+    width: 100%;
+  }
+
+  .page {
+    padding: 24px 18px 40px;
+  }
+}
       `}</style>
     </main>
   );
