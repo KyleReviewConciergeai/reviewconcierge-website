@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* =========================
+   BASE THEME
+   ========================= */
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -23,4 +27,50 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* =========================
+   WAITLIST FORM LAYOUT ONLY
+   (visual styling lives in page.tsx)
+   ========================= */
+
+.waitlist-form {
+  width: 100%;
+}
+
+/* Desktop: clean 2-column grid */
+.waitlist-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 12px;
+  align-items: center;
+}
+
+/* Button spans full width on its own row */
+.waitlist-row .primary-btn {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+/* Prevent overflow squeezing */
+.waitlist-row > * {
+  min-width: 0;
+}
+
+/* Inputs should always fill their cell */
+.waitlist-input {
+  width: 100%;
+  height: 44px;
+  box-sizing: border-box;
+}
+
+/* Mobile: single column */
+@media (max-width: 768px) {
+  .waitlist-row {
+    grid-template-columns: 1fr;
+  }
+
+  .primary-btn {
+    width: 100%;
+  }
 }
