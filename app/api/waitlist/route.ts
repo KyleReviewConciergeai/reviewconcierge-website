@@ -9,8 +9,11 @@ const ALLOWED_BUSINESS_TYPES = new Set([
   "Tour Operator",
 ]);
 
+// ============================
 // Bot protection settings
-const MIN_FORM_ELAPSED_MS = 2500; // 2.5s (tweak to 2000–5000 if desired)
+// ============================
+// TEMP for testing: 15000 (15s). For production: 2500–4000.
+const MIN_FORM_ELAPSED_MS = 15000;
 const MAX_FORM_ELAPSED_MS = 1000 * 60 * 60; // 1 hour sanity cap
 
 function cleanString(v: unknown, maxLen = 200) {
@@ -29,7 +32,6 @@ function parseLocationsCount(v: unknown) {
 }
 
 function parseFormElapsedMs(v: unknown) {
-  // Accept number or numeric string
   const n =
     typeof v === "number"
       ? v
@@ -47,16 +49,16 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    // ----------------------------
+    // ============================
     // 1) BOT PROTECTION (server-side)
-    // ----------------------------
+    // ============================
 
-    // Honeypot: support several possible field names (in case your page.tsx uses one)
-    // If ANY of these are non-empty, treat as bot.
+    // Honeypot: block if any hidden field is filled
+    // (supports a few likely field names)
     const honeypot =
       cleanString(body?.hp, 200) ||
       cleanString(body?.honeypot, 200) ||
-      cleanString(body?.companyWebsite, 200) || // you mentioned this appears in payload sometimes
+      cleanString(body?.companyWebsite, 200) ||
       cleanString(body?.website2, 200) ||
       "";
 
@@ -67,10 +69,9 @@ export async function POST(req: Request) {
       );
     }
 
+    // Timing: require elapsed time and enforce minimum
     const formElapsedMs = parseFormElapsedMs(body?.formElapsedMs);
 
-    // If you want to REQUIRE timing, keep this as a hard error.
-    // If you want it optional, you could only enforce when present.
     if (formElapsedMs === null) {
       return NextResponse.json(
         { error: "Please refresh and try again." },
@@ -80,14 +81,14 @@ export async function POST(req: Request) {
 
     if (formElapsedMs < MIN_FORM_ELAPSED_MS) {
       return NextResponse.json(
-        { error: "Please wait a moment and try again." },
+        { error: "Form submitted too quickly." },
         { status: 400 }
       );
     }
 
-    // ----------------------------
-    // 2) NORMAL FIELD PARSING
-    // ----------------------------
+    // ============================
+    // 2) FIELD PARSING
+    // ============================
 
     const name = cleanString(body?.name, 120);
     const email = cleanString(body?.email, 254).toLowerCase();
@@ -99,9 +100,9 @@ export async function POST(req: Request) {
 
     const locationsCount = parseLocationsCount(body?.locationsCount);
 
-    // ----------------------------
+    // ============================
     // 3) REQUIRED VALIDATIONS
-    // ----------------------------
+    // ============================
 
     if (!businessName) {
       return NextResponse.json(
@@ -131,9 +132,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // ----------------------------
+    // ============================
     // 4) BUILD RECORD FOR GOOGLE SHEET
-    // ----------------------------
+    // ============================
 
     const record = {
       name: name || "",
@@ -146,8 +147,6 @@ export async function POST(req: Request) {
       website: website || "",
       source: "landing-page",
       timestamp: new Date().toISOString(),
-
-      // Helpful for debugging / spam analysis
       formElapsedMs,
     };
 
@@ -155,14 +154,17 @@ export async function POST(req: Request) {
 
     if (!webhookUrl) {
       return NextResponse.json(
-        { error: "Missing WAITLIST_WEBHOOK_URL env var (server not configured)." },
+        {
+          error:
+            "Missing WAITLIST_WEBHOOK_URL env var (server not configured).",
+        },
         { status: 500 }
       );
     }
 
-    // ----------------------------
+    // ============================
     // 5) POST TO APPS SCRIPT
-    // ----------------------------
+    // ============================
 
     const upstream = await fetch(webhookUrl, {
       method: "POST",
