@@ -13,7 +13,7 @@ const ALLOWED_BUSINESS_TYPES = new Set([
 // Bot protection settings
 // ============================
 // TEMP for testing: 15000 (15s). For production: 2500–4000.
-const MIN_FORM_ELAPSED_MS = 15000;
+const MIN_FORM_ELAPSED_MS = 3000;
 const MAX_FORM_ELAPSED_MS = 1000 * 60 * 60; // 1 hour sanity cap
 
 function cleanString(v: unknown, maxLen = 200) {
