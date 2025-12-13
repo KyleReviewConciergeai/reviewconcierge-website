@@ -32,6 +32,7 @@ export default function Home() {
           businessName,
           businessType,
           locationsCount,
+          units: locationsCount, // ✅ TEMP compatibility for old backend
           role,
           city,
           website,
