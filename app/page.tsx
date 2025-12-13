@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 
 export default function Home() {
   const [name, setName] = useState("");
@@ -12,6 +12,12 @@ export default function Home() {
   const [city, setCity] = useState("");
   const [website, setWebsite] = useState("");
 
+  // ✅ Honeypot (bots often fill hidden fields; humans won't)
+  const [companyWebsite, setCompanyWebsite] = useState("");
+
+  // ✅ Timing (bots submit instantly; humans take a moment)
+  const formRenderedAtRef = useRef<number>(Date.now());
+
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
     "idle"
   );
@@ -21,6 +27,21 @@ export default function Home() {
     e.preventDefault();
     setStatus("loading");
     setErrorMessage("");
+
+    // ✅ Bot protection: Honeypot
+    if (companyWebsite.trim().length > 0) {
+      setStatus("error");
+      setErrorMessage("Something went wrong. Please try again.");
+      return;
+    }
+
+    // ✅ Bot protection: Timing (minimum 3 seconds on page)
+    const elapsedMs = Date.now() - formRenderedAtRef.current;
+    if (elapsedMs < 3000) {
+      setStatus("error");
+      setErrorMessage("Please wait a moment and try again.");
+      return;
+    }
 
     try {
       const res = await fetch("/api/waitlist", {
@@ -36,6 +57,10 @@ export default function Home() {
           role,
           city,
           website,
+
+          // ✅ Bot-signal fields (harmless if ignored downstream)
+          companyWebsite,
+          formElapsedMs: elapsedMs,
         }),
       });
 
@@ -54,6 +79,10 @@ export default function Home() {
       setRole("");
       setCity("");
       setWebsite("");
+
+      // reset bot fields + timer
+      setCompanyWebsite("");
+      formRenderedAtRef.current = Date.now();
     } catch (err: any) {
       setStatus("error");
       setErrorMessage(err?.message || "Something went wrong. Please try again.");
@@ -95,6 +124,30 @@ export default function Home() {
 
             <div className="hero-actions">
               <form onSubmit={handleWaitlistSubmit} className="waitlist-form">
+                {/* ✅ Honeypot field (hidden from humans) */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "-10000px",
+                    top: "auto",
+                    width: "1px",
+                    height: "1px",
+                    overflow: "hidden",
+                  }}
+                  aria-hidden="true"
+                >
+                  <label htmlFor="companyWebsite">Company Website</label>
+                  <input
+                    id="companyWebsite"
+                    type="text"
+                    name="companyWebsite"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={companyWebsite}
+                    onChange={(e) => setCompanyWebsite(e.target.value)}
+                  />
+                </div>
+
                 <div className="waitlist-row">
                   <input
                     type="text"
@@ -430,9 +483,9 @@ export default function Home() {
           flex-direction: column;
           align-items: flex-start;
           gap: 8px;
+          position: relative;
         }
 
-        /* NOTE: keep primary-btn visuals here */
         .primary-btn {
           height: 44px;
           display: inline-flex;
