@@ -9,26 +9,85 @@ const ALLOWED_BUSINESS_TYPES = new Set([
   "Tour Operator",
 ]);
 
+// Bot protection settings
+const MIN_FORM_ELAPSED_MS = 2500; // 2.5s (tweak to 2000–5000 if desired)
+const MAX_FORM_ELAPSED_MS = 1000 * 60 * 60; // 1 hour sanity cap
+
 function cleanString(v: unknown, maxLen = 200) {
   if (typeof v !== "string") return "";
   return v.trim().slice(0, maxLen);
 }
 
 function parseLocationsCount(v: unknown) {
-  // Frontend sends string; accept string/number and convert safely
-  const raw =
-    typeof v === "number" ? String(v) : typeof v === "string" ? v : "";
+  const raw = typeof v === "number" ? String(v) : typeof v === "string" ? v : "";
   const digitsOnly = raw.replace(/\D/g, "");
   const n = Number(digitsOnly);
   if (!Number.isFinite(n)) return null;
   if (n < 1) return null;
-  if (n > 10000) return null; // sanity cap
+  if (n > 10000) return null;
   return n;
+}
+
+function parseFormElapsedMs(v: unknown) {
+  // Accept number or numeric string
+  const n =
+    typeof v === "number"
+      ? v
+      : typeof v === "string"
+      ? Number(v.replace(/\D/g, ""))
+      : NaN;
+
+  if (!Number.isFinite(n)) return null;
+  if (n < 0) return null;
+  if (n > MAX_FORM_ELAPSED_MS) return null;
+  return Math.floor(n);
 }
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+
+    // ----------------------------
+    // 1) BOT PROTECTION (server-side)
+    // ----------------------------
+
+    // Honeypot: support several possible field names (in case your page.tsx uses one)
+    // If ANY of these are non-empty, treat as bot.
+    const honeypot =
+      cleanString(body?.hp, 200) ||
+      cleanString(body?.honeypot, 200) ||
+      cleanString(body?.companyWebsite, 200) || // you mentioned this appears in payload sometimes
+      cleanString(body?.website2, 200) ||
+      "";
+
+    if (honeypot) {
+      return NextResponse.json(
+        { error: "Spam detected. Please try again." },
+        { status: 400 }
+      );
+    }
+
+    const formElapsedMs = parseFormElapsedMs(body?.formElapsedMs);
+
+    // If you want to REQUIRE timing, keep this as a hard error.
+    // If you want it optional, you could only enforce when present.
+    if (formElapsedMs === null) {
+      return NextResponse.json(
+        { error: "Please refresh and try again." },
+        { status: 400 }
+      );
+    }
+
+    if (formElapsedMs < MIN_FORM_ELAPSED_MS) {
+      return NextResponse.json(
+        { error: "Please wait a moment and try again." },
+        { status: 400 }
+      );
+    }
+
+    // ----------------------------
+    // 2) NORMAL FIELD PARSING
+    // ----------------------------
 
     const name = cleanString(body?.name, 120);
     const email = cleanString(body?.email, 254).toLowerCase();
@@ -40,7 +99,10 @@ export async function POST(req: Request) {
 
     const locationsCount = parseLocationsCount(body?.locationsCount);
 
-    // ---- Required validations ----
+    // ----------------------------
+    // 3) REQUIRED VALIDATIONS
+    // ----------------------------
+
     if (!businessName) {
       return NextResponse.json(
         { error: "Business name is required." },
@@ -69,8 +131,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---- Build the record you want to store ----
-    // Use empty strings (instead of null) to keep Apps Script appendRow simple.
+    // ----------------------------
+    // 4) BUILD RECORD FOR GOOGLE SHEET
+    // ----------------------------
+
     const record = {
       name: name || "",
       email,
@@ -82,13 +146,12 @@ export async function POST(req: Request) {
       website: website || "",
       source: "landing-page",
       timestamp: new Date().toISOString(),
+
+      // Helpful for debugging / spam analysis
+      formElapsedMs,
     };
 
-    // ---- Read webhook URL from env ----
-    // Keep your existing env var name (WAITLIST_WEBHOOK_URL) since you already set it.
     const webhookUrl = process.env.WAITLIST_WEBHOOK_URL;
-
-    console.log("WAITLIST_WEBHOOK_URL exists?", Boolean(webhookUrl));
 
     if (!webhookUrl) {
       return NextResponse.json(
@@ -97,7 +160,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---- Send to Google Apps Script Web App ----
+    // ----------------------------
+    // 5) POST TO APPS SCRIPT
+    // ----------------------------
+
     const upstream = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -113,8 +179,6 @@ export async function POST(req: Request) {
       data = { raw: text };
     }
 
-    console.log("Apps Script status:", upstream.status, "response:", data);
-
     if (!upstream.ok) {
       return NextResponse.json(
         { error: "Apps Script HTTP error", details: data },
@@ -122,8 +186,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // ✅ Require an explicit success confirmation from Apps Script
-    // Your Apps Script should return: { "success": true }
     if (data?.success !== true) {
       return NextResponse.json(
         { error: "Apps Script did not confirm success", details: data },
