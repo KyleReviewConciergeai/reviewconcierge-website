@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+type AppsScriptResponse =
+  | { success: true }
+  | { success: false; error?: string }
+  | Record<string, unknown>;
+
 const ALLOWED_BUSINESS_TYPES = new Set([
   "Winery",
   "Restaurant",
@@ -174,7 +179,7 @@ export async function POST(req: Request) {
     });
 
     const text = await upstream.text();
-    let data: any = {};
+    let data: AppsScriptResponse = {};
     try {
       data = JSON.parse(text);
     } catch {

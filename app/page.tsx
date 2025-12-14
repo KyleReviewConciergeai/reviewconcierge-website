@@ -23,7 +23,7 @@ export default function Home() {
   );
   const [errorMessage, setErrorMessage] = useState("");
 
-  async function handleWaitlistSubmit(e: React.FormEvent<HTMLFormElement>) {
+    async function handleWaitlistSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setStatus("loading");
     setErrorMessage("");
@@ -64,10 +64,14 @@ export default function Home() {
         }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data: unknown = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        throw new Error(data?.error ?? "Something went wrong. Please try again.");
+        const msg =
+          typeof (data as { error?: unknown })?.error === "string"
+            ? (data as { error: string }).error
+            : "Something went wrong. Please try again.";
+        throw new Error(msg);
       }
 
       setStatus("success");
@@ -83,9 +87,14 @@ export default function Home() {
       // reset bot fields + timer
       setCompanyWebsite("");
       formRenderedAtRef.current = Date.now();
-    } catch (err: any) {
+    } catch (err: unknown) {
       setStatus("error");
-      setErrorMessage(err?.message || "Something went wrong. Please try again.");
+
+      if (err instanceof Error) {
+        setErrorMessage(err.message);
+      } else {
+        setErrorMessage("Something went wrong. Please try again.");
+      }
     }
   }
 
