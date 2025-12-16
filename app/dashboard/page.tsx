@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Review = {
   id: string;
@@ -37,29 +37,142 @@ function stars(rating: number | null) {
   return "★★★★★☆☆☆☆☆".slice(5 - r, 10 - r);
 }
 
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<ReviewsApiResponse | null>(null);
+
+  // base loading for initial page load
   const [loading, setLoading] = useState(true);
 
+  // action loading for button clicks (reload / refresh)
+  const [actionLoading, setActionLoading] = useState<"reload" | "google" | null>(
+    null
+  );
+
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+
+  // filters
+  const [ratingFilter, setRatingFilter] = useState<number | "all">("all");
+  const [query, setQuery] = useState("");
+
+  async function loadReviews() {
+    const res = await fetch("/api/reviews", { cache: "no-store" });
+    const json = (await res.json()) as ReviewsApiResponse;
+    return json;
+  }
+
+  async function reloadList() {
+    try {
+      setActionLoading("reload");
+      const json = await loadReviews();
+      setData(json);
+      setLastRefreshedAt(new Date().toISOString());
+    } catch (e: any) {
+      setData({ ok: false, error: e?.message ?? "Failed to load" });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function refreshFromGoogleThenReload() {
+    try {
+      setActionLoading("google");
+
+      // 1) Pull latest reviews from Google and upsert into DB
+      const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
+      const googleJson = await googleRes.json();
+
+      if (!googleRes.ok || !googleJson?.ok) {
+        const msg =
+          googleJson?.error ??
+          googleJson?.googleError ??
+          "Google refresh failed";
+        setData({ ok: false, error: msg });
+        return;
+      }
+
+      // 2) Reload list from DB
+      const json = await loadReviews();
+      setData(json);
+      setLastRefreshedAt(new Date().toISOString());
+    } catch (e: any) {
+      setData({ ok: false, error: e?.message ?? "Failed to refresh" });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   useEffect(() => {
-    async function load() {
+    async function init() {
       try {
         setLoading(true);
-        const res = await fetch("/api/reviews", { cache: "no-store" });
-        const json = (await res.json()) as ReviewsApiResponse;
+        const json = await loadReviews();
         setData(json);
+        setLastRefreshedAt(new Date().toISOString());
       } catch (e: any) {
         setData({ ok: false, error: e?.message ?? "Failed to load" });
       } finally {
         setLoading(false);
       }
     }
-    load();
+    init();
   }, []);
+
+  const reviews = data?.reviews ?? [];
+
+  const filteredReviews = useMemo(() => {
+    const q = query.trim().toLowerCase();
+
+    return reviews.filter((r) => {
+      const matchesRating =
+        ratingFilter === "all"
+          ? true
+          : typeof r.rating === "number" && r.rating === ratingFilter;
+
+      if (!matchesRating) return false;
+
+      if (!q) return true;
+
+      const haystack = [
+        r.author_name ?? "",
+        r.review_text ?? "",
+        r.source ?? "",
+        r.detected_language ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(q);
+    });
+  }, [reviews, ratingFilter, query]);
+
+  const avgRating = useMemo(() => {
+    const rated = reviews.filter((r) => typeof r.rating === "number") as Array<
+      Review & { rating: number }
+    >;
+    if (rated.length === 0) return null;
+    const sum = rated.reduce((acc, r) => acc + r.rating, 0);
+    return sum / rated.length;
+  }, [reviews]);
+
+  const lastReviewDate = useMemo(() => {
+    if (reviews.length === 0) return null;
+    // review_date is when the review happened; created_at is when we saved it
+    // We'll show the newest available between those, for a "freshness" hint.
+    const newest = reviews
+      .map((r) => r.review_date ?? r.created_at)
+      .filter(Boolean)
+      .sort()
+      .pop();
+    return newest ?? null;
+  }, [reviews]);
 
   if (loading) {
     return (
-      <main style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+      <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
         <h1 style={{ fontSize: 24, marginBottom: 12 }}>Dashboard</h1>
         <p style={{ opacity: 0.8 }}>Loading reviews…</p>
       </main>
@@ -68,39 +181,237 @@ export default function DashboardPage() {
 
   if (!data?.ok) {
     return (
-      <main style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+      <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
         <h1 style={{ fontSize: 24, marginBottom: 12 }}>Dashboard</h1>
+
         <p style={{ color: "#ffb3b3" }}>
-          Error loading reviews: {data?.error ?? "Unknown error"}
+          Error: {data?.error ?? "Unknown error"}
         </p>
-        <p style={{ opacity: 0.8 }}>
-          Quick check: open <code>/api/reviews</code> directly and confirm it returns JSON.
+
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <button
+            onClick={reloadList}
+            disabled={actionLoading !== null}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15,23,42,0.7)",
+              cursor: "pointer",
+            }}
+          >
+            {actionLoading === "reload" ? "Reloading…" : "Reload list"}
+          </button>
+
+          <button
+            onClick={refreshFromGoogleThenReload}
+            disabled={actionLoading !== null}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15,23,42,0.7)",
+              cursor: "pointer",
+            }}
+          >
+            {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+          </button>
+        </div>
+
+        <p style={{ opacity: 0.8, marginTop: 12 }}>
+          Quick check: open <code>/api/reviews</code> directly and confirm it
+          returns JSON.
         </p>
       </main>
     );
   }
 
-  const reviews = data.reviews ?? [];
-
   return (
-    <main style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
-
-      <div style={{ opacity: 0.8, marginBottom: 18 }}>
+    <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 14 }}>
         <div>
-          <strong>Business:</strong>{" "}
-          {data.business?.business_name ?? data.business?.id ?? "Unknown"}
+          <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
+          <div style={{ opacity: 0.8 }}>
+            <div>
+              <strong>Business:</strong>{" "}
+              {data.business?.business_name ?? data.business?.id ?? "Unknown"}
+            </div>
+          </div>
         </div>
-        <div>
-          <strong>Reviews loaded:</strong> {data.count ?? reviews.length}
+
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <button
+            onClick={reloadList}
+            disabled={actionLoading !== null}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15,23,42,0.7)",
+              cursor: "pointer",
+              minWidth: 120,
+            }}
+          >
+            {actionLoading === "reload" ? "Reloading…" : "Reload list"}
+          </button>
+
+          <button
+            onClick={refreshFromGoogleThenReload}
+            disabled={actionLoading !== null}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15,23,42,0.7)",
+              cursor: "pointer",
+              minWidth: 170,
+            }}
+            title="Fetch latest from Google and save to Supabase, then reload"
+          >
+            {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+          </button>
         </div>
       </div>
 
-      {reviews.length === 0 ? (
-        <p style={{ opacity: 0.85 }}>No reviews yet.</p>
+      {/* summary cards */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 12,
+          marginTop: 16,
+          marginBottom: 16,
+        }}
+      >
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 14,
+            padding: 14,
+            background: "rgba(15,23,42,0.6)",
+          }}
+        >
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
+          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+            {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
+            <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
+              {avgRating === null ? "" : stars(Math.round(avgRating))}
+            </span>
+          </div>
+        </div>
+
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 14,
+            padding: 14,
+            background: "rgba(15,23,42,0.6)",
+          }}
+        >
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
+          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+            {data.count ?? reviews.length}
+            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
+              showing {filteredReviews.length}
+            </span>
+          </div>
+        </div>
+
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 14,
+            padding: 14,
+            background: "rgba(15,23,42,0.6)",
+          }}
+        >
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8 }}>
+            {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
+          </div>
+          <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
+            Latest review: {lastReviewDate ? formatDate(lastReviewDate) : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* filters */}
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          flexWrap: "wrap",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ opacity: 0.8, fontSize: 13 }}>Rating</span>
+          <select
+            value={ratingFilter}
+            onChange={(e) =>
+              setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+            }
+            style={{
+              padding: "10px 10px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15,23,42,0.7)",
+              color: "inherit",
+              outline: "none",
+            }}
+          >
+            <option value="all">All</option>
+            <option value="5">5</option>
+            <option value="4">4</option>
+            <option value="3">3</option>
+            <option value="2">2</option>
+            <option value="1">1</option>
+          </select>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+          <span style={{ opacity: 0.8, fontSize: 13 }}>Search</span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="author, text, language…"
+            style={{
+              width: "100%",
+              minWidth: 240,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15,23,42,0.7)",
+              color: "inherit",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        <button
+          onClick={() => {
+            setRatingFilter("all");
+            setQuery("");
+          }}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.7)",
+            cursor: "pointer",
+          }}
+        >
+          Clear
+        </button>
+      </div>
+
+      {/* list */}
+      {filteredReviews.length === 0 ? (
+        <p style={{ opacity: 0.85 }}>No reviews match your filters.</p>
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
-          {reviews.map((r) => (
+          {filteredReviews.map((r) => (
             <div
               key={r.id}
               style={{
