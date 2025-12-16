@@ -13,9 +13,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  // ✅ FIX: tells Next how to resolve absolute URLs for OG/Twitter
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://reviewconcierge.ai"
+  ),
+
   title: "Review Concierge AI",
   description:
     "AI-powered review monitoring, response drafting, and reputation management for hospitality operators.",
+
   openGraph: {
     title: "Review Concierge AI",
     description:
@@ -24,7 +30,7 @@ export const metadata: Metadata = {
     siteName: "Review Concierge AI",
     images: [
       {
-        url: "/og-image.png", // 👈 EXACT file name you added to /public
+        url: "/og-image.png", // resolves correctly now
         width: 1200,
         height: 630,
         alt: "Review Concierge AI",
@@ -33,6 +39,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     type: "website",
   },
+
   twitter: {
     card: "summary_large_image",
     title: "Review Concierge AI",
