@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabaseServer";
 
-export async function GET() {
+export async function GET(req: Request) {
+      const limitRaw = Number(
+      new URL(req.url).searchParams.get("limit") ?? "50"
+    );
+
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(limitRaw, 1), 200)
+      : 50;
+
   try {
     const supabase = supabaseServer();
 
@@ -27,7 +35,7 @@ export async function GET() {
       )
       .eq("business_id", biz.id)
       .order("review_date", { ascending: false })
-      .limit(50);
+      .limit(limit);
 
     if (revErr) {
       return NextResponse.json(
