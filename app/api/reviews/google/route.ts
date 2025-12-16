@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseServer";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 type GooglePlaceDetailsResponse = {
   status: string;
@@ -18,8 +18,9 @@ type GooglePlaceDetailsResponse = {
 
 export async function GET() {
   try {
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    const supabase = supabaseServer(); // ✅ THIS is the key fix
 
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
         { ok: false, error: "Missing GOOGLE_PLACES_API_KEY" },
@@ -27,7 +28,7 @@ export async function GET() {
       );
     }
 
-    // 1) Grab the most recent business row (your “Googleplex (Test)” one)
+    // 1) Grab the most recent business row
     const { data: biz, error: bizErr } = await supabase
       .from("businesses")
       .select("id, google_place_id")
@@ -62,7 +63,11 @@ export async function GET() {
 
     if (data.status !== "OK") {
       return NextResponse.json(
-        { ok: false, googleStatus: data.status, googleError: data.error_message },
+        {
+          ok: false,
+          googleStatus: data.status,
+          googleError: data.error_message,
+        },
         { status: 500 }
       );
     }
@@ -78,7 +83,7 @@ export async function GET() {
       });
     }
 
-    // 3) Map into YOUR Supabase schema (exact column names you provided)
+    // 3) Map into your Supabase schema
     const rows = reviews.map((r) => {
       const fallbackId = `${r.author_name ?? "unknown"}-${r.time ?? ""}-${r.rating ?? ""}-${r.text ?? ""}`;
 
@@ -91,21 +96,12 @@ export async function GET() {
         author_url: r.author_url ?? null,
         rating: typeof r.rating === "number" ? r.rating : null,
         review_text: r.text ?? null,
-
-        // ✅ your column is review_date (timestamptz)
         review_date: r.time ? new Date(r.time * 1000).toISOString() : null,
-
-        // ✅ your column is detected_language
         detected_language: r.language ?? null,
-
-        // ✅ your column is raw (jsonb)
         raw: r,
       };
     });
 
-    // IMPORTANT:
-    // You said you created a unique index on (source, google_review_id)
-    // so onConflict MUST match both columns.
     const { data: saved, error: saveErr } = await supabase
       .from("reviews")
       .upsert(rows, { onConflict: "source,google_review_id" })
@@ -115,7 +111,10 @@ export async function GET() {
       .limit(10);
 
     if (saveErr) {
-      return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: saveErr.message },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
