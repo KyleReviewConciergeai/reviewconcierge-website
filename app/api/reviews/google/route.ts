@@ -16,9 +16,19 @@ type GooglePlaceDetailsResponse = {
   };
 };
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const supabase = supabaseServer(); // ✅ THIS is the key fix
+    const { searchParams } = new URL(req.url);
+    const google_place_id = searchParams.get("google_place_id")?.trim();
+
+    if (!google_place_id) {
+      return NextResponse.json(
+        { ok: false, error: "google_place_id is required" },
+        { status: 400 }
+      );
+    }
+
+    const supabase = supabaseServer();
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
@@ -28,23 +38,31 @@ export async function GET() {
       );
     }
 
-    // 1) Grab the most recent business row
+    // 1) Find the business row that matches this google_place_id
+    // (If duplicates exist, we take the most recently created.)
     const { data: biz, error: bizErr } = await supabase
       .from("businesses")
       .select("id, google_place_id")
+      .eq("google_place_id", google_place_id)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (bizErr || !biz?.id || !biz?.google_place_id) {
+    if (bizErr) {
+      return NextResponse.json(
+        { ok: false, error: bizErr.message },
+        { status: 500 }
+      );
+    }
+
+    if (!biz?.id || !biz?.google_place_id) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            bizErr?.message ??
-            "No business found or missing google_place_id in businesses table",
+            "No matching business found for google_place_id. Create the business first via /api/businesses.",
         },
-        { status: 500 }
+        { status: 404 }
       );
     }
 
@@ -78,13 +96,15 @@ export async function GET() {
       return NextResponse.json({
         ok: true,
         fetched: 0,
-        saved: 0,
+        savedPreview: [],
         note: "No reviews returned by Google for this place",
       });
     }
 
     // 3) Map into your Supabase schema
     const rows = reviews.map((r) => {
+      // Google does not provide a stable review ID in Place Details API.
+      // We generate a deterministic fallback key.
       const fallbackId = `${r.author_name ?? "unknown"}-${r.time ?? ""}-${r.rating ?? ""}-${r.text ?? ""}`;
 
       return {
