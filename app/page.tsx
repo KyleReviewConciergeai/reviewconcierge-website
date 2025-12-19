@@ -7,6 +7,7 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [businessName, setBusinessName] = useState("");
   const [businessType, setBusinessType] = useState("");
+  const [businessTypeOther, setBusinessTypeOther] = useState("");
   const [locationsCount, setLocationsCount] = useState("");
   const [role, setRole] = useState("");
   const [city, setCity] = useState("");
@@ -52,6 +53,7 @@ export default function Home() {
           email,
           businessName,
           businessType,
+          businessTypeOther: businessType === "Other" ? businessTypeOther.trim() : "",
           locationsCount,
           units: locationsCount, // ✅ TEMP compatibility for old backend
           role,
@@ -79,6 +81,7 @@ export default function Home() {
       setEmail("");
       setBusinessName("");
       setBusinessType("");
+      setBusinessTypeOther("");
       setLocationsCount("");
       setRole("");
       setCity("");
@@ -180,7 +183,18 @@ export default function Home() {
                     <option value="Cafe">Cafe</option>
                     <option value="Nightclub">Nightclub</option>
                     <option value="Tour Operator">Tour Operator</option>
+                    <option value="Other">Other</option>
                   </select>
+                  {businessType === "Other" && (
+  <input
+    type="text"
+    placeholder="What type of business?"
+    value={businessTypeOther}
+    onChange={(e) => setBusinessTypeOther(e.target.value)}
+    className="waitlist-input"
+    required
+  />
+)}
 
                   <input
                     type="email"
