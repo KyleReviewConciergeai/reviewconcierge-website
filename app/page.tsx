@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 export default function Home() {
   const [name, setName] = useState("");
@@ -24,7 +24,15 @@ export default function Home() {
   );
   const [errorMessage, setErrorMessage] = useState("");
 
-    async function handleWaitlistSubmit(e: React.FormEvent<HTMLFormElement>) {
+  const isOther = businessType === "Other";
+
+  // ✅ If user switches away from "Other", clear the "Other" textbox
+  useEffect(() => {
+    if (!isOther && businessTypeOther !== "") setBusinessTypeOther("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessType]);
+
+  async function handleWaitlistSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setStatus("loading");
     setErrorMessage("");
@@ -44,6 +52,13 @@ export default function Home() {
       return;
     }
 
+    // ✅ Frontend validation: if "Other" is selected, require text
+    if (isOther && businessTypeOther.trim().length === 0) {
+      setStatus("error");
+      setErrorMessage("Please specify your business type (Other).");
+      return;
+    }
+
     try {
       const res = await fetch("/api/waitlist", {
         method: "POST",
@@ -53,14 +68,14 @@ export default function Home() {
           email,
           businessName,
           businessType,
-          businessTypeOther: businessType === "Other" ? businessTypeOther.trim() : "",
+          businessTypeOther: isOther ? businessTypeOther.trim() : "",
           locationsCount,
           units: locationsCount, // ✅ TEMP compatibility for old backend
           role,
           city,
           website,
 
-          // ✅ Bot-signal fields (harmless if ignored downstream)
+          // ✅ Bot-signal fields
           companyWebsite,
           formElapsedMs: elapsedMs,
         }),
@@ -92,12 +107,8 @@ export default function Home() {
       formRenderedAtRef.current = Date.now();
     } catch (err: unknown) {
       setStatus("error");
-
-      if (err instanceof Error) {
-        setErrorMessage(err.message);
-      } else {
-        setErrorMessage("Something went wrong. Please try again.");
-      }
+      if (err instanceof Error) setErrorMessage(err.message);
+      else setErrorMessage("Something went wrong. Please try again.");
     }
   }
 
@@ -185,16 +196,17 @@ export default function Home() {
                     <option value="Tour Operator">Tour Operator</option>
                     <option value="Other">Other</option>
                   </select>
-                  {businessType === "Other" && (
-  <input
-    type="text"
-    placeholder="What type of business?"
-    value={businessTypeOther}
-    onChange={(e) => setBusinessTypeOther(e.target.value)}
-    className="waitlist-input"
-    required
-  />
-)}
+
+                  {isOther && (
+                    <input
+                      type="text"
+                      placeholder="Business type (Other) *"
+                      value={businessTypeOther}
+                      onChange={(e) => setBusinessTypeOther(e.target.value)}
+                      className="waitlist-input"
+                      required
+                    />
+                  )}
 
                   <input
                     type="email"
@@ -223,7 +235,9 @@ export default function Home() {
                     className="primary-btn"
                     disabled={status === "loading"}
                   >
-                    {status === "loading" ? "Joining..." : "Join the beta waitlist"}
+                    {status === "loading"
+                      ? "Joining..."
+                      : "Join the beta waitlist"}
                   </button>
                 </div>
 
@@ -266,7 +280,9 @@ export default function Home() {
                 </details>
 
                 {status === "success" && (
-                  <p className="hero-note">You’re in! We’ll email you when slots open.</p>
+                  <p className="hero-note">
+                    You’re in! We’ll email you when slots open.
+                  </p>
                 )}
 
                 {status === "error" && (
@@ -509,6 +525,33 @@ export default function Home() {
           position: relative;
         }
 
+        .waitlist-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          align-items: center;
+        }
+
+        .waitlist-input {
+          height: 44px;
+          padding: 0 14px;
+          border-radius: 12px;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          background: rgba(2, 6, 23, 0.35);
+          color: #f9fafb;
+          outline: none;
+          min-width: 160px;
+        }
+
+        .waitlist-input::placeholder {
+          color: rgba(209, 213, 219, 0.55);
+        }
+
+        .waitlist-input:focus {
+          border-color: rgba(96, 165, 250, 0.9);
+          box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+        }
+
         .primary-btn {
           height: 44px;
           display: inline-flex;
@@ -540,24 +583,24 @@ export default function Home() {
         .hero-note {
           font-size: 12px;
           color: #9ca3af;
+          margin: 8px 0 0;
         }
 
-        .hero-card h2 {
-          margin-top: 0;
-          margin-bottom: 6px;
-          font-size: 18px;
+        .waitlist-more {
+          margin-top: 12px;
         }
 
-        .hero-card p {
-          margin-top: 0;
-          margin-bottom: 10px;
-          color: #d1d5db;
+        .waitlist-more summary {
+          cursor: pointer;
+          color: #cbd5e1;
+          font-size: 13px;
         }
 
-        .hero-card ul {
-          padding-left: 18px;
-          margin: 0;
-          color: #9ca3af;
+        .waitlist-more-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 10px;
         }
 
         .section {
@@ -665,6 +708,10 @@ export default function Home() {
           }
 
           .grid-3 {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .waitlist-more-grid {
             grid-template-columns: minmax(0, 1fr);
           }
 

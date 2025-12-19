@@ -12,12 +12,12 @@ const ALLOWED_BUSINESS_TYPES = new Set([
   "Cafe",
   "Nightclub",
   "Tour Operator",
+  "Other",
 ]);
 
 // ============================
 // Bot protection settings
 // ============================
-// TEMP for testing: 15000 (15s). For production: 2500–4000.
 const MIN_FORM_ELAPSED_MS = 3000;
 const MAX_FORM_ELAPSED_MS = 1000 * 60 * 60; // 1 hour sanity cap
 
@@ -27,7 +27,8 @@ function cleanString(v: unknown, maxLen = 200) {
 }
 
 function parseLocationsCount(v: unknown) {
-  const raw = typeof v === "number" ? String(v) : typeof v === "string" ? v : "";
+  const raw =
+    typeof v === "number" ? String(v) : typeof v === "string" ? v : "";
   const digitsOnly = raw.replace(/\D/g, "");
   const n = Number(digitsOnly);
   if (!Number.isFinite(n)) return null;
@@ -57,9 +58,6 @@ export async function POST(req: Request) {
     // ============================
     // 1) BOT PROTECTION (server-side)
     // ============================
-
-    // Honeypot: block if any hidden field is filled
-    // (supports a few likely field names)
     const honeypot =
       cleanString(body?.hp, 200) ||
       cleanString(body?.honeypot, 200) ||
@@ -74,7 +72,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Timing: require elapsed time and enforce minimum
     const formElapsedMs = parseFormElapsedMs(body?.formElapsedMs);
 
     if (formElapsedMs === null) {
@@ -94,11 +91,13 @@ export async function POST(req: Request) {
     // ============================
     // 2) FIELD PARSING
     // ============================
-
     const name = cleanString(body?.name, 120);
     const email = cleanString(body?.email, 254).toLowerCase();
     const businessName = cleanString(body?.businessName, 200);
+
     const businessType = cleanString(body?.businessType, 60);
+    const businessTypeOther = cleanString(body?.businessTypeOther, 80);
+
     const role = cleanString(body?.role, 120);
     const city = cleanString(body?.city, 120);
     const website = cleanString(body?.website, 300);
@@ -108,7 +107,6 @@ export async function POST(req: Request) {
     // ============================
     // 3) REQUIRED VALIDATIONS
     // ============================
-
     if (!businessName) {
       return NextResponse.json(
         { error: "Business name is required." },
@@ -130,6 +128,14 @@ export async function POST(req: Request) {
       );
     }
 
+    // If Other, require text
+    if (businessType === "Other" && !businessTypeOther) {
+      return NextResponse.json(
+        { error: "Please specify your business type (Other)." },
+        { status: 400 }
+      );
+    }
+
     if (locationsCount === null) {
       return NextResponse.json(
         { error: "Please enter a valid # of locations (1+)." },
@@ -138,14 +144,23 @@ export async function POST(req: Request) {
     }
 
     // ============================
-    // 4) BUILD RECORD FOR GOOGLE SHEET
+    // 4) NORMALIZE BUSINESS TYPE FOR SHEET
     // ============================
+    // Option A (recommended): store a single readable value
+    const normalizedBusinessType =
+      businessType === "Other"
+        ? `Other: ${businessTypeOther}`
+        : businessType;
 
+    // ============================
+    // 5) BUILD RECORD FOR GOOGLE SHEET
+    // ============================
     const record = {
       name: name || "",
       email,
       businessName,
-      businessType,
+      businessType: normalizedBusinessType, // ✅ now includes the other value
+      businessTypeOther: businessType === "Other" ? businessTypeOther : "", // ✅ also keep separate (optional)
       locationsCount, // number
       role: role || "",
       city: city || "",
@@ -168,9 +183,8 @@ export async function POST(req: Request) {
     }
 
     // ============================
-    // 5) POST TO APPS SCRIPT
+    // 6) POST TO APPS SCRIPT
     // ============================
-
     const upstream = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -193,7 +207,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (data?.success !== true) {
+    if ((data as any)?.success !== true) {
       return NextResponse.json(
         { error: "Apps Script did not confirm success", details: data },
         { status: 502 }
