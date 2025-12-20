@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import DraftReplyPanel from "./DraftReplyPanel";
 
 type Review = {
   id: string;
@@ -334,6 +335,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+<DraftReplyPanel />
 
       {/* filters */}
       <div
