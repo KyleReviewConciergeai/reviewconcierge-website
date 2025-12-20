@@ -9,7 +9,7 @@ type DraftReplyResponse = {
 };
 
 export default function DraftReplyPanel() {
-  const [businessName, setBusinessName] = useState("Andeluna");
+  const [businessName, setBusinessName] = useState("Andeluna Winery Lodge");
   const [rating, setRating] = useState<number>(5);
   const [language, setLanguage] = useState<string>("es");
   const [reviewText, setReviewText] = useState(
@@ -17,19 +17,22 @@ export default function DraftReplyPanel() {
   );
 
   const [draft, setDraft] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">(
-    "idle"
-  );
+  const [isGenerating, setIsGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [copied, setCopied] = useState(false);
 
   const canSubmit = useMemo(() => {
     return businessName.trim().length > 0 && reviewText.trim().length > 10;
   }, [businessName, reviewText]);
 
+  const canCopy = Boolean(draft.trim()) && !isGenerating;
+
   async function onGenerate() {
-    setStatus("loading");
+    if (!canSubmit || isGenerating) return;
+
+    setIsGenerating(true);
     setErrorMessage("");
-    setDraft("");
+    setCopied(false);
 
     try {
       const res = await fetch("/api/reviews/draft-reply", {
@@ -47,32 +50,38 @@ export default function DraftReplyPanel() {
 
       // Handle HTTP errors OR "ok: false" responses
       if (!res.ok || data.ok === false) {
-        const msg = typeof data.error === "string" && data.error.trim()
-          ? data.error
-          : "Failed to generate draft.";
-        setStatus("error");
+        const msg =
+          typeof data.error === "string" && data.error.trim()
+            ? data.error
+            : "We couldn’t generate a reply just now. Please try again.";
         setErrorMessage(msg);
         return;
       }
 
       // Ensure we got a reply string
       if (typeof data.reply !== "string" || !data.reply.trim()) {
-        setStatus("error");
-        setErrorMessage("No draft returned from server.");
+        setErrorMessage("No reply was returned. Please try again.");
         return;
       }
 
-      setDraft(data.reply);
-      setStatus("success");
+      setDraft(data.reply.trim());
     } catch (err: unknown) {
-      setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "Something went wrong.");
+      setErrorMessage(err instanceof Error ? err.message : "We couldn’t generate a reply just now.");
+    } finally {
+      setIsGenerating(false);
     }
   }
 
   async function onCopy() {
-    if (!draft) return;
-    await navigator.clipboard.writeText(draft);
+    if (!canCopy) return;
+
+    try {
+      await navigator.clipboard.writeText(draft);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setErrorMessage("Couldn’t copy to clipboard. Please copy manually.");
+    }
   }
 
   return (
@@ -149,44 +158,51 @@ export default function DraftReplyPanel() {
       <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "center" }}>
         <button
           onClick={onGenerate}
-          disabled={!canSubmit || status === "loading"}
+          disabled={!canSubmit || isGenerating}
           style={{
             padding: "10px 14px",
             borderRadius: 12,
             border: "1px solid rgba(255,255,255,0.12)",
-            background: status === "loading" ? "rgba(255,255,255,0.06)" : "rgba(99,102,241,0.35)",
-            cursor: !canSubmit || status === "loading" ? "not-allowed" : "pointer",
+            background: isGenerating ? "rgba(255,255,255,0.06)" : "rgba(99,102,241,0.35)",
+            cursor: !canSubmit || isGenerating ? "not-allowed" : "pointer",
             color: "white",
             fontWeight: 600,
+            opacity: !canSubmit || isGenerating ? 0.7 : 1,
           }}
         >
-          {status === "loading" ? "Generating..." : "Generate draft"}
+          {isGenerating ? "Generating…" : "Generate reply"}
         </button>
 
-        {draft && (
-          <button
-            onClick={onCopy}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(255,255,255,0.06)",
-              cursor: "pointer",
-              color: "white",
-              fontWeight: 600,
-            }}
-          >
-            Copy
-          </button>
+        <button
+          onClick={onCopy}
+          disabled={!canCopy}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.12)",
+            background: "rgba(255,255,255,0.06)",
+            cursor: !canCopy ? "not-allowed" : "pointer",
+            color: "white",
+            fontWeight: 600,
+            opacity: !canCopy ? 0.6 : 1,
+          }}
+        >
+          {copied ? "Copied!" : "Copy"}
+        </button>
+
+        {isGenerating && (
+          <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 14 }}>
+            Drafting a thoughtful reply…
+          </span>
         )}
 
-        {status === "error" && (
+        {!isGenerating && errorMessage && (
           <span style={{ color: "#ffb3b3", fontSize: 14 }}>{errorMessage}</span>
         )}
 
-        {status === "success" && draft && (
+        {!isGenerating && !errorMessage && draft && (
           <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 14 }}>
-            Draft ready ✅
+            Reply ready ✅
           </span>
         )}
       </div>
@@ -203,6 +219,7 @@ export default function DraftReplyPanel() {
             resize: "vertical",
             lineHeight: 1.4,
             opacity: draft ? 1 : 0.8,
+            whiteSpace: "pre-wrap",
           }}
         />
       </div>
