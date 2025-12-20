@@ -91,6 +91,7 @@ Style guidelines:
 • Write in the same language as the review
 • Keep it human, elegant, and calm
 • Avoid generic or overly formal openings (e.g., “Dear Guest,” or “Thank you for sharing”). Vary the opening naturally.
+• Express gratitude once per reply; avoid repeating multiple “thank you” phrases.
 `.trim();
 }
 
