@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import DraftReplyPanel from "./DraftReplyPanel";
-import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Review = {
@@ -45,19 +44,15 @@ function clamp(n: number, min: number, max: number) {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
+  const sb = supabaseBrowser();
 
   const [data, setData] = useState<ReviewsApiResponse | null>(null);
-
-  // base loading for initial page load
   const [loading, setLoading] = useState(true);
-
-  // action loading for button clicks (reload / refresh)
-  const [actionLoading, setActionLoading] = useState<"reload" | "google" | "logout" | null>(
-    null
-  );
-
+  const [actionLoading, setActionLoading] = useState<"reload" | "google" | "logout" | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+
+  // NEW: signed-in user email for header
+  const [userEmail, setUserEmail] = useState<string>("");
 
   // filters
   const [ratingFilter, setRatingFilter] = useState<number | "all">("all");
@@ -86,20 +81,15 @@ export default function DashboardPage() {
     try {
       setActionLoading("google");
 
-      // 1) Pull latest reviews from Google and upsert into DB
       const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
       const googleJson = await googleRes.json();
 
       if (!googleRes.ok || !googleJson?.ok) {
-        const msg =
-          googleJson?.error ??
-          googleJson?.googleError ??
-          "Google refresh failed";
+        const msg = googleJson?.error ?? googleJson?.googleError ?? "Google refresh failed";
         setData({ ok: false, error: msg });
         return;
       }
 
-      // 2) Reload list from DB
       const json = await loadReviews();
       setData(json);
       setLastRefreshedAt(new Date().toISOString());
@@ -110,12 +100,12 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleLogout() {
+  async function onLogout() {
     try {
       setActionLoading("logout");
-      await supabaseBrowser().auth.signOut();
-      router.push("/login");
-      router.refresh();
+      await sb.auth.signOut();
+      // middleware should redirect, but this helps locally too:
+      window.location.href = "/login";
     } finally {
       setActionLoading(null);
     }
@@ -125,6 +115,11 @@ export default function DashboardPage() {
     async function init() {
       try {
         setLoading(true);
+
+        // NEW: get user once for header display
+        const { data: userData } = await sb.auth.getUser();
+        setUserEmail(userData?.user?.email ?? "");
+
         const json = await loadReviews();
         setData(json);
         setLastRefreshedAt(new Date().toISOString());
@@ -135,6 +130,7 @@ export default function DashboardPage() {
       }
     }
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const reviews = data?.reviews ?? [];
@@ -144,20 +140,12 @@ export default function DashboardPage() {
 
     return reviews.filter((r) => {
       const matchesRating =
-        ratingFilter === "all"
-          ? true
-          : typeof r.rating === "number" && r.rating === ratingFilter;
+        ratingFilter === "all" ? true : typeof r.rating === "number" && r.rating === ratingFilter;
 
       if (!matchesRating) return false;
-
       if (!q) return true;
 
-      const haystack = [
-        r.author_name ?? "",
-        r.review_text ?? "",
-        r.source ?? "",
-        r.detected_language ?? "",
-      ]
+      const haystack = [r.author_name ?? "", r.review_text ?? "", r.source ?? "", r.detected_language ?? ""]
         .join(" ")
         .toLowerCase();
 
@@ -166,9 +154,7 @@ export default function DashboardPage() {
   }, [reviews, ratingFilter, query]);
 
   const avgRating = useMemo(() => {
-    const rated = reviews.filter((r) => typeof r.rating === "number") as Array<
-      Review & { rating: number }
-    >;
+    const rated = reviews.filter((r) => typeof r.rating === "number") as Array<Review & { rating: number }>;
     if (rated.length === 0) return null;
     const sum = rated.reduce((acc, r) => acc + r.rating, 0);
     return sum / rated.length;
@@ -176,8 +162,6 @@ export default function DashboardPage() {
 
   const lastReviewDate = useMemo(() => {
     if (reviews.length === 0) return null;
-    // review_date is when the review happened; created_at is when we saved it
-    // We'll show the newest available between those, for a "freshness" hint.
     const newest = reviews
       .map((r) => r.review_date ?? r.created_at)
       .filter(Boolean)
@@ -198,12 +182,10 @@ export default function DashboardPage() {
   if (!data?.ok) {
     return (
       <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
           <div>
-            <h1 style={{ fontSize: 24, marginBottom: 12 }}>Dashboard</h1>
-            <p style={{ color: "#ffb3b3" }}>
-              Error: {data?.error ?? "Unknown error"}
-            </p>
+            <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
+            {userEmail && <div style={{ opacity: 0.7, fontSize: 13 }}>Signed in as {userEmail}</div>}
           </div>
 
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
@@ -215,8 +197,7 @@ export default function DashboardPage() {
                 borderRadius: 10,
                 border: "1px solid rgba(148,163,184,0.35)",
                 background: "rgba(15,23,42,0.7)",
-                cursor: actionLoading !== null ? "not-allowed" : "pointer",
-                minWidth: 120,
+                cursor: "pointer",
               }}
             >
               {actionLoading === "reload" ? "Reloading…" : "Reload list"}
@@ -230,34 +211,32 @@ export default function DashboardPage() {
                 borderRadius: 10,
                 border: "1px solid rgba(148,163,184,0.35)",
                 background: "rgba(15,23,42,0.7)",
-                cursor: actionLoading !== null ? "not-allowed" : "pointer",
-                minWidth: 170,
+                cursor: "pointer",
               }}
             >
               {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
             </button>
 
             <button
-              onClick={handleLogout}
+              onClick={onLogout}
               disabled={actionLoading !== null}
               style={{
                 padding: "10px 12px",
                 borderRadius: 10,
                 border: "1px solid rgba(148,163,184,0.35)",
-                background: "rgba(255,255,255,0.06)",
-                cursor: actionLoading !== null ? "not-allowed" : "pointer",
-                minWidth: 96,
+                background: "rgba(15,23,42,0.7)",
+                cursor: "pointer",
               }}
-              title="Log out"
             >
               {actionLoading === "logout" ? "Logging out…" : "Log out"}
             </button>
           </div>
         </div>
 
+        <p style={{ color: "#ffb3b3", marginTop: 12 }}>Error: {data?.error ?? "Unknown error"}</p>
+
         <p style={{ opacity: 0.8, marginTop: 12 }}>
-          Quick check: open <code>/api/reviews</code> directly and confirm it
-          returns JSON.
+          Quick check: open <code>/api/reviews</code> directly and confirm it returns JSON.
         </p>
       </main>
     );
@@ -265,14 +244,14 @@ export default function DashboardPage() {
 
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
         <div>
           <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
           <div style={{ opacity: 0.8 }}>
             <div>
-              <strong>Business:</strong>{" "}
-              {data.business?.business_name ?? data.business?.id ?? "Unknown"}
+              <strong>Business:</strong> {data.business?.business_name ?? data.business?.id ?? "Unknown"}
             </div>
+            {userEmail && <div style={{ opacity: 0.7, fontSize: 13, marginTop: 6 }}>Signed in as {userEmail}</div>}
           </div>
         </div>
 
@@ -285,7 +264,7 @@ export default function DashboardPage() {
               borderRadius: 10,
               border: "1px solid rgba(148,163,184,0.35)",
               background: "rgba(15,23,42,0.7)",
-              cursor: actionLoading !== null ? "not-allowed" : "pointer",
+              cursor: "pointer",
               minWidth: 120,
             }}
           >
@@ -300,7 +279,7 @@ export default function DashboardPage() {
               borderRadius: 10,
               border: "1px solid rgba(148,163,184,0.35)",
               background: "rgba(15,23,42,0.7)",
-              cursor: actionLoading !== null ? "not-allowed" : "pointer",
+              cursor: "pointer",
               minWidth: 170,
             }}
             title="Fetch latest from Google and save to Supabase, then reload"
@@ -309,17 +288,16 @@ export default function DashboardPage() {
           </button>
 
           <button
-            onClick={handleLogout}
+            onClick={onLogout}
             disabled={actionLoading !== null}
             style={{
               padding: "10px 12px",
               borderRadius: 10,
               border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(255,255,255,0.06)",
-              cursor: actionLoading !== null ? "not-allowed" : "pointer",
-              minWidth: 96,
+              background: "rgba(15,23,42,0.7)",
+              cursor: "pointer",
+              minWidth: 110,
             }}
-            title="Log out"
           >
             {actionLoading === "logout" ? "Logging out…" : "Log out"}
           </button>
@@ -364,9 +342,7 @@ export default function DashboardPage() {
           <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
           <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
             {data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
-              showing {filteredReviews.length}
-            </span>
+            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>showing {filteredReviews.length}</span>
           </div>
         </div>
 
@@ -404,9 +380,7 @@ export default function DashboardPage() {
           <span style={{ opacity: 0.8, fontSize: 13 }}>Rating</span>
           <select
             value={ratingFilter}
-            onChange={(e) =>
-              setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-            }
+            onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
             style={{
               padding: "10px 10px",
               borderRadius: 10,
@@ -476,45 +450,29 @@ export default function DashboardPage() {
                 background: "rgba(15,23,42,0.6)",
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  marginBottom: 6,
-                }}
-              >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
                 <div style={{ fontWeight: 600 }}>
                   {r.author_url ? (
-                    <a
-                      href={r.author_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ color: "inherit", textDecoration: "underline" }}
-                    >
+                    <a href={r.author_url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "underline" }}>
                       {r.author_name ?? "Anonymous"}
                     </a>
                   ) : (
                     <span>{r.author_name ?? "Anonymous"}</span>
                   )}
                   <span style={{ opacity: 0.8, marginLeft: 10 }}>
-                    {stars(r.rating)}{" "}
-                    {typeof r.rating === "number" ? `(${r.rating}/5)` : ""}
+                    {stars(r.rating)} {typeof r.rating === "number" ? `(${r.rating}/5)` : ""}
                   </span>
                 </div>
 
                 <div style={{ opacity: 0.75, fontSize: 12, textAlign: "right" }}>
                   <div>{formatDate(r.review_date)}</div>
                   <div>
-                    {r.source?.toUpperCase()}{" "}
-                    {r.detected_language ? `• ${r.detected_language}` : ""}
+                    {r.source?.toUpperCase()} {r.detected_language ? `• ${r.detected_language}` : ""}
                   </div>
                 </div>
               </div>
 
-              <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
-                {r.review_text ?? ""}
-              </div>
+              <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{r.review_text ?? ""}</div>
             </div>
           ))}
         </div>
