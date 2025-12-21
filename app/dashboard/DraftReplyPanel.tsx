@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
 type DraftReplyResponse = {
   ok: boolean;
@@ -8,8 +8,10 @@ type DraftReplyResponse = {
   error?: string;
 };
 
+type Status = "idle" | "loading" | "success" | "error";
+
 export default function DraftReplyPanel() {
-  const [businessName, setBusinessName] = useState("Andeluna Winery Lodge");
+  const [businessName, setBusinessName] = useState("Andeluna");
   const [rating, setRating] = useState<number>(5);
   const [language, setLanguage] = useState<string>("es");
   const [reviewText, setReviewText] = useState(
@@ -17,22 +19,19 @@ export default function DraftReplyPanel() {
   );
 
   const [draft, setDraft] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string>("");
+
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
 
   const canSubmit = useMemo(() => {
     return businessName.trim().length > 0 && reviewText.trim().length > 10;
   }, [businessName, reviewText]);
 
-  const canCopy = Boolean(draft.trim()) && !isGenerating;
-
-  async function onGenerate() {
-    if (!canSubmit || isGenerating) return;
-
-    setIsGenerating(true);
+  async function generateDraft() {
+    setStatus("loading");
     setErrorMessage("");
-    setCopied(false);
 
     try {
       const res = await fetch("/api/reviews/draft-reply", {
@@ -48,41 +47,62 @@ export default function DraftReplyPanel() {
 
       const data = (await res.json().catch(() => ({}))) as Partial<DraftReplyResponse>;
 
-      // Handle HTTP errors OR "ok: false" responses
       if (!res.ok || data.ok === false) {
         const msg =
           typeof data.error === "string" && data.error.trim()
             ? data.error
-            : "We couldn’t generate a reply just now. Please try again.";
+            : "Failed to generate draft.";
+        setStatus("error");
         setErrorMessage(msg);
         return;
       }
 
-      // Ensure we got a reply string
       if (typeof data.reply !== "string" || !data.reply.trim()) {
-        setErrorMessage("No reply was returned. Please try again.");
+        setStatus("error");
+        setErrorMessage("No draft returned from server.");
         return;
       }
 
-      setDraft(data.reply.trim());
+      setDraft(data.reply);
+      setStatus("success");
     } catch (err: unknown) {
-      setErrorMessage(err instanceof Error ? err.message : "We couldn’t generate a reply just now.");
-    } finally {
-      setIsGenerating(false);
+      setStatus("error");
+      setErrorMessage(err instanceof Error ? err.message : "Something went wrong.");
     }
+  }
+
+  async function onGenerate() {
+    // First generation: clear draft so user knows it’s “fresh”
+    setDraft("");
+    await generateDraft();
+  }
+
+  async function onRegenerate() {
+    // Regenerate: KEEP existing draft visible while loading
+    await generateDraft();
   }
 
   async function onCopy() {
-    if (!canCopy) return;
-
+    if (!draft) return;
     try {
       await navigator.clipboard.writeText(draft);
+
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
+
+      copiedTimer.current = window.setTimeout(() => {
+        setCopied(false);
+        copiedTimer.current = null;
+      }, 1200);
     } catch {
-      setErrorMessage("Couldn’t copy to clipboard. Please copy manually.");
+      // If clipboard fails, don’t crash the UX; just show an error
+      setStatus("error");
+      setErrorMessage("Could not copy to clipboard.");
     }
   }
+
+  const isLoading = status === "loading";
+  const hasDraft = Boolean(draft.trim());
 
   return (
     <section
@@ -94,10 +114,20 @@ export default function DraftReplyPanel() {
         maxWidth: 900,
       }}
     >
-      <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply (Read-only)</h2>
-      <p style={{ marginTop: 6, opacity: 0.8 }}>
-        Paste a review → generate a suggested reply (does not post anywhere yet).
-      </p>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply (Read-only)</h2>
+          <p style={{ marginTop: 6, opacity: 0.8 }}>
+            Paste a review → generate a suggested reply (does not post anywhere yet).
+          </p>
+        </div>
+
+        {status === "success" && hasDraft ? (
+          <div style={{ opacity: 0.75, fontSize: 13, alignSelf: "center" }}>
+            Draft ready ✅
+          </div>
+        ) : null}
+      </div>
 
       <div
         style={{
@@ -156,55 +186,53 @@ export default function DraftReplyPanel() {
       </div>
 
       <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "center" }}>
-        <button
-          onClick={onGenerate}
-          disabled={!canSubmit || isGenerating}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: isGenerating ? "rgba(255,255,255,0.06)" : "rgba(99,102,241,0.35)",
-            cursor: !canSubmit || isGenerating ? "not-allowed" : "pointer",
-            color: "white",
-            fontWeight: 600,
-            opacity: !canSubmit || isGenerating ? 0.7 : 1,
-          }}
-        >
-          {isGenerating ? "Generating…" : "Generate reply"}
-        </button>
+        {!hasDraft ? (
+          <button
+            onClick={onGenerate}
+            disabled={!canSubmit || isLoading}
+            style={primaryButtonStyle(!canSubmit || isLoading)}
+          >
+            {isLoading ? "Generating..." : "Generate draft"}
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={onRegenerate}
+              disabled={!canSubmit || isLoading}
+              style={primaryButtonStyle(!canSubmit || isLoading)}
+              title="Generate another version"
+            >
+              {isLoading ? "Regenerating..." : "Regenerate"}
+            </button>
 
-        <button
-          onClick={onCopy}
-          disabled={!canCopy}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "rgba(255,255,255,0.06)",
-            cursor: !canCopy ? "not-allowed" : "pointer",
-            color: "white",
-            fontWeight: 600,
-            opacity: !canCopy ? 0.6 : 1,
-          }}
-        >
-          {copied ? "Copied!" : "Copy"}
-        </button>
-
-        {isGenerating && (
-          <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 14 }}>
-            Drafting a thoughtful reply…
-          </span>
+            <button
+              onClick={onCopy}
+              disabled={!hasDraft}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.06)",
+                cursor: hasDraft ? "pointer" : "not-allowed",
+                color: "white",
+                fontWeight: 600,
+                minWidth: 96,
+              }}
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </>
         )}
 
-        {!isGenerating && errorMessage && (
+        {status === "error" && (
           <span style={{ color: "#ffb3b3", fontSize: 14 }}>{errorMessage}</span>
         )}
 
-        {!isGenerating && !errorMessage && draft && (
-          <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 14 }}>
-            Reply ready ✅
+        {isLoading && hasDraft ? (
+          <span style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
+            Generating a fresh version…
           </span>
-        )}
+        ) : null}
       </div>
 
       <div style={{ marginTop: 12 }}>
@@ -218,13 +246,25 @@ export default function DraftReplyPanel() {
             width: "100%",
             resize: "vertical",
             lineHeight: 1.4,
-            opacity: draft ? 1 : 0.8,
-            whiteSpace: "pre-wrap",
+            opacity: hasDraft ? 1 : 0.8,
           }}
         />
       </div>
     </section>
   );
+}
+
+function primaryButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: disabled ? "rgba(255,255,255,0.06)" : "rgba(99,102,241,0.35)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    color: "white",
+    fontWeight: 600,
+    minWidth: 140,
+  };
 }
 
 const inputStyle: React.CSSProperties = {
