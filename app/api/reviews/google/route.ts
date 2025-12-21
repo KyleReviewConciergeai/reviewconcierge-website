@@ -1,7 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { requireOrgContext } from "@/lib/orgServer";
 
 type GooglePlaceDetailsResponse = {
   status: string;
@@ -30,7 +30,8 @@ export async function GET(req: Request) {
       );
     }
 
-    const supabase = supabaseServer();
+    // ✅ Org-scoped supabase client + org id
+    const { supabase, organizationId } = await requireOrgContext();
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
@@ -40,21 +41,19 @@ export async function GET(req: Request) {
       );
     }
 
-    // 1) Find the business row that matches this google_place_id
+    // 1) Find the business row that matches this google_place_id *for this org*
     // (If duplicates exist, we take the most recently created.)
     const { data: biz, error: bizErr } = await supabase
       .from("businesses")
-      .select("id, google_place_id")
+      .select("id, google_place_id, organization_id")
       .eq("google_place_id", google_place_id)
+      .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (bizErr) {
-      return NextResponse.json(
-        { ok: false, error: bizErr.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ ok: false, error: bizErr.message }, { status: 500 });
     }
 
     if (!biz?.id || !biz?.google_place_id) {
@@ -62,7 +61,7 @@ export async function GET(req: Request) {
         {
           ok: false,
           error:
-            "No matching business found for google_place_id. Create the business first via /api/businesses.",
+            "No matching business found for this organization. Create the business first via /api/businesses.",
         },
         { status: 404 }
       );
@@ -103,13 +102,14 @@ export async function GET(req: Request) {
       });
     }
 
-    // 3) Map into your Supabase schema
+    // 3) Map into your Supabase schema (+ org scoping)
     const rows = reviews.map((r) => {
       // Google does not provide a stable review ID in Place Details API.
       // We generate a deterministic fallback key.
       const fallbackId = `${r.author_name ?? "unknown"}-${r.time ?? ""}-${r.rating ?? ""}-${r.text ?? ""}`;
 
       return {
+        organization_id: organizationId, // ✅ REQUIRED for multi-tenancy
         business_id: businessId,
         source: "google",
         google_review_id: String(r.time ?? fallbackId).slice(0, 255),
@@ -124,17 +124,34 @@ export async function GET(req: Request) {
       };
     });
 
+    /**
+     * ✅ IMPORTANT:
+     * Preferred upsert conflict target for multi-tenant:
+     *   onConflict: "organization_id,source,google_review_id"
+     *
+     * If your DB does NOT yet have a unique constraint/index on those 3 columns,
+     * this will error.
+     */
+    const onConflict = "organization_id,source,google_review_id";
+
     const { data: saved, error: saveErr } = await supabase
       .from("reviews")
-      .upsert(rows, { onConflict: "source,google_review_id" })
+      .upsert(rows, { onConflict })
       .select(
-        "id, source, google_review_id, rating, author_name, author_url, review_date, detected_language"
+        "id, organization_id, business_id, source, google_review_id, rating, author_name, author_url, review_date, detected_language"
       )
       .limit(10);
 
     if (saveErr) {
       return NextResponse.json(
-        { ok: false, error: saveErr.message },
+        {
+          ok: false,
+          error: saveErr.message,
+          hint:
+            saveErr.message.includes("there is no unique or exclusion constraint")
+              ? "Your reviews table likely needs a unique constraint on (organization_id, source, google_review_id)."
+              : undefined,
+        },
         { status: 500 }
       );
     }
