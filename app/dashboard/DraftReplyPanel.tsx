@@ -25,6 +25,9 @@ export default function DraftReplyPanel() {
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
+  // ✅ NEW: version counter for demo confidence (v1, v2, v3...)
+  const [version, setVersion] = useState<number>(0);
+
   const canSubmit = useMemo(() => {
     return businessName.trim().length > 0 && reviewText.trim().length > 10;
   }, [businessName, reviewText]);
@@ -54,32 +57,37 @@ export default function DraftReplyPanel() {
             : "Failed to generate draft.";
         setStatus("error");
         setErrorMessage(msg);
-        return;
+        return { ok: false as const };
       }
 
       if (typeof data.reply !== "string" || !data.reply.trim()) {
         setStatus("error");
         setErrorMessage("No draft returned from server.");
-        return;
+        return { ok: false as const };
       }
 
       setDraft(data.reply);
       setStatus("success");
+      return { ok: true as const };
     } catch (err: unknown) {
       setStatus("error");
       setErrorMessage(err instanceof Error ? err.message : "Something went wrong.");
+      return { ok: false as const };
     }
   }
 
   async function onGenerate() {
     // First generation: clear draft so user knows it’s “fresh”
     setDraft("");
-    await generateDraft();
+    setVersion(0); // reset counter
+    const result = await generateDraft();
+    if (result.ok) setVersion(1); // v1 after first successful generation
   }
 
   async function onRegenerate() {
     // Regenerate: KEEP existing draft visible while loading
-    await generateDraft();
+    const result = await generateDraft();
+    if (result.ok) setVersion((v) => (v > 0 ? v + 1 : 1));
   }
 
   async function onCopy() {
@@ -95,7 +103,6 @@ export default function DraftReplyPanel() {
         copiedTimer.current = null;
       }, 1200);
     } catch {
-      // If clipboard fails, don’t crash the UX; just show an error
       setStatus("error");
       setErrorMessage("Could not copy to clipboard.");
     }
@@ -103,6 +110,7 @@ export default function DraftReplyPanel() {
 
   const isLoading = status === "loading";
   const hasDraft = Boolean(draft.trim());
+  const canCopy = hasDraft && !isLoading;
 
   return (
     <section
@@ -116,7 +124,25 @@ export default function DraftReplyPanel() {
     >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply (Read-only)</h2>
+          <h2 style={{ margin: 0, fontSize: 18, display: "flex", gap: 10, alignItems: "center" }}>
+            Draft Reply (Read-only)
+            {/* ✅ NEW: subtle version pill */}
+            {version > 0 ? (
+              <span
+                style={{
+                  fontSize: 12,
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.06)",
+                  opacity: 0.9,
+                }}
+                title="Draft version counter"
+              >
+                v{version}
+              </span>
+            ) : null}
+          </h2>
           <p style={{ marginTop: 6, opacity: 0.8 }}>
             Paste a review → generate a suggested reply (does not post anywhere yet).
           </p>
@@ -207,16 +233,17 @@ export default function DraftReplyPanel() {
 
             <button
               onClick={onCopy}
-              disabled={!hasDraft}
+              disabled={!canCopy}
               style={{
                 padding: "10px 14px",
                 borderRadius: 12,
                 border: "1px solid rgba(255,255,255,0.12)",
                 background: "rgba(255,255,255,0.06)",
-                cursor: hasDraft ? "pointer" : "not-allowed",
+                cursor: canCopy ? "pointer" : "not-allowed",
                 color: "white",
                 fontWeight: 600,
                 minWidth: 96,
+                opacity: canCopy ? 1 : 0.6,
               }}
             >
               {copied ? "Copied!" : "Copy"}
@@ -235,7 +262,8 @@ export default function DraftReplyPanel() {
         ) : null}
       </div>
 
-      <div style={{ marginTop: 12 }}>
+      {/* ✅ Draft box with “locked” overlay while regenerating */}
+      <div style={{ marginTop: 12, position: "relative" }}>
         <textarea
           value={draft}
           readOnly
@@ -247,8 +275,40 @@ export default function DraftReplyPanel() {
             resize: "vertical",
             lineHeight: 1.4,
             opacity: hasDraft ? 1 : 0.8,
+            // subtle visual lock when regenerating
+            filter: isLoading && hasDraft ? "blur(0.2px)" : undefined,
           }}
         />
+
+        {isLoading && hasDraft ? (
+          <div
+            aria-label="Regenerating draft overlay"
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: 12,
+              background: "rgba(0,0,0,0.22)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.06)",
+                fontSize: 13,
+                opacity: 0.9,
+              }}
+            >
+              Regenerating…
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );
