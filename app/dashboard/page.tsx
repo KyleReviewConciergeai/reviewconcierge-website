@@ -50,6 +50,11 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<"reload" | "google" | "logout" | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  
+  const [toast, setToast] = useState<{
+  message: string;
+  type?: "success" | "error";
+} | null>(null);
 
   // NEW: signed-in user email for header
   const [userEmail, setUserEmail] = useState<string>("");
@@ -108,7 +113,8 @@ export default function DashboardPage() {
         ? "Google sync complete: no reviews returned."
         : `Google sync complete: ${fetched} fetched (${inserted} new, ${updated} updated).`;
 
-    window.alert(msg);
+    setToast({ message: msg, type: "success" });
+setTimeout(() => setToast(null), 3000);
   } catch (e: any) {
     setData({ ok: false, error: e?.message ?? "Failed to refresh" });
   } finally {
@@ -191,6 +197,30 @@ export default function DashboardPage() {
       <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
         <h1 style={{ fontSize: 24, marginBottom: 12 }}>Dashboard</h1>
         <p style={{ opacity: 0.8 }}>Loading reviews…</p>
+
+        {toast && (
+  <div
+    style={{
+      position: "fixed",
+      bottom: 24,
+      right: 24,
+      padding: "12px 16px",
+      borderRadius: 12,
+      background:
+        toast.type === "error"
+          ? "rgba(220,38,38,0.95)"
+          : "rgba(15,23,42,0.95)",
+      color: "#fff",
+      fontSize: 14,
+      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+      zIndex: 1000,
+      maxWidth: 360,
+    }}
+  >
+    {toast.message}
+  </div>
+)}
+
       </main>
     );
   }
@@ -254,6 +284,28 @@ export default function DashboardPage() {
         <p style={{ opacity: 0.8, marginTop: 12 }}>
           Quick check: open <code>/api/reviews</code> directly and confirm it returns JSON.
         </p>
+        {toast && (
+  <div
+    style={{
+      position: "fixed",
+      bottom: 24,
+      right: 24,
+      padding: "12px 16px",
+      borderRadius: 12,
+      background:
+        toast.type === "error"
+          ? "rgba(220,38,38,0.95)"
+          : "rgba(15,23,42,0.95)",
+      color: "#fff",
+      fontSize: 14,
+      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+      zIndex: 1000,
+      maxWidth: 360,
+    }}
+  >
+    {toast.message}
+  </div>
+)}
       </main>
     );
   }
@@ -493,6 +545,28 @@ export default function DashboardPage() {
           ))}
         </div>
       )}
+      {toast && (
+  <div
+    style={{
+      position: "fixed",
+      bottom: 24,
+      right: 24,
+      padding: "12px 16px",
+      borderRadius: 12,
+      background:
+        toast.type === "error"
+          ? "rgba(220,38,38,0.95)"
+          : "rgba(15,23,42,0.95)",
+      color: "#fff",
+      fontSize: 14,
+      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+      zIndex: 1000,
+      maxWidth: 360,
+    }}
+  >
+    {toast.message}
+  </div>
+)}
     </main>
   );
 }
