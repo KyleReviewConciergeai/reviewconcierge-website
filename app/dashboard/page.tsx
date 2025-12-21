@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import DraftReplyPanel from "./DraftReplyPanel";
+import { useRouter } from "next/navigation";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Review = {
   id: string;
@@ -43,13 +45,15 @@ function clamp(n: number, min: number, max: number) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
+
   const [data, setData] = useState<ReviewsApiResponse | null>(null);
 
   // base loading for initial page load
   const [loading, setLoading] = useState(true);
 
   // action loading for button clicks (reload / refresh)
-  const [actionLoading, setActionLoading] = useState<"reload" | "google" | null>(
+  const [actionLoading, setActionLoading] = useState<"reload" | "google" | "logout" | null>(
     null
   );
 
@@ -101,6 +105,17 @@ export default function DashboardPage() {
       setLastRefreshedAt(new Date().toISOString());
     } catch (e: any) {
       setData({ ok: false, error: e?.message ?? "Failed to refresh" });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      setActionLoading("logout");
+      await supabaseBrowser().auth.signOut();
+      router.push("/login");
+      router.refresh();
     } finally {
       setActionLoading(null);
     }
@@ -183,40 +198,61 @@ export default function DashboardPage() {
   if (!data?.ok) {
     return (
       <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 24, marginBottom: 12 }}>Dashboard</h1>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 14 }}>
+          <div>
+            <h1 style={{ fontSize: 24, marginBottom: 12 }}>Dashboard</h1>
+            <p style={{ color: "#ffb3b3" }}>
+              Error: {data?.error ?? "Unknown error"}
+            </p>
+          </div>
 
-        <p style={{ color: "#ffb3b3" }}>
-          Error: {data?.error ?? "Unknown error"}
-        </p>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <button
+              onClick={reloadList}
+              disabled={actionLoading !== null}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(148,163,184,0.35)",
+                background: "rgba(15,23,42,0.7)",
+                cursor: actionLoading !== null ? "not-allowed" : "pointer",
+                minWidth: 120,
+              }}
+            >
+              {actionLoading === "reload" ? "Reloading…" : "Reload list"}
+            </button>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-          <button
-            onClick={reloadList}
-            disabled={actionLoading !== null}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.7)",
-              cursor: "pointer",
-            }}
-          >
-            {actionLoading === "reload" ? "Reloading…" : "Reload list"}
-          </button>
+            <button
+              onClick={refreshFromGoogleThenReload}
+              disabled={actionLoading !== null}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(148,163,184,0.35)",
+                background: "rgba(15,23,42,0.7)",
+                cursor: actionLoading !== null ? "not-allowed" : "pointer",
+                minWidth: 170,
+              }}
+            >
+              {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+            </button>
 
-          <button
-            onClick={refreshFromGoogleThenReload}
-            disabled={actionLoading !== null}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.7)",
-              cursor: "pointer",
-            }}
-          >
-            {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
-          </button>
+            <button
+              onClick={handleLogout}
+              disabled={actionLoading !== null}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(148,163,184,0.35)",
+                background: "rgba(255,255,255,0.06)",
+                cursor: actionLoading !== null ? "not-allowed" : "pointer",
+                minWidth: 96,
+              }}
+              title="Log out"
+            >
+              {actionLoading === "logout" ? "Logging out…" : "Log out"}
+            </button>
+          </div>
         </div>
 
         <p style={{ opacity: 0.8, marginTop: 12 }}>
@@ -249,7 +285,7 @@ export default function DashboardPage() {
               borderRadius: 10,
               border: "1px solid rgba(148,163,184,0.35)",
               background: "rgba(15,23,42,0.7)",
-              cursor: "pointer",
+              cursor: actionLoading !== null ? "not-allowed" : "pointer",
               minWidth: 120,
             }}
           >
@@ -264,12 +300,28 @@ export default function DashboardPage() {
               borderRadius: 10,
               border: "1px solid rgba(148,163,184,0.35)",
               background: "rgba(15,23,42,0.7)",
-              cursor: "pointer",
+              cursor: actionLoading !== null ? "not-allowed" : "pointer",
               minWidth: 170,
             }}
             title="Fetch latest from Google and save to Supabase, then reload"
           >
             {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+          </button>
+
+          <button
+            onClick={handleLogout}
+            disabled={actionLoading !== null}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(255,255,255,0.06)",
+              cursor: actionLoading !== null ? "not-allowed" : "pointer",
+              minWidth: 96,
+            }}
+            title="Log out"
+          >
+            {actionLoading === "logout" ? "Logging out…" : "Log out"}
           </button>
         </div>
       </div>
@@ -336,7 +388,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-<DraftReplyPanel />
+      <DraftReplyPanel />
 
       {/* filters */}
       <div
