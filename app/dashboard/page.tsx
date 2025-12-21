@@ -78,27 +78,43 @@ export default function DashboardPage() {
   }
 
   async function refreshFromGoogleThenReload() {
-    try {
-      setActionLoading("google");
+  // Guard against double clicks
+  if (actionLoading !== null) return;
 
-      const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
-      const googleJson = await googleRes.json();
+  try {
+    setActionLoading("google");
 
-      if (!googleRes.ok || !googleJson?.ok) {
-        const msg = googleJson?.error ?? googleJson?.googleError ?? "Google refresh failed";
-        setData({ ok: false, error: msg });
-        return;
-      }
+    const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
+    const googleJson = await googleRes.json();
 
-      const json = await loadReviews();
-      setData(json);
-      setLastRefreshedAt(new Date().toISOString());
-    } catch (e: any) {
-      setData({ ok: false, error: e?.message ?? "Failed to refresh" });
-    } finally {
-      setActionLoading(null);
+    if (!googleRes.ok || !googleJson?.ok) {
+      const msg = googleJson?.error ?? googleJson?.googleError ?? "Google refresh failed";
+      setData({ ok: false, error: msg });
+      return;
     }
+
+    const fetched = Number(googleJson?.fetched ?? 0);
+    const inserted = Number(googleJson?.inserted ?? 0);
+    const updated = Number(googleJson?.updated ?? 0);
+    const syncedAt = (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
+
+    const json = await loadReviews();
+    setData(json);
+
+    setLastRefreshedAt(syncedAt);
+
+    const msg =
+      fetched === 0
+        ? "Google sync complete: no reviews returned."
+        : `Google sync complete: ${fetched} fetched (${inserted} new, ${updated} updated).`;
+
+    window.alert(msg);
+  } catch (e: any) {
+    setData({ ok: false, error: e?.message ?? "Failed to refresh" });
+  } finally {
+    setActionLoading(null);
   }
+}
 
   async function onLogout() {
     try {
