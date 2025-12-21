@@ -18,11 +18,38 @@ type GooglePlaceDetailsResponse = {
   };
 };
 
+type ReviewUpsertRow = {
+  organization_id: string;
+  business_id: string;
+  source: "google";
+  google_review_id: string;
+
+  author_name: string | null;
+  author_url: string | null;
+  rating: number | null;
+  review_text: string | null;
+  review_date: string | null;
+  detected_language: string | null;
+  raw: unknown;
+};
+
+function makeGoogleReviewId(r: {
+  author_name?: string;
+  time?: number;
+  rating?: number;
+  text?: string;
+}) {
+  // NOTE: Using Google "time" alone is okay for MVP but can collide in rare cases.
+  // We preserve your existing approach but make the fallback deterministic.
+  const fallbackId = `${r.author_name ?? "unknown"}-${r.time ?? ""}-${r.rating ?? ""}-${r.text ?? ""}`;
+  return String(r.time ?? fallbackId).slice(0, 255);
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
 
-    // OPTIONAL override (nice for debugging), but not required for normal use
+    // Optional override (debugging)
     const google_place_id_param = searchParams.get("google_place_id")?.trim() || "";
 
     const { supabase, organizationId } = await requireOrgContext();
@@ -39,7 +66,6 @@ export async function GET(req: Request) {
     let placeId = google_place_id_param;
 
     if (!placeId) {
-      // Pull the most recent business for this org
       const { data: biz, error: bizErr } = await supabase
         .from("businesses")
         .select("id, google_place_id")
@@ -114,38 +140,58 @@ export async function GET(req: Request) {
       );
     }
 
-    const reviews = Array.isArray(data.result?.reviews) ? data.result!.reviews! : [];
+    const googleReviews = Array.isArray(data.result?.reviews) ? data.result!.reviews! : [];
 
-    if (reviews.length === 0) {
+    if (googleReviews.length === 0) {
       return NextResponse.json({
         ok: true,
+        business_id: businessId,
+        google_place_id: placeId,
         fetched: 0,
-        savedPreview: [],
+        upserted_total: 0,
+        inserted: 0,
+        updated: 0,
+        synced_at: new Date().toISOString(),
         note: "No reviews returned by Google for this place",
       });
     }
 
-    // 4) Map → upsert into your schema (and attach org)
-    const rows = reviews.map((r) => {
-      const fallbackId = `${r.author_name ?? "unknown"}-${r.time ?? ""}-${r.rating ?? ""}-${r.text ?? ""}`;
+    // 4) Map → upsert into schema
+    const rows: ReviewUpsertRow[] = googleReviews.map((r) => ({
+      organization_id: organizationId,
+      business_id: businessId,
+      source: "google",
+      google_review_id: makeGoogleReviewId(r),
 
-      return {
-        organization_id: organizationId,
-        business_id: businessId,
-        source: "google",
-        google_review_id: String(r.time ?? fallbackId).slice(0, 255),
+      author_name: r.author_name ?? null,
+      author_url: r.author_url ?? null,
+      rating: typeof r.rating === "number" ? r.rating : null,
+      review_text: r.text ?? null,
+      review_date: r.time ? new Date(r.time * 1000).toISOString() : null,
+      detected_language: r.language ?? null,
+      raw: r,
+    }));
 
-        author_name: r.author_name ?? null,
-        author_url: r.author_url ?? null,
-        rating: typeof r.rating === "number" ? r.rating : null,
-        review_text: r.text ?? null,
-        review_date: r.time ? new Date(r.time * 1000).toISOString() : null,
-        detected_language: r.language ?? null,
-        raw: r,
-      };
-    });
+    // 4a) Pre-check which IDs already exist for this business/org/source
+    const ids = rows.map((x) => x.google_review_id);
 
-    const { data: saved, error: saveErr } = await supabase
+    // Supabase `in()` can handle decent sizes, but to be safe we can chunk if needed later.
+    const { data: existing, error: existingErr } = await supabase
+      .from("reviews")
+      .select("google_review_id")
+      .eq("organization_id", organizationId)
+      .eq("business_id", businessId)
+      .eq("source", "google")
+      .in("google_review_id", ids);
+
+    if (existingErr) {
+      return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
+    }
+
+    const existingSet = new Set((existing ?? []).map((r) => r.google_review_id));
+
+    // 4b) Upsert
+    const { data: savedPreview, error: saveErr } = await supabase
       .from("reviews")
       .upsert(rows, { onConflict: "organization_id,source,google_review_id" })
       .select("id, source, google_review_id, rating, author_name, review_date, detected_language")
@@ -155,10 +201,19 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
     }
 
+    const inserted = rows.reduce((acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1), 0);
+    const updated = rows.length - inserted;
+
     return NextResponse.json({
       ok: true,
+      business_id: businessId,
+      google_place_id: placeId,
       fetched: rows.length,
-      savedPreview: saved ?? [],
+      upserted_total: rows.length,
+      inserted,
+      updated,
+      synced_at: new Date().toISOString(),
+      savedPreview: savedPreview ?? [],
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
