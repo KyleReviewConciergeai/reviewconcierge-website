@@ -50,7 +50,11 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<"reload" | "google" | "logout" | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
-  
+  const [business, setBusiness] = useState<any>(null);
+  const [businessLoaded, setBusinessLoaded] = useState(false);
+  const [placeIdInput, setPlaceIdInput] = useState("");
+  const [placeVerify, setPlaceVerify] = useState<{ name?: string; rating?: number; user_ratings_total?: number } | null>(null);
+
   const [toast, setToast] = useState<{
   message: string;
   type?: "success" | "error";
@@ -121,6 +125,42 @@ setTimeout(() => setToast(null), 3000);
     setActionLoading(null);
   }
 }
+async function connectGooglePlaceId() {
+  try {
+    setActionLoading("google");
+
+    const res = await fetch("/api/businesses/connect-google", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ google_place_id: placeIdInput }),
+    });
+
+    const json = await res.json();
+
+    if (!res.ok || !json?.ok) {
+      const msg = json?.error ?? json?.googleError ?? "Failed to connect Place ID";
+      setToast({ message: msg, type: "error" });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    setBusiness(json.business);
+    setPlaceVerify(json.verified ?? null);
+    setPlaceIdInput(json.business?.google_place_id ?? placeIdInput);
+
+    setToast({
+    message: `Connected: ${json?.verified?.name ?? "Place verified"}`,
+    type: "success",
+    });
+setTimeout(() => setToast(null), 3000);
+
+  } catch (e: any) {
+    setToast({ message: e?.message ?? "Failed to connect", type: "error" });
+    setTimeout(() => setToast(null), 4000);
+  } finally {
+    setActionLoading(null);
+  }
+}
 
   async function onLogout() {
     try {
@@ -141,6 +181,19 @@ setTimeout(() => setToast(null), 3000);
         // NEW: get user once for header display
         const { data: userData } = await sb.auth.getUser();
         setUserEmail(userData?.user?.email ?? "");
+        try {
+        const bizRes = await fetch("/api/businesses/current", { cache: "no-store" });
+       const bizJson = await bizRes.json();
+
+       if (bizRes.ok && bizJson?.ok) {
+        setBusiness(bizJson.business);
+         setPlaceIdInput(bizJson.business?.google_place_id ?? "");
+       }
+      } catch (e) {
+  // optional: ignore; we just want to stop showing the onboarding card incorrectly
+      } finally {
+        setBusinessLoaded(true);
+}
 
         const json = await loadReviews();
         setData(json);
@@ -311,171 +364,91 @@ setTimeout(() => setToast(null), 3000);
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
-        <div>
-          <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
-          <div style={{ opacity: 0.8 }}>
-            <div>
-              <strong>Business:</strong> {data.business?.business_name ?? data.business?.id ?? "Unknown"}
-            </div>
-            {userEmail && <div style={{ opacity: 0.7, fontSize: 13, marginTop: 6 }}>Signed in as {userEmail}</div>}
+  <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+      <div>
+        <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
+        <div style={{ opacity: 0.8 }}>
+          <div>
+            <strong>Business:</strong> {data.business?.business_name ?? data.business?.id ?? "Unknown"}
           </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <button
-            onClick={reloadList}
-            disabled={actionLoading !== null}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.7)",
-              cursor: "pointer",
-              minWidth: 120,
-            }}
-          >
-            {actionLoading === "reload" ? "Reloading…" : "Reload list"}
-          </button>
-
-          <button
-            onClick={refreshFromGoogleThenReload}
-            disabled={actionLoading !== null}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.7)",
-              cursor: "pointer",
-              minWidth: 170,
-            }}
-            title="Fetch latest from Google and save to Supabase, then reload"
-          >
-            {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
-          </button>
-
-          <button
-            onClick={onLogout}
-            disabled={actionLoading !== null}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.7)",
-              cursor: "pointer",
-              minWidth: 110,
-            }}
-          >
-            {actionLoading === "logout" ? "Logging out…" : "Log out"}
-          </button>
+          {userEmail && <div style={{ opacity: 0.7, fontSize: 13, marginTop: 6 }}>Signed in as {userEmail}</div>}
         </div>
       </div>
 
-      {/* summary cards */}
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <button
+          onClick={reloadList}
+          disabled={actionLoading !== null}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.7)",
+            cursor: "pointer",
+            minWidth: 120,
+          }}
+        >
+          {actionLoading === "reload" ? "Reloading…" : "Reload list"}
+        </button>
+
+        <button
+          onClick={refreshFromGoogleThenReload}
+          disabled={actionLoading !== null}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.7)",
+            cursor: "pointer",
+            minWidth: 170,
+          }}
+          title="Fetch latest from Google and save to Supabase, then reload"
+        >
+          {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+        </button>
+
+        <button
+          onClick={onLogout}
+          disabled={actionLoading !== null}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.7)",
+            cursor: "pointer",
+            minWidth: 110,
+          }}
+        >
+          {actionLoading === "logout" ? "Logging out…" : "Log out"}
+        </button>
+      </div>
+    </div>
+
+    {/* ✅ Google Place ID onboarding (shows only if not connected yet) */}
+    {businessLoaded && business && !business.google_place_id && (
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 12,
+          border: "1px solid rgba(148,163,184,0.25)",
+          borderRadius: 16,
+          padding: 16,
+          background: "rgba(15,23,42,0.35)",
           marginTop: 16,
           marginBottom: 16,
         }}
       >
-        <div
-          style={{
-            border: "1px solid rgba(148,163,184,0.25)",
-            borderRadius: 14,
-            padding: 14,
-            background: "rgba(15,23,42,0.6)",
-          }}
-        >
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-            {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
-            <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
-              {avgRating === null ? "" : stars(Math.round(avgRating))}
-            </span>
-          </div>
+        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>Connect your Google Place ID</div>
+        <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
+          Paste a Place ID to verify your business and enable “Refresh from Google”.
         </div>
 
-        <div
-          style={{
-            border: "1px solid rgba(148,163,184,0.25)",
-            borderRadius: 14,
-            padding: 14,
-            background: "rgba(15,23,42,0.6)",
-          }}
-        >
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-            {data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>showing {filteredReviews.length}</span>
-          </div>
-        </div>
-
-        <div
-          style={{
-            border: "1px solid rgba(148,163,184,0.25)",
-            borderRadius: 14,
-            padding: 14,
-            background: "rgba(15,23,42,0.6)",
-          }}
-        >
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8 }}>
-            {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
-          </div>
-          <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
-            Latest review: {lastReviewDate ? formatDate(lastReviewDate) : "—"}
-          </div>
-        </div>
-      </div>
-
-      <DraftReplyPanel />
-
-      {/* filters */}
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          flexWrap: "wrap",
-          alignItems: "center",
-          marginBottom: 16,
-        }}
-      >
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ opacity: 0.8, fontSize: 13 }}>Rating</span>
-          <select
-            value={ratingFilter}
-            onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
-            style={{
-              padding: "10px 10px",
-              borderRadius: 10,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.7)",
-              color: "inherit",
-              outline: "none",
-            }}
-          >
-            <option value="all">All</option>
-            <option value="5">5</option>
-            <option value="4">4</option>
-            <option value="3">3</option>
-            <option value="2">2</option>
-            <option value="1">1</option>
-          </select>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
-          <span style={{ opacity: 0.8, fontSize: 13 }}>Search</span>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="author, text, language…"
+            value={placeIdInput}
+            onChange={(e) => setPlaceIdInput(e.target.value)}
+            placeholder="e.g. ChIJN1t_tDeuEmsRUsoyG83frY4"
             style={{
-              width: "100%",
-              minWidth: 240,
+              flex: "1 1 320px",
               padding: "10px 12px",
               borderRadius: 10,
               border: "1px solid rgba(148,163,184,0.35)",
@@ -484,89 +457,236 @@ setTimeout(() => setToast(null), 3000);
               outline: "none",
             }}
           />
+
+          <button
+            onClick={connectGooglePlaceId}
+            disabled={actionLoading !== null || !placeIdInput.trim()}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15,23,42,0.7)",
+              cursor: "pointer",
+              minWidth: 140,
+            }}
+          >
+            {actionLoading === "google" ? "Verifying…" : "Verify & Save"}
+          </button>
         </div>
 
-        <button
-          onClick={() => {
-            setRatingFilter("all");
-            setQuery("");
-          }}
+        {placeVerify?.name && (
+          <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+            Verified: <strong>{placeVerify.name}</strong>
+            {typeof placeVerify.rating === "number" ? ` • ${placeVerify.rating}★` : ""}
+            {typeof placeVerify.user_ratings_total === "number" ? ` • ${placeVerify.user_ratings_total} ratings` : ""}
+          </div>
+        )}
+
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+          Tip: you can find Place IDs via Google’s Place ID Finder.
+        </div>
+      </div>
+    )}
+
+    {/* summary cards */}
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+        gap: 12,
+        marginTop: 16,
+        marginBottom: 16,
+      }}
+    >
+      <div
+        style={{
+          border: "1px solid rgba(148,163,184,0.25)",
+          borderRadius: 14,
+          padding: 14,
+          background: "rgba(15,23,42,0.6)",
+        }}
+      >
+        <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
+        <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+          {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
+          <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
+            {avgRating === null ? "" : stars(Math.round(avgRating))}
+          </span>
+        </div>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid rgba(148,163,184,0.25)",
+          borderRadius: 14,
+          padding: 14,
+          background: "rgba(15,23,42,0.6)",
+        }}
+      >
+        <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
+        <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+          {data.count ?? reviews.length}
+          <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>showing {filteredReviews.length}</span>
+        </div>
+      </div>
+
+      <div
+        style={{
+          border: "1px solid rgba(148,163,184,0.25)",
+          borderRadius: 14,
+          padding: 14,
+          background: "rgba(15,23,42,0.6)",
+        }}
+      >
+        <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8 }}>
+          {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
+        </div>
+        <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
+          Latest review: {lastReviewDate ? formatDate(lastReviewDate) : "—"}
+        </div>
+      </div>
+    </div>
+
+    <DraftReplyPanel />
+
+    {/* filters */}
+    <div
+      style={{
+        display: "flex",
+        gap: 12,
+        flexWrap: "wrap",
+        alignItems: "center",
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <span style={{ opacity: 0.8, fontSize: 13 }}>Rating</span>
+        <select
+          value={ratingFilter}
+          onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
           style={{
+            padding: "10px 10px",
+            borderRadius: 10,
+            border: "1px solid rgba(148,163,184,0.35)",
+            background: "rgba(15,23,42,0.7)",
+            color: "inherit",
+            outline: "none",
+          }}
+        >
+          <option value="all">All</option>
+          <option value="5">5</option>
+          <option value="4">4</option>
+          <option value="3">3</option>
+          <option value="2">2</option>
+          <option value="1">1</option>
+        </select>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+        <span style={{ opacity: 0.8, fontSize: 13 }}>Search</span>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="author, text, language…"
+          style={{
+            width: "100%",
+            minWidth: 240,
             padding: "10px 12px",
             borderRadius: 10,
             border: "1px solid rgba(148,163,184,0.35)",
             background: "rgba(15,23,42,0.7)",
-            cursor: "pointer",
+            color: "inherit",
+            outline: "none",
           }}
-        >
-          Clear
-        </button>
+        />
       </div>
 
-      {/* list */}
-      {filteredReviews.length === 0 ? (
-        <p style={{ opacity: 0.85 }}>No reviews match your filters.</p>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {filteredReviews.map((r) => (
-            <div
-              key={r.id}
-              style={{
-                border: "1px solid rgba(148,163,184,0.25)",
-                borderRadius: 14,
-                padding: 14,
-                background: "rgba(15,23,42,0.6)",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
-                <div style={{ fontWeight: 600 }}>
-                  {r.author_url ? (
-                    <a href={r.author_url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "underline" }}>
-                      {r.author_name ?? "Anonymous"}
-                    </a>
-                  ) : (
-                    <span>{r.author_name ?? "Anonymous"}</span>
-                  )}
-                  <span style={{ opacity: 0.8, marginLeft: 10 }}>
-                    {stars(r.rating)} {typeof r.rating === "number" ? `(${r.rating}/5)` : ""}
-                  </span>
-                </div>
+      <button
+        onClick={() => {
+          setRatingFilter("all");
+          setQuery("");
+        }}
+        style={{
+          padding: "10px 12px",
+          borderRadius: 10,
+          border: "1px solid rgba(148,163,184,0.35)",
+          background: "rgba(15,23,42,0.7)",
+          cursor: "pointer",
+        }}
+      >
+        Clear
+      </button>
+    </div>
 
-                <div style={{ opacity: 0.75, fontSize: 12, textAlign: "right" }}>
-                  <div>{formatDate(r.review_date)}</div>
-                  <div>
-                    {r.source?.toUpperCase()} {r.detected_language ? `• ${r.detected_language}` : ""}
-                  </div>
-                </div>
+    {/* list */}
+    {filteredReviews.length === 0 ? (
+      <p style={{ opacity: 0.85 }}>No reviews match your filters.</p>
+    ) : (
+      <div style={{ display: "grid", gap: 12 }}>
+        {filteredReviews.map((r) => (
+          <div
+            key={r.id}
+            style={{
+              border: "1px solid rgba(148,163,184,0.25)",
+              borderRadius: 14,
+              padding: 14,
+              background: "rgba(15,23,42,0.6)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
+              <div style={{ fontWeight: 600 }}>
+                {r.author_url ? (
+                  <a
+                    href={r.author_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "inherit", textDecoration: "underline" }}
+                  >
+                    {r.author_name ?? "Anonymous"}
+                  </a>
+                ) : (
+                  <span>{r.author_name ?? "Anonymous"}</span>
+                )}
+                <span style={{ opacity: 0.8, marginLeft: 10 }}>
+                  {stars(r.rating)} {typeof r.rating === "number" ? `(${r.rating}/5)` : ""}
+                </span>
               </div>
 
-              <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{r.review_text ?? ""}</div>
+              <div style={{ opacity: 0.75, fontSize: 12, textAlign: "right" }}>
+                <div>{formatDate(r.review_date)}</div>
+                <div>
+                  {r.source?.toUpperCase()} {r.detected_language ? `• ${r.detected_language}` : ""}
+                </div>
+              </div>
             </div>
-          ))}
-        </div>
-      )}
-      {toast && (
-  <div
-    style={{
-      position: "fixed",
-      bottom: 24,
-      right: 24,
-      padding: "12px 16px",
-      borderRadius: 12,
-      background:
-        toast.type === "error"
-          ? "rgba(220,38,38,0.95)"
-          : "rgba(15,23,42,0.95)",
-      color: "#fff",
-      fontSize: 14,
-      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-      zIndex: 1000,
-      maxWidth: 360,
-    }}
-  >
-    {toast.message}
-  </div>
-)}
-    </main>
-  );
+
+            <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{r.review_text ?? ""}</div>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {/* toast */}
+    {toast && (
+      <div
+        style={{
+          position: "fixed",
+          bottom: 24,
+          right: 24,
+          padding: "12px 16px",
+          borderRadius: 12,
+          background: toast.type === "error" ? "rgba(220,38,38,0.95)" : "rgba(15,23,42,0.95)",
+          color: "#fff",
+          fontSize: 14,
+          boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+          zIndex: 1000,
+          maxWidth: 360,
+        }}
+      >
+        {toast.message}
+      </div>
+    )}
+  </main>
+);
 }
