@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type DraftReplyResponse = {
   ok: boolean;
@@ -10,13 +10,19 @@ type DraftReplyResponse = {
 
 type Status = "idle" | "loading" | "success" | "error";
 
-export default function DraftReplyPanel() {
-  const [businessName, setBusinessName] = useState("Andeluna");
+type DraftReplyPanelProps = {
+  // Dashboard passes the current business name when available
+  businessName?: string | null;
+};
+
+export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
+  // ✅ Start empty (no hardcoded Andeluna)
+  // and then sync from prop once dashboard loads it
+  const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
+
   const [rating, setRating] = useState<number>(5);
   const [language, setLanguage] = useState<string>("es");
-  const [reviewText, setReviewText] = useState(
-    "Amazing tasting experience and the staff was super friendly. Beautiful views!"
-  );
+  const [reviewText, setReviewText] = useState("Paste a review here (or type one)…");
 
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<Status>("idle");
@@ -25,12 +31,24 @@ export default function DraftReplyPanel() {
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
-  // ✅ NEW: version counter for demo confidence (v1, v2, v3...)
+  // ✅ version counter for demo confidence (v1, v2, v3...)
   const [version, setVersion] = useState<number>(0);
 
+  // ✅ Keep local input synced if Dashboard loads a business name later
+  useEffect(() => {
+    const next = (businessName ?? "").trim();
+    // only update if the prop is meaningfully different
+    if (next && next !== businessNameState) {
+      setBusinessNameState(next);
+    }
+    // If businessName becomes empty (new user), we do NOT force-clear
+    // because user might be typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessName]);
+
   const canSubmit = useMemo(() => {
-    return businessName.trim().length > 0 && reviewText.trim().length > 10;
-  }, [businessName, reviewText]);
+    return businessNameState.trim().length > 0 && reviewText.trim().length > 10;
+  }, [businessNameState, reviewText]);
 
   async function generateDraft() {
     setStatus("loading");
@@ -41,7 +59,7 @@ export default function DraftReplyPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          business_name: businessName.trim(),
+          business_name: businessNameState.trim(),
           rating,
           language,
           review_text: reviewText.trim(),
@@ -77,15 +95,13 @@ export default function DraftReplyPanel() {
   }
 
   async function onGenerate() {
-    // First generation: clear draft so user knows it’s “fresh”
     setDraft("");
-    setVersion(0); // reset counter
+    setVersion(0);
     const result = await generateDraft();
-    if (result.ok) setVersion(1); // v1 after first successful generation
+    if (result.ok) setVersion(1);
   }
 
   async function onRegenerate() {
-    // Regenerate: KEEP existing draft visible while loading
     const result = await generateDraft();
     if (result.ok) setVersion((v) => (v > 0 ? v + 1 : 1));
   }
@@ -126,7 +142,6 @@ export default function DraftReplyPanel() {
         <div>
           <h2 style={{ margin: 0, fontSize: 18, display: "flex", gap: 10, alignItems: "center" }}>
             Draft Reply (Read-only)
-            {/* ✅ NEW: subtle version pill */}
             {version > 0 ? (
               <span
                 style={{
@@ -149,9 +164,7 @@ export default function DraftReplyPanel() {
         </div>
 
         {status === "success" && hasDraft ? (
-          <div style={{ opacity: 0.75, fontSize: 13, alignSelf: "center" }}>
-            Draft ready ✅
-          </div>
+          <div style={{ opacity: 0.75, fontSize: 13, alignSelf: "center" }}>Draft ready ✅</div>
         ) : null}
       </div>
 
@@ -164,17 +177,13 @@ export default function DraftReplyPanel() {
         }}
       >
         <input
-          value={businessName}
-          onChange={(e) => setBusinessName(e.target.value)}
+          value={businessNameState}
+          onChange={(e) => setBusinessNameState(e.target.value)}
           placeholder="Business name"
           style={inputStyle}
         />
 
-        <select
-          value={String(rating)}
-          onChange={(e) => setRating(Number(e.target.value))}
-          style={inputStyle}
-        >
+        <select value={String(rating)} onChange={(e) => setRating(Number(e.target.value))} style={inputStyle}>
           {[5, 4, 3, 2, 1].map((r) => (
             <option key={r} value={r}>
               {r}★
@@ -182,11 +191,7 @@ export default function DraftReplyPanel() {
           ))}
         </select>
 
-        <select
-          value={language}
-          onChange={(e) => setLanguage(e.target.value)}
-          style={inputStyle}
-        >
+        <select value={language} onChange={(e) => setLanguage(e.target.value)} style={inputStyle}>
           <option value="en">EN</option>
           <option value="es">ES</option>
           <option value="pt">PT</option>
@@ -213,11 +218,7 @@ export default function DraftReplyPanel() {
 
       <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "center" }}>
         {!hasDraft ? (
-          <button
-            onClick={onGenerate}
-            disabled={!canSubmit || isLoading}
-            style={primaryButtonStyle(!canSubmit || isLoading)}
-          >
+          <button onClick={onGenerate} disabled={!canSubmit || isLoading} style={primaryButtonStyle(!canSubmit || isLoading)}>
             {isLoading ? "Generating..." : "Generate draft"}
           </button>
         ) : (
@@ -251,18 +252,13 @@ export default function DraftReplyPanel() {
           </>
         )}
 
-        {status === "error" && (
-          <span style={{ color: "#ffb3b3", fontSize: 14 }}>{errorMessage}</span>
-        )}
+        {status === "error" && <span style={{ color: "#ffb3b3", fontSize: 14 }}>{errorMessage}</span>}
 
         {isLoading && hasDraft ? (
-          <span style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
-            Generating a fresh version…
-          </span>
+          <span style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>Generating a fresh version…</span>
         ) : null}
       </div>
 
-      {/* ✅ Draft box with “locked” overlay while regenerating */}
       <div style={{ marginTop: 12, position: "relative" }}>
         <textarea
           value={draft}
@@ -275,7 +271,6 @@ export default function DraftReplyPanel() {
             resize: "vertical",
             lineHeight: 1.4,
             opacity: hasDraft ? 1 : 0.8,
-            // subtle visual lock when regenerating
             filter: isLoading && hasDraft ? "blur(0.2px)" : undefined,
           }}
         />
