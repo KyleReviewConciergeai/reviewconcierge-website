@@ -64,6 +64,19 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessName]);
 
+  /**
+   * ✅ Optional polish #1: Cleanup timer on unmount
+   * Prevents edge-case setState after unmount if user navigates away quickly.
+   */
+  useEffect(() => {
+    return () => {
+      if (copiedTimer.current) {
+        window.clearTimeout(copiedTimer.current);
+        copiedTimer.current = null;
+      }
+    };
+  }, []);
+
   const canSubmit = useMemo(() => {
     return businessNameState.trim().length > 0 && reviewText.trim().length > 10;
   }, [businessNameState, reviewText]);
@@ -88,15 +101,20 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (!res.ok || data.ok === false) {
         const msg =
-          typeof data.error === "string" && data.error.trim()
-            ? data.error
-            : "Failed to generate draft.";
+          typeof data.error === "string" && data.error.trim() ? data.error : "Failed to generate draft.";
+
+        /**
+         * ✅ Optional polish #2: Clear draft on error
+         * Keeps UI consistent (no stale draft showing if a regenerate fails).
+         */
+        setDraft("");
         setStatus("error");
         setErrorMessage(msg);
         return { ok: false as const };
       }
 
       if (typeof data.reply !== "string" || !data.reply.trim()) {
+        setDraft("");
         setStatus("error");
         setErrorMessage("No draft returned from server.");
         return { ok: false as const };
@@ -106,6 +124,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       setStatus("success");
       return { ok: true as const };
     } catch (err: unknown) {
+      setDraft("");
       setStatus("error");
       setErrorMessage(err instanceof Error ? err.message : "Something went wrong.");
       return { ok: false as const };
@@ -257,7 +276,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       {/* Actions */}
       <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
         {!hasDraft ? (
-          <button onClick={onGenerate} disabled={!canSubmit || isLoading} style={primaryButtonStyle(!canSubmit || isLoading)}>
+          <button
+            onClick={onGenerate}
+            disabled={!canSubmit || isLoading}
+            style={primaryButtonStyle(!canSubmit || isLoading)}
+          >
             {isLoading ? "Generating…" : "Generate draft"}
           </button>
         ) : (
