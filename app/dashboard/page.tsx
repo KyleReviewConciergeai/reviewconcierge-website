@@ -657,40 +657,53 @@ function maskPlaceId(pid?: string | null) {
       <div
   style={{
     display: "grid",
-    gridTemplateColumns: "1fr",
-    gap: 12,
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: 16,
     marginTop: 16,
-    marginBottom: 16,
   }}
 >
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-            {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
-            <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
-              {avgRating === null ? "" : stars(Math.round(avgRating))}
-            </span>
-          </div>
-        </div>
+  {/* Average Rating */}
+  <div style={cardStyle}>
+    <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
+    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+      {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
+      <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
+        {avgRating === null ? "" : stars(Math.round(avgRating))}
+      </span>
+    </div>
+  </div>
 
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-            {data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>showing {filteredReviews.length}</span>
-          </div>
-        </div>
+  {/* Reviews */}
+  <div style={cardStyle}>
+    <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
+    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+      {data.count ?? reviews.length}
+      <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
+        showing {filteredReviews.length}
+      </span>
+    </div>
+  </div>
 
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
-          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8 }}>
-            {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
-          </div>
-          <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
-            Latest review: {lastReviewDate ? formatDate(lastReviewDate) : "—"}
-          </div>
-        </div>
-      </div>
+  {/* Last Refresh */}
+  <div style={cardStyle}>
+    <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
+    <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8 }}>
+      {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
+    </div>
+    <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
+      Latest review: {lastReviewDate ? formatDate(lastReviewDate) : "—"}
+    </div>
+  </div>
+</div>
+
+{/* Mobile stacking */}
+<style jsx>{`
+  @media (max-width: 768px) {
+    div {
+      grid-template-columns: 1fr !important;
+    }
+  }
+`}</style>
 
       {/* ✅ Pass business name down so DraftReplyPanel is not hardcoded */}
       <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
