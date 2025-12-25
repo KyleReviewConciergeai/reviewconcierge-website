@@ -654,12 +654,13 @@ function maskPlaceId(pid?: string | null) {
 )}
 
       {/* summary cards */}
-      <div
+     <div
   style={{
     display: "grid",
     gridTemplateColumns: "repeat(3, 1fr)",
     gap: 16,
-    marginTop: 16,
+    marginTop: 20,
+    marginBottom: 24, // 👈 THIS is the missing piece
   }}
 >
   {/* Average Rating */}
