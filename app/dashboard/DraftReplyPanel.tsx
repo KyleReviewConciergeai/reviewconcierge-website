@@ -14,36 +14,13 @@ type DraftReplyPanelProps = {
   businessName?: string | null;
 };
 
-function useMediaQuery(query: string) {
-  const [matches, setMatches] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const mq = window.matchMedia(query);
-    const update = () => setMatches(mq.matches);
-
-    update();
-
-    // Safari support
-    if (mq.addEventListener) mq.addEventListener("change", update);
-    else mq.addListener(update);
-
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", update);
-      else mq.removeListener(update);
-    };
-  }, [query]);
-
-  return matches;
-}
-
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
+
   const [rating, setRating] = useState<number>(5);
   const [language, setLanguage] = useState<string>("es");
 
-  // empty by default (better UX than prefilled placeholder text)
+  // Keep empty-friendly: you can still paste/replace quickly
   const [reviewText, setReviewText] = useState("");
 
   const [draft, setDraft] = useState("");
@@ -55,14 +32,26 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
   const [version, setVersion] = useState<number>(0);
 
-  // Responsive: stack controls on mobile
-  const isMobile = useMediaQuery("(max-width: 720px)");
+  // ✅ Mobile responsive without mutating shared objects
+  const [isNarrow, setIsNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 720px)");
+    const apply = () => setIsNarrow(mq.matches);
+    apply();
+
+    // Safari compatibility: addListener/removeListener fallback
+    if (mq.addEventListener) mq.addEventListener("change", apply);
+    else mq.addListener(apply);
+
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", apply);
+      else mq.removeListener(apply);
+    };
+  }, []);
 
   useEffect(() => {
     const next = (businessName ?? "").trim();
-    if (next && next !== businessNameState) {
-      setBusinessNameState(next);
-    }
+    if (next && next !== businessNameState) setBusinessNameState(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessName]);
 
@@ -90,9 +79,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (!res.ok || data.ok === false) {
         const msg =
-          typeof data.error === "string" && data.error.trim()
-            ? data.error
-            : "Failed to generate draft.";
+          typeof data.error === "string" && data.error.trim() ? data.error : "Failed to generate draft.";
         setStatus("error");
         setErrorMessage(msg);
         return { ok: false as const };
@@ -148,22 +135,22 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const hasDraft = Boolean(draft.trim());
   const canCopy = hasDraft && !isLoading;
 
-  // ✅ Status pill is OPTIONAL now (no more duplicate "Read-only")
-  const statusPill: { label: string; tone: "neutral" | "success" | "error" } | null = (() => {
+  // ✅ Status pill can be absent; render safely
+  const statusPill = useMemo(() => {
     if (status === "loading") return { label: "Generating…", tone: "neutral" as const };
     if (status === "error") return { label: "Error", tone: "error" as const };
     if (status === "success" && hasDraft) return { label: "Draft ready", tone: "success" as const };
     return null;
-  })();
+  }, [status, hasDraft]);
 
   const controlsGridStyle: React.CSSProperties = useMemo(
     () => ({
       display: "grid",
-      gridTemplateColumns: isMobile ? "1fr" : "1fr 140px 120px",
+      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 120px",
       gap: 10,
       marginTop: 12,
     }),
-    [isMobile]
+    [isNarrow]
   );
 
   return (
@@ -182,6 +169,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply</h2>
 
+            {/* ✅ Keep this as a constant badge (communicates safety) */}
             <span style={badgeStyle}>READ-ONLY</span>
 
             {version > 0 ? (
@@ -196,12 +184,12 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </p>
         </div>
 
-        {/* ✅ Only show status pill when meaningful */}
-        {statusPill ? (
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {/* ✅ Only render when we actually have a pill */}
+          {statusPill ? (
             <span style={statusPillStyle(statusPill.tone)}>{statusPill.label}</span>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
 
       {/* Controls */}
@@ -244,9 +232,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       <div style={{ marginTop: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
           <div style={labelStyle}>Review text</div>
-          <div style={{ fontSize: 12, color: "rgba(226,232,240,0.6)" }}>
-            {reviewText.trim().length}/10+
-          </div>
+          <div style={{ fontSize: 12, color: "rgba(226,232,240,0.6)" }}>{reviewText.trim().length}/10+</div>
         </div>
 
         <textarea
@@ -281,7 +267,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </>
         )}
 
-        {status === "error" && <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span>}
+        {status === "error" ? <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span> : null}
 
         {isLoading && hasDraft ? (
           <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>Generating a fresh version…</span>
