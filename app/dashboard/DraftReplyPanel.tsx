@@ -372,6 +372,7 @@ const panelStyle: React.CSSProperties = {
   background: "#0f172a",
   color: "#e2e8f0",
   width: "100%",
+  marginBottom: 16, // ✅ adds space below Draft Reply card (above filters)
 };
 
 const labelStyle: React.CSSProperties = {
