@@ -11,18 +11,17 @@ type DraftReplyResponse = {
 type Status = "idle" | "loading" | "success" | "error";
 
 type DraftReplyPanelProps = {
-  // Dashboard passes the current business name when available
   businessName?: string | null;
 };
 
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
-  // ✅ Start empty (no hardcoded Andeluna)
-  // and then sync from prop once dashboard loads it
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
 
   const [rating, setRating] = useState<number>(5);
   const [language, setLanguage] = useState<string>("es");
-  const [reviewText, setReviewText] = useState("Paste a review here (or type one)…");
+
+  // ✅ Keep this empty-friendly: you can still paste/replace quickly
+  const [reviewText, setReviewText] = useState("");
 
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<Status>("idle");
@@ -31,18 +30,13 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
-  // ✅ version counter for demo confidence (v1, v2, v3...)
   const [version, setVersion] = useState<number>(0);
 
-  // ✅ Keep local input synced if Dashboard loads a business name later
   useEffect(() => {
     const next = (businessName ?? "").trim();
-    // only update if the prop is meaningfully different
     if (next && next !== businessNameState) {
       setBusinessNameState(next);
     }
-    // If businessName becomes empty (new user), we do NOT force-clear
-    // because user might be typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessName]);
 
@@ -128,98 +122,99 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const hasDraft = Boolean(draft.trim());
   const canCopy = hasDraft && !isLoading;
 
+  const statusPill = (() => {
+    if (status === "loading") return { label: "Generating…", tone: "neutral" as const };
+    if (status === "error") return { label: "Error", tone: "error" as const };
+    if (status === "success" && hasDraft) return { label: "Draft ready", tone: "success" as const };
+    return { label: "Read-only", tone: "neutral" as const };
+  })();
+
   return (
-    <section
-      style={{
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 16,
-        padding: 16,
-        background: "rgba(255,255,255,0.03)",
-        maxWidth: 900,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 18, display: "flex", gap: 10, alignItems: "center" }}>
-            Draft Reply (Read-only)
+    <section style={panelStyle}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ minWidth: 240 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply</h2>
+
+            <span style={badgeStyle}>READ-ONLY</span>
+
             {version > 0 ? (
-              <span
-                style={{
-                  fontSize: 12,
-                  padding: "4px 8px",
-                  borderRadius: 999,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "rgba(255,255,255,0.06)",
-                  opacity: 0.9,
-                }}
-                title="Draft version counter"
-              >
+              <span style={versionBadgeStyle} title="Draft version counter">
                 v{version}
               </span>
             ) : null}
-          </h2>
-          <p style={{ marginTop: 6, opacity: 0.8 }}>
+          </div>
+
+          <p style={{ marginTop: 8, marginBottom: 0, color: "rgba(226,232,240,0.78)", lineHeight: 1.4 }}>
             Paste a review → generate a suggested reply (does not post anywhere yet).
           </p>
         </div>
 
-        {status === "success" && hasDraft ? (
-          <div style={{ opacity: 0.75, fontSize: 13, alignSelf: "center" }}>Draft ready ✅</div>
-        ) : null}
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <span style={statusPillStyle(statusPill.tone)}>{statusPill.label}</span>
+        </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 140px 120px",
-          gap: 10,
-          marginTop: 12,
-        }}
-      >
-        <input
-          value={businessNameState}
-          onChange={(e) => setBusinessNameState(e.target.value)}
-          placeholder="Business name"
-          style={inputStyle}
-        />
+      {/* Controls */}
+      <div style={controlsGridStyle}>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={labelStyle}>Business name</div>
+          <input
+            value={businessNameState}
+            onChange={(e) => setBusinessNameState(e.target.value)}
+            placeholder="e.g. Andeluna Winery Lodge"
+            style={inputStyle}
+          />
+        </div>
 
-        <select value={String(rating)} onChange={(e) => setRating(Number(e.target.value))} style={inputStyle}>
-          {[5, 4, 3, 2, 1].map((r) => (
-            <option key={r} value={r}>
-              {r}★
-            </option>
-          ))}
-        </select>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={labelStyle}>Rating</div>
+          <select value={String(rating)} onChange={(e) => setRating(Number(e.target.value))} style={selectStyle}>
+            {[5, 4, 3, 2, 1].map((r) => (
+              <option key={r} value={r}>
+                {r}★
+              </option>
+            ))}
+          </select>
+        </div>
 
-        <select value={language} onChange={(e) => setLanguage(e.target.value)} style={inputStyle}>
-          <option value="en">EN</option>
-          <option value="es">ES</option>
-          <option value="pt">PT</option>
-          <option value="fr">FR</option>
-          <option value="it">IT</option>
-          <option value="de">DE</option>
-        </select>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={labelStyle}>Language</div>
+          <select value={language} onChange={(e) => setLanguage(e.target.value)} style={selectStyle}>
+            <option value="en">EN</option>
+            <option value="es">ES</option>
+            <option value="pt">PT</option>
+            <option value="fr">FR</option>
+            <option value="it">IT</option>
+            <option value="de">DE</option>
+          </select>
+        </div>
       </div>
 
-      <div style={{ marginTop: 10 }}>
+      {/* Review input */}
+      <div style={{ marginTop: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+          <div style={labelStyle}>Review text</div>
+          <div style={{ fontSize: 12, color: "rgba(226,232,240,0.6)" }}>
+            {reviewText.trim().length}/10+
+          </div>
+        </div>
+
         <textarea
           value={reviewText}
           onChange={(e) => setReviewText(e.target.value)}
-          placeholder="Paste the review text here..."
+          placeholder="Paste the review text here…"
           rows={5}
-          style={{
-            ...inputStyle,
-            width: "100%",
-            resize: "vertical",
-            lineHeight: 1.4,
-          }}
+          style={{ ...textareaStyle, marginTop: 6 }}
         />
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 10, alignItems: "center" }}>
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
         {!hasDraft ? (
           <button onClick={onGenerate} disabled={!canSubmit || isLoading} style={primaryButtonStyle(!canSubmit || isLoading)}>
-            {isLoading ? "Generating..." : "Generate draft"}
+            {isLoading ? "Generating…" : "Generate draft"}
           </button>
         ) : (
           <>
@@ -229,48 +224,39 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               style={primaryButtonStyle(!canSubmit || isLoading)}
               title="Generate another version"
             >
-              {isLoading ? "Regenerating..." : "Regenerate"}
+              {isLoading ? "Regenerating…" : "Regenerate"}
             </button>
 
-            <button
-              onClick={onCopy}
-              disabled={!canCopy}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.06)",
-                cursor: canCopy ? "pointer" : "not-allowed",
-                color: "white",
-                fontWeight: 600,
-                minWidth: 96,
-                opacity: canCopy ? 1 : 0.6,
-              }}
-            >
+            <button onClick={onCopy} disabled={!canCopy} style={secondaryButtonStyle(!canCopy)}>
               {copied ? "Copied!" : "Copy"}
             </button>
           </>
         )}
 
-        {status === "error" && <span style={{ color: "#ffb3b3", fontSize: 14 }}>{errorMessage}</span>}
+        {status === "error" && (
+          <span style={{ color: "#fecaca", fontSize: 13 }}>
+            {errorMessage}
+          </span>
+        )}
 
         {isLoading && hasDraft ? (
-          <span style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>Generating a fresh version…</span>
+          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>Generating a fresh version…</span>
         ) : null}
       </div>
 
-      <div style={{ marginTop: 12, position: "relative" }}>
+      {/* Draft output */}
+      <div style={{ marginTop: 14, position: "relative" }}>
+        <div style={labelStyle}>Draft reply</div>
+
         <textarea
           value={draft}
           readOnly
-          placeholder="Draft reply will appear here..."
+          placeholder="Draft reply will appear here…"
           rows={7}
           style={{
-            ...inputStyle,
-            width: "100%",
-            resize: "vertical",
-            lineHeight: 1.4,
-            opacity: hasDraft ? 1 : 0.8,
+            ...textareaStyle,
+            marginTop: 6,
+            opacity: hasDraft ? 1 : 0.85,
             filter: isLoading && hasDraft ? "blur(0.2px)" : undefined,
           }}
         />
@@ -282,8 +268,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               position: "absolute",
               inset: 0,
               borderRadius: 12,
-              background: "rgba(0,0,0,0.22)",
-              border: "1px solid rgba(255,255,255,0.08)",
+              background: "rgba(2,6,23,0.40)",
+              border: "1px solid rgba(148,163,184,0.20)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -294,10 +280,10 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               style={{
                 padding: "8px 12px",
                 borderRadius: 999,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(148,163,184,0.28)",
+                background: "rgba(15,23,42,0.75)",
                 fontSize: 13,
-                opacity: 0.9,
+                color: "#e2e8f0",
               }}
             >
               Regenerating…
@@ -305,29 +291,148 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </div>
         ) : null}
       </div>
+
+      {/* Small footer note for demos */}
+      <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.6)" }}>
+        Tip: after generating, click <strong>Copy</strong> and paste into Google Reviews.
+      </div>
     </section>
   );
 }
 
-function primaryButtonStyle(disabled: boolean): React.CSSProperties {
-  return {
-    padding: "10px 14px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: disabled ? "rgba(255,255,255,0.06)" : "rgba(99,102,241,0.35)",
-    cursor: disabled ? "not-allowed" : "pointer",
-    color: "white",
-    fontWeight: 600,
-    minWidth: 140,
-  };
-}
+/** ---------- Styles (dark/premium, matches dashboard) ---------- */
+
+const panelStyle: React.CSSProperties = {
+  border: "1px solid rgba(148,163,184,0.25)",
+  borderRadius: 16,
+  padding: 16,
+  background: "#0f172a",
+  color: "#e2e8f0",
+  width: "100%",
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "rgba(226,232,240,0.72)",
+};
+
+const badgeStyle: React.CSSProperties = {
+  fontSize: 11,
+  letterSpacing: "0.06em",
+  padding: "4px 8px",
+  borderRadius: 999,
+  border: "1px solid rgba(148,163,184,0.28)",
+  background: "rgba(15,23,42,0.75)",
+  color: "rgba(226,232,240,0.85)",
+};
+
+const versionBadgeStyle: React.CSSProperties = {
+  fontSize: 12,
+  padding: "4px 8px",
+  borderRadius: 999,
+  border: "1px solid rgba(148,163,184,0.28)",
+  background: "rgba(15,23,42,0.75)",
+  color: "#e2e8f0",
+};
+
+const controlsGridStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr 140px 120px",
+  gap: 10,
+  marginTop: 12,
+};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
   borderRadius: 12,
-  border: "1px solid rgba(255,255,255,0.10)",
-  background: "rgba(0,0,0,0.25)",
-  color: "white",
+  border: "1px solid rgba(148,163,184,0.35)",
+  background: "rgba(15,23,42,0.85)",
+  color: "#e2e8f0",
   outline: "none",
 };
+
+const selectStyle: React.CSSProperties = {
+  ...inputStyle,
+  WebkitAppearance: "none",
+  appearance: "none",
+};
+
+const textareaStyle: React.CSSProperties = {
+  ...inputStyle,
+  width: "100%",
+  resize: "vertical",
+  lineHeight: 1.45,
+  minHeight: 120,
+};
+
+function primaryButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.35)",
+    background: disabled ? "rgba(15,23,42,0.75)" : "rgba(99,102,241,0.50)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    color: "#e2e8f0",
+    fontWeight: 700,
+    minWidth: 160,
+    opacity: disabled ? 0.6 : 1,
+  };
+}
+
+function secondaryButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    padding: "10px 14px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.35)",
+    background: "rgba(15,23,42,0.85)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    color: "#e2e8f0",
+    fontWeight: 700,
+    minWidth: 110,
+    opacity: disabled ? 0.6 : 1,
+  };
+}
+
+function statusPillStyle(tone: "neutral" | "success" | "error"): React.CSSProperties {
+  const base: React.CSSProperties = {
+    fontSize: 12,
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(148,163,184,0.28)",
+    background: "rgba(15,23,42,0.75)",
+    color: "#e2e8f0",
+    whiteSpace: "nowrap",
+  };
+
+  if (tone === "success") {
+    return {
+      ...base,
+      border: "1px solid rgba(34,197,94,0.35)",
+      background: "rgba(34,197,94,0.12)",
+    };
+  }
+
+  if (tone === "error") {
+    return {
+      ...base,
+      border: "1px solid rgba(248,113,113,0.45)",
+      background: "rgba(248,113,113,0.12)",
+    };
+  }
+
+  return base;
+}
+
+/** Mobile responsiveness without CSS files */
+const _originalMatchMedia = typeof window !== "undefined" ? window.matchMedia : null;
+if (typeof window !== "undefined") {
+  // If narrow screen, stack controls nicely
+  const mq = window.matchMedia("(max-width: 720px)");
+  const apply = () => {
+    // This is safe: it only affects the inline style object used in render
+    controlsGridStyle.gridTemplateColumns = mq.matches ? "1fr" : "1fr 140px 120px";
+  };
+  apply();
+  mq.addEventListener?.("change", apply);
+}
