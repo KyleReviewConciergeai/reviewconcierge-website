@@ -499,7 +499,16 @@ function maskPlaceId(pid?: string | null) {
             Paste a Place ID to verify your business and enable “Refresh from Google”.
           </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div
+  style={{
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+    flexWrap: "wrap",
+    marginTop: 16, // 👈 adds space above filters
+  }}
+>
+  
             <input
               value={placeIdInput}
               onChange={(e) => {
