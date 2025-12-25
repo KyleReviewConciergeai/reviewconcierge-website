@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import DraftReplyPanel from "./DraftReplyPanel";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
@@ -36,6 +36,8 @@ type Toast = {
   type?: "success" | "error";
 };
 
+type PlaceIdStatus = "idle" | "loading" | "success" | "error";
+
 function formatDate(iso: string | null) {
   if (!iso) return "";
   try {
@@ -62,9 +64,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   // UI state
-  const [actionLoading, setActionLoading] = useState<"reload" | "google" | "logout" | "connect" | null>(
-    null
-  );
+  const [actionLoading, setActionLoading] = useState<
+    "reload" | "google" | "logout" | "connect" | null
+  >(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
@@ -74,9 +76,15 @@ export default function DashboardPage() {
 
   // Place ID onboarding
   const [placeIdInput, setPlaceIdInput] = useState("");
-  const [placeVerify, setPlaceVerify] = useState<{ name?: string; rating?: number; user_ratings_total?: number } | null>(
-    null
-  );
+  const [placeVerify, setPlaceVerify] = useState<{
+    name?: string;
+    rating?: number;
+    user_ratings_total?: number;
+  } | null>(null);
+
+  // ✅ NEW: explicit onboarding UI states
+  const [placeIdStatus, setPlaceIdStatus] = useState<PlaceIdStatus>("idle");
+  const [placeIdError, setPlaceIdError] = useState<string | null>(null);
 
   // Header
   const [userEmail, setUserEmail] = useState<string>("");
@@ -106,9 +114,22 @@ export default function DashboardPage() {
         const b = (json.business ?? null) as CurrentBusiness | null;
         setBusiness(b);
         setPlaceIdInput(b?.google_place_id ?? "");
+
+        // ✅ If already connected, reflect success state on load (nice polish)
+        if (b?.google_place_id) {
+          setPlaceIdStatus("success");
+          setPlaceIdError(null);
+        } else {
+          setPlaceIdStatus("idle");
+          setPlaceIdError(null);
+        }
+      } else {
+        // If API returns ok:false, keep page usable
+        setPlaceIdStatus("idle");
       }
     } catch {
       // ignore (we still want the dashboard to render)
+      setPlaceIdStatus("idle");
     } finally {
       setBusinessLoaded(true);
     }
@@ -180,6 +201,11 @@ export default function DashboardPage() {
     const placeId = placeIdInput.trim();
     if (!placeId) return;
 
+    // ✅ NEW: enter "loading" state and clear any previous errors
+    setPlaceIdStatus("loading");
+    setPlaceIdError(null);
+    setPlaceVerify(null);
+
     try {
       setActionLoading("connect");
 
@@ -192,7 +218,14 @@ export default function DashboardPage() {
       const json = await res.json();
 
       if (!res.ok || !json?.ok) {
-        const msg = json?.error ?? json?.googleError ?? "Failed to connect Place ID";
+        const msg =
+          json?.error ??
+          json?.googleError ??
+          "We couldn’t verify this Place ID. Please double-check it and try again.";
+
+        // ✅ NEW: friendly error state (in-card) + toast
+        setPlaceIdStatus("error");
+        setPlaceIdError(msg);
         showToast({ message: msg, type: "error" }, 4000);
         return;
       }
@@ -201,6 +234,10 @@ export default function DashboardPage() {
       setBusiness((json.business ?? null) as CurrentBusiness | null);
       setPlaceVerify(json.verified ?? null);
       setPlaceIdInput(json.business?.google_place_id ?? placeId);
+
+      // ✅ NEW: success state (in-card)
+      setPlaceIdStatus("success");
+      setPlaceIdError(null);
 
       showToast(
         { message: `Connected: ${json?.verified?.name ?? "Place verified"}`, type: "success" },
@@ -212,7 +249,10 @@ export default function DashboardPage() {
       setData(r);
       setLastRefreshedAt(new Date().toISOString());
     } catch (e: any) {
-      showToast({ message: e?.message ?? "Failed to connect", type: "error" }, 4000);
+      const msg = e?.message ?? "Network error verifying Place ID. Please try again.";
+      setPlaceIdStatus("error");
+      setPlaceIdError(msg);
+      showToast({ message: msg, type: "error" }, 4000);
     } finally {
       setActionLoading(null);
     }
@@ -269,12 +309,7 @@ export default function DashboardPage() {
       if (!matchesRating) return false;
       if (!q) return true;
 
-      const haystack = [
-        r.author_name ?? "",
-        r.review_text ?? "",
-        r.source ?? "",
-        r.detected_language ?? "",
-      ]
+      const haystack = [r.author_name ?? "", r.review_text ?? "", r.source ?? "", r.detected_language ?? ""]
         .join(" ")
         .toLowerCase();
 
@@ -283,7 +318,9 @@ export default function DashboardPage() {
   }, [reviews, ratingFilter, query]);
 
   const avgRating = useMemo(() => {
-    const rated = reviews.filter((r) => typeof r.rating === "number") as Array<Review & { rating: number }>;
+    const rated = reviews.filter((r) => typeof r.rating === "number") as Array<
+      Review & { rating: number }
+    >;
     if (rated.length === 0) return null;
     const sum = rated.reduce((acc, r) => acc + r.rating, 0);
     return sum / rated.length;
@@ -332,7 +369,14 @@ export default function DashboardPage() {
   if (!data?.ok) {
     return (
       <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 14,
+            alignItems: "flex-start",
+          }}
+        >
           <div>
             <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
             {userEmail && <div style={{ opacity: 0.7, fontSize: 13 }}>Signed in as {userEmail}</div>}
@@ -357,19 +401,23 @@ export default function DashboardPage() {
 
         <p style={{ color: "#ffb3b3", marginTop: 12 }}>Error: {data?.error ?? "Unknown error"}</p>
 
-        {toast && (
-          <div style={toastStyle(toast.type)}>
-            {toast.message}
-          </div>
-        )}
+        {toast && <div style={toastStyle(toast.type)}>{toast.message}</div>}
       </main>
     );
   }
 
   const displayBusinessName =
-    business?.business_name ??
-    data.business?.business_name ??
-    (businessLoaded ? "Unknown" : "Loading…");
+    business?.business_name ?? data.business?.business_name ?? (businessLoaded ? "Unknown" : "Loading…");
+
+  const isPlaceConnectLoading = actionLoading === "connect" || placeIdStatus === "loading";
+const hasGoogleConnected = !!business?.google_place_id;
+
+function maskPlaceId(pid?: string | null) {
+  if (!pid) return "";
+  const s = String(pid);
+  if (s.length <= 10) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
 
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
@@ -423,6 +471,7 @@ export default function DashboardPage() {
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
             Connect your Google Place ID
           </div>
+
           <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
             Paste a Place ID to verify your business and enable “Refresh from Google”.
           </div>
@@ -430,8 +479,16 @@ export default function DashboardPage() {
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <input
               value={placeIdInput}
-              onChange={(e) => setPlaceIdInput(e.target.value)}
+              onChange={(e) => {
+                setPlaceIdInput(e.target.value);
+                // ✅ Reset error UI as user types again
+                if (placeIdStatus === "error") {
+                  setPlaceIdStatus("idle");
+                  setPlaceIdError(null);
+                }
+              }}
               placeholder="e.g. ChIJN1t_tDeuEmsRUsoyG83frY4"
+              disabled={isPlaceConnectLoading}
               style={{
                 flex: "1 1 320px",
                 padding: "10px 12px",
@@ -440,16 +497,38 @@ export default function DashboardPage() {
                 background: "rgba(15,23,42,0.7)",
                 color: "inherit",
                 outline: "none",
+                opacity: isPlaceConnectLoading ? 0.7 : 1,
               }}
             />
 
             <button
               onClick={connectGooglePlaceId}
-              disabled={actionLoading !== null || !placeIdInput.trim()}
-              style={{ ...buttonStyle, minWidth: 140 }}
+              disabled={actionLoading !== null || !placeIdInput.trim() || isPlaceConnectLoading}
+              style={{ ...buttonStyle, minWidth: 160 }}
             >
-              {actionLoading === "connect" ? "Verifying…" : "Verify & Save"}
+              {isPlaceConnectLoading ? "Verifying…" : "Verify & Connect"}
             </button>
+          </div>
+
+          {/* ✅ NEW: Inline status messaging (Loading / Success / Friendly Error) */}
+          <div style={{ marginTop: 10 }}>
+            {placeIdStatus === "loading" && (
+              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying Place ID…</div>
+            )}
+
+            {placeIdStatus === "error" && (
+              <div style={{ fontSize: 13, color: "#f87171" }}>
+                {placeIdError ?? "We couldn’t verify this Place ID. Please double-check and try again."}
+              </div>
+            )}
+
+            {/* NOTE: success state will usually disappear quickly because onboarding card hides after setBusiness updates.
+                Still useful for the brief moment before re-render / when business exists but place_id not yet in state. */}
+            {placeIdStatus === "success" && (
+              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 600 }}>
+                Connected successfully ✔
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
@@ -466,11 +545,12 @@ export default function DashboardPage() {
 
           {placeVerify?.name && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-              Verified: <strong>{placeVerify.name}</strong>
+              Connected to: <strong>{placeVerify.name}</strong> ✔
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+              You can now click “Refresh from Google” to pull in reviews.
+              </div>
               {typeof placeVerify.rating === "number" ? ` • ${placeVerify.rating}★` : ""}
-              {typeof placeVerify.user_ratings_total === "number"
-                ? ` • ${placeVerify.user_ratings_total} ratings`
-                : ""}
+              {typeof placeVerify.user_ratings_total === "number" ? ` • ${placeVerify.user_ratings_total} ratings` : ""}
             </div>
           )}
 
@@ -479,6 +559,61 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+{/* ✅ Connected confirmation card (shows after Place ID is connected) */}
+{!needsOnboarding && hasGoogleConnected && (
+  <div
+    style={{
+      border: "1px solid rgba(148,163,184,0.25)",
+      borderRadius: 16,
+      padding: 16,
+      background: "rgba(15,23,42,0.35)",
+      marginTop: 16,
+      marginBottom: 16,
+      display: "flex",
+      justifyContent: "space-between",
+      gap: 14,
+      alignItems: "flex-start",
+      flexWrap: "wrap",
+    }}
+  >
+    <div style={{ minWidth: 260 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, display: "flex", gap: 10, alignItems: "center" }}>
+        <span style={{ color: "#22c55e" }}>●</span>
+        Google Connected
+      </div>
+
+      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
+        <div style={{ marginBottom: 6 }}>
+          <span style={{ opacity: 0.75 }}>Business:</span>{" "}
+          <strong>{displayBusinessName}</strong>
+        </div>
+
+        <div>
+          <span style={{ opacity: 0.75 }}>Place ID:</span>{" "}
+          <span style={{ fontFamily: "monospace", opacity: 0.95 }}>
+            {maskPlaceId(business?.google_place_id)}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+        You can now click “Refresh from Google” to sync reviews.
+      </div>
+    </div>
+
+    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+      <button
+        onClick={refreshFromGoogleThenReload}
+        disabled={actionLoading !== null}
+        style={{ ...buttonStyle, minWidth: 170 }}
+        title="Fetch from Google and reload"
+      >
+        {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+      </button>
+    </div>
+  </div>
+)}
 
       {/* summary cards */}
       <div
@@ -504,9 +639,7 @@ export default function DashboardPage() {
           <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
           <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
             {data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
-              showing {filteredReviews.length}
-            </span>
+            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>showing {filteredReviews.length}</span>
           </div>
         </div>
 
@@ -544,7 +677,10 @@ export default function DashboardPage() {
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
           <span style={{ opacity: 0.8, fontSize: 13 }}>Search</span>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="author, text, language…"
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="author, text, language…"
             style={inputStyle}
           />
         </div>
@@ -570,7 +706,12 @@ export default function DashboardPage() {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
                 <div style={{ fontWeight: 600 }}>
                   {r.author_url ? (
-                    <a href={r.author_url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "underline" }}>
+                    <a
+                      href={r.author_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "inherit", textDecoration: "underline" }}
+                    >
                       {r.author_name ?? "Anonymous"}
                     </a>
                   ) : (
