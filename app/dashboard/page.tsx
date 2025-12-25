@@ -382,7 +382,15 @@ export default function DashboardPage() {
             {userEmail && <div style={{ opacity: 0.7, fontSize: 13 }}>Signed in as {userEmail}</div>}
           </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <div
+  style={{
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+  }}
+>
+
             <button onClick={reloadList} disabled={actionLoading !== null} style={buttonStyle}>
               {actionLoading === "reload" ? "Reloading…" : "Reload list"}
             </button>
@@ -436,8 +444,22 @@ function maskPlaceId(pid?: string | null) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <button onClick={reloadList} disabled={actionLoading !== null} style={{ ...buttonStyle, minWidth: 120 }}>
+        <div
+  style={{
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+  }}
+>
+
+          <button onClick={reloadList} disabled={actionLoading !== null} style={{
+  ...buttonStyle,
+  minWidth: 120,
+  width: "100%",
+  maxWidth: 220,
+}}
+>
             {actionLoading === "reload" ? "Reloading…" : "Reload list"}
           </button>
 
@@ -602,29 +624,43 @@ function maskPlaceId(pid?: string | null) {
       </div>
     </div>
 
-    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-      <button
-        onClick={refreshFromGoogleThenReload}
-        disabled={actionLoading !== null}
-        style={{ ...buttonStyle, minWidth: 170 }}
-        title="Fetch from Google and reload"
-      >
-        {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
-      </button>
-    </div>
+    <div
+  style={{
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+    flexWrap: "wrap",
+    width: "100%",
+  }}
+>
+  <button
+    onClick={refreshFromGoogleThenReload}
+    disabled={actionLoading !== null}
+    style={{
+      ...buttonStyle,
+      minWidth: 170,
+      width: "100%",
+      maxWidth: 240,
+    }}
+    title="Fetch from Google and reload"
+  >
+    {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+  </button>
+</div>
+
   </div>
 )}
 
       {/* summary cards */}
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          gap: 12,
-          marginTop: 16,
-          marginBottom: 16,
-        }}
-      >
+  style={{
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: 12,
+    marginTop: 16,
+    marginBottom: 16,
+  }}
+>
         <div style={cardStyle}>
           <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
           <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
