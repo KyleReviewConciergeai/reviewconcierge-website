@@ -14,13 +14,36 @@ type DraftReplyPanelProps = {
   businessName?: string | null;
 };
 
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mq = window.matchMedia(query);
+    const update = () => setMatches(mq.matches);
+
+    update();
+
+    // Safari support
+    if (mq.addEventListener) mq.addEventListener("change", update);
+    else mq.addListener(update);
+
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", update);
+      else mq.removeListener(update);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
-
   const [rating, setRating] = useState<number>(5);
   const [language, setLanguage] = useState<string>("es");
 
-  // ✅ Keep this empty-friendly: you can still paste/replace quickly
+  // empty by default (better UX than prefilled placeholder text)
   const [reviewText, setReviewText] = useState("");
 
   const [draft, setDraft] = useState("");
@@ -31,6 +54,9 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const copiedTimer = useRef<number | null>(null);
 
   const [version, setVersion] = useState<number>(0);
+
+  // Responsive: stack controls on mobile
+  const isMobile = useMediaQuery("(max-width: 720px)");
 
   useEffect(() => {
     const next = (businessName ?? "").trim();
@@ -122,17 +148,36 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const hasDraft = Boolean(draft.trim());
   const canCopy = hasDraft && !isLoading;
 
-  const statusPill = (() => {
+  // ✅ Status pill is OPTIONAL now (no more duplicate "Read-only")
+  const statusPill: { label: string; tone: "neutral" | "success" | "error" } | null = (() => {
     if (status === "loading") return { label: "Generating…", tone: "neutral" as const };
     if (status === "error") return { label: "Error", tone: "error" as const };
     if (status === "success" && hasDraft) return { label: "Draft ready", tone: "success" as const };
-    return { label: "Read-only", tone: "neutral" as const };
+    return null;
   })();
+
+  const controlsGridStyle: React.CSSProperties = useMemo(
+    () => ({
+      display: "grid",
+      gridTemplateColumns: isMobile ? "1fr" : "1fr 140px 120px",
+      gap: 10,
+      marginTop: 12,
+    }),
+    [isMobile]
+  );
 
   return (
     <section style={panelStyle}>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          alignItems: "flex-start",
+          flexWrap: "wrap",
+        }}
+      >
         <div style={{ minWidth: 240 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply</h2>
@@ -151,9 +196,12 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={statusPillStyle(statusPill.tone)}>{statusPill.label}</span>
-        </div>
+        {/* ✅ Only show status pill when meaningful */}
+        {statusPill ? (
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <span style={statusPillStyle(statusPill.tone)}>{statusPill.label}</span>
+          </div>
+        ) : null}
       </div>
 
       {/* Controls */}
@@ -233,11 +281,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </>
         )}
 
-        {status === "error" && (
-          <span style={{ color: "#fecaca", fontSize: 13 }}>
-            {errorMessage}
-          </span>
-        )}
+        {status === "error" && <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span>}
 
         {isLoading && hasDraft ? (
           <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>Generating a fresh version…</span>
@@ -335,13 +379,6 @@ const versionBadgeStyle: React.CSSProperties = {
   color: "#e2e8f0",
 };
 
-const controlsGridStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "1fr 140px 120px",
-  gap: 10,
-  marginTop: 12,
-};
-
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
@@ -422,17 +459,4 @@ function statusPillStyle(tone: "neutral" | "success" | "error"): React.CSSProper
   }
 
   return base;
-}
-
-/** Mobile responsiveness without CSS files */
-const _originalMatchMedia = typeof window !== "undefined" ? window.matchMedia : null;
-if (typeof window !== "undefined") {
-  // If narrow screen, stack controls nicely
-  const mq = window.matchMedia("(max-width: 720px)");
-  const apply = () => {
-    // This is safe: it only affects the inline style object used in render
-    controlsGridStyle.gridTemplateColumns = mq.matches ? "1fr" : "1fr 140px 120px";
-  };
-  apply();
-  mq.addEventListener?.("change", apply);
 }
