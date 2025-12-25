@@ -15,15 +15,15 @@ type DraftReplyPanelProps = {
 };
 
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
-  const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
+  const [businessNameState, setBusinessNameState] = useState<string>((businessName ?? "").trim());
 
   const [rating, setRating] = useState<number>(5);
   const [language, setLanguage] = useState<string>("es");
 
-  // Keep empty-friendly: you can still paste/replace quickly
-  const [reviewText, setReviewText] = useState("");
+  // Keep empty-friendly: paste/replace quickly
+  const [reviewText, setReviewText] = useState<string>("");
 
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState<string>("");
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string>("");
 
@@ -32,23 +32,27 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
   const [version, setVersion] = useState<number>(0);
 
-  // ✅ Mobile responsive without mutating shared objects
-  const [isNarrow, setIsNarrow] = useState(false);
+  // Responsive: compute isMobile safely (no global style mutations)
+  const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
     const mq = window.matchMedia("(max-width: 720px)");
-    const apply = () => setIsNarrow(mq.matches);
+    const apply = () => setIsMobile(mq.matches);
+
     apply();
 
-    // Safari compatibility: addListener/removeListener fallback
-    if (mq.addEventListener) mq.addEventListener("change", apply);
-    else mq.addListener(apply);
-
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", apply);
-      else mq.removeListener(apply);
-    };
+    // Safari compatibility: addEventListener may not exist on older versions
+    if (mq.addEventListener) {
+      mq.addEventListener("change", apply);
+      return () => mq.removeEventListener("change", apply);
+    } else {
+      mq.addListener(apply);
+      return () => mq.removeListener(apply);
+    }
   }, []);
 
+  // Keep local input synced if Dashboard loads a business name later
   useEffect(() => {
     const next = (businessName ?? "").trim();
     if (next && next !== businessNameState) setBusinessNameState(next);
@@ -79,7 +83,9 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (!res.ok || data.ok === false) {
         const msg =
-          typeof data.error === "string" && data.error.trim() ? data.error : "Failed to generate draft.";
+          typeof data.error === "string" && data.error.trim()
+            ? data.error
+            : "Failed to generate draft.";
         setStatus("error");
         setErrorMessage(msg);
         return { ok: false as const };
@@ -135,7 +141,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const hasDraft = Boolean(draft.trim());
   const canCopy = hasDraft && !isLoading;
 
-  // ✅ Status pill can be absent; render safely
   const statusPill = useMemo(() => {
     if (status === "loading") return { label: "Generating…", tone: "neutral" as const };
     if (status === "error") return { label: "Error", tone: "error" as const };
@@ -143,15 +148,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return null;
   }, [status, hasDraft]);
 
-  const controlsGridStyle: React.CSSProperties = useMemo(
-    () => ({
+  const controlsGridStyle: React.CSSProperties = useMemo(() => {
+    return {
       display: "grid",
-      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 120px",
+      gridTemplateColumns: isMobile ? "1fr" : "1fr 140px 120px",
       gap: 10,
       marginTop: 12,
-    }),
-    [isNarrow]
-  );
+    };
+  }, [isMobile]);
 
   return (
     <section style={panelStyle}>
@@ -169,7 +173,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply</h2>
 
-            {/* ✅ Keep this as a constant badge (communicates safety) */}
             <span style={badgeStyle}>READ-ONLY</span>
 
             {version > 0 ? (
@@ -177,18 +180,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
                 v{version}
               </span>
             ) : null}
+
+            {/* Only show the status pill when there is something meaningful to show */}
+            {statusPill ? <span style={statusPillStyle(statusPill.tone)}>{statusPill.label}</span> : null}
           </div>
 
           <p style={{ marginTop: 8, marginBottom: 0, color: "rgba(226,232,240,0.78)", lineHeight: 1.4 }}>
             Paste a review → generate a suggested reply (does not post anywhere yet).
           </p>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {/* ✅ Only render when we actually have a pill */}
-          {statusPill ? (
-            <span style={statusPillStyle(statusPill.tone)}>{statusPill.label}</span>
-          ) : null}
         </div>
       </div>
 
