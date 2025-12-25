@@ -485,7 +485,7 @@ function maskPlaceId(pid?: string | null) {
             border: "1px solid rgba(148,163,184,0.25)",
             borderRadius: 16,
             padding: 16,
-            background: "rgba(15,23,42,0.35)",
+            background: "#0f172a",
             marginTop: 16,
             marginBottom: 16,
           }}
@@ -589,7 +589,7 @@ function maskPlaceId(pid?: string | null) {
       border: "1px solid rgba(148,163,184,0.25)",
       borderRadius: 16,
       padding: 16,
-      background: "rgba(15,23,42,0.35)",
+      background: "#0f172a",
       marginTop: 16,
       marginBottom: 16,
       display: "flex",
@@ -791,7 +791,7 @@ const cardStyle: React.CSSProperties = {
   border: "1px solid rgba(148,163,184,0.25)",
   borderRadius: 14,
   padding: 14,
-  background: "rgba(15,23,42,0.6)",
+  background: "#0f172a", // solid dark background (matches desktop everywhere)
 };
 
 const selectStyle: React.CSSProperties = {
