@@ -486,6 +486,7 @@ function maskPlaceId(pid?: string | null) {
             borderRadius: 16,
             padding: 16,
             background: "#0f172a",
+            color: "#e2e8f0",
             marginTop: 16,
             marginBottom: 16,
           }}
@@ -590,6 +591,7 @@ function maskPlaceId(pid?: string | null) {
       borderRadius: 16,
       padding: 16,
       background: "#0f172a",
+      color: "#e2e8f0",
       marginTop: 16,
       marginBottom: 16,
       display: "flex",
@@ -782,24 +784,25 @@ const buttonStyle: React.CSSProperties = {
   padding: "10px 12px",
   borderRadius: 10,
   border: "1px solid rgba(148,163,184,0.35)",
-  background: "rgba(15,23,42,0.7)",
+  background: "#0f172a",
   cursor: "pointer",
-  color: "inherit",
+  color: "#e2e8f0", // ✅ force readable text
 };
 
 const cardStyle: React.CSSProperties = {
   border: "1px solid rgba(148,163,184,0.25)",
   borderRadius: 14,
   padding: 14,
-  background: "#0f172a", // solid dark background (matches desktop everywhere)
+  background: "#0f172a",
+  color: "#e2e8f0", // ✅ force readable text
 };
 
 const selectStyle: React.CSSProperties = {
   padding: "10px 10px",
   borderRadius: 10,
   border: "1px solid rgba(148,163,184,0.35)",
-  background: "rgba(15,23,42,0.7)",
-  color: "inherit",
+  background: "#0f172a",
+  color: "#e2e8f0", // ✅ force readable text
   outline: "none",
 };
 
@@ -809,10 +812,11 @@ const inputStyle: React.CSSProperties = {
   padding: "10px 12px",
   borderRadius: 10,
   border: "1px solid rgba(148,163,184,0.35)",
-  background: "rgba(15,23,42,0.7)",
-  color: "inherit",
+  background: "#0f172a",
+  color: "#e2e8f0", // ✅ force readable text
   outline: "none",
 };
+
 
 function toastStyle(type?: "success" | "error"): React.CSSProperties {
   return {
