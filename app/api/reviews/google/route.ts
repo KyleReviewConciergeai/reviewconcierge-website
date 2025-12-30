@@ -7,6 +7,9 @@ type GooglePlaceDetailsResponse = {
   status: string;
   error_message?: string;
   result?: {
+    name?: string;
+    rating?: number;
+    user_ratings_total?: number;
     reviews?: Array<{
       author_name?: string;
       author_url?: string;
@@ -40,7 +43,7 @@ function makeGoogleReviewId(r: {
   text?: string;
 }) {
   // NOTE: Using Google "time" alone is okay for MVP but can collide in rare cases.
-  // We preserve your existing approach but make the fallback deterministic.
+  // We preserve your approach but make the fallback deterministic.
   const fallbackId = `${r.author_name ?? "unknown"}-${r.time ?? ""}-${r.rating ?? ""}-${r.text ?? ""}`;
   return String(r.time ?? fallbackId).slice(0, 255);
 }
@@ -56,10 +59,7 @@ export async function GET(req: Request) {
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { ok: false, error: "Missing GOOGLE_PLACES_API_KEY" },
-        { status: 500 }
-      );
+      return NextResponse.json({ ok: false, error: "Missing GOOGLE_PLACES_API_KEY" }, { status: 500 });
     }
 
     // 1) Resolve google_place_id
@@ -74,9 +74,7 @@ export async function GET(req: Request) {
         .limit(1)
         .maybeSingle();
 
-      if (bizErr) {
-        return NextResponse.json({ ok: false, error: bizErr.message }, { status: 500 });
-      }
+      if (bizErr) return NextResponse.json({ ok: false, error: bizErr.message }, { status: 500 });
 
       if (!biz?.google_place_id) {
         return NextResponse.json(
@@ -102,9 +100,7 @@ export async function GET(req: Request) {
       .limit(1)
       .maybeSingle();
 
-    if (businessErr) {
-      return NextResponse.json({ ok: false, error: businessErr.message }, { status: 500 });
-    }
+    if (businessErr) return NextResponse.json({ ok: false, error: businessErr.message }, { status: 500 });
 
     if (!business?.id || !business?.google_place_id) {
       return NextResponse.json(
@@ -119,11 +115,11 @@ export async function GET(req: Request) {
 
     const businessId = business.id as string;
 
-    // 3) Fetch Google reviews
+    // 3) Fetch Google details (reviews sample + authoritative summary metrics)
     const url =
       "https://maps.googleapis.com/maps/api/place/details/json" +
       `?place_id=${encodeURIComponent(placeId)}` +
-      `&fields=reviews` +
+      `&fields=name,rating,user_ratings_total,reviews` +
       `&key=${encodeURIComponent(apiKey)}`;
 
     const res = await fetch(url, { cache: "no-store" });
@@ -131,13 +127,29 @@ export async function GET(req: Request) {
 
     if (data.status !== "OK") {
       return NextResponse.json(
-        {
-          ok: false,
-          googleStatus: data.status,
-          googleError: data.error_message,
-        },
+        { ok: false, googleStatus: data.status, googleError: data.error_message },
         { status: 500 }
       );
+    }
+
+    const googleRating = typeof data.result?.rating === "number" ? data.result.rating : null;
+    const googleTotal = typeof data.result?.user_ratings_total === "number" ? data.result.user_ratings_total : null;
+    const googleName = typeof data.result?.name === "string" ? data.result.name : null;
+
+    // 3a) Update the business row with authoritative stats (long-term credibility)
+    // NOTE: Requires businesses.google_rating + businesses.google_user_ratings_total columns.
+    const { error: bizUpdateErr } = await supabase
+      .from("businesses")
+      .update({
+        google_rating: googleRating,
+        google_user_ratings_total: googleTotal,
+        google_place_name: googleName,
+      })
+      .eq("id", businessId)
+      .eq("organization_id", organizationId);
+
+    if (bizUpdateErr) {
+      return NextResponse.json({ ok: false, error: bizUpdateErr.message }, { status: 500 });
     }
 
     const googleReviews = Array.isArray(data.result?.reviews) ? data.result!.reviews! : [];
@@ -147,12 +159,14 @@ export async function GET(req: Request) {
         ok: true,
         business_id: businessId,
         google_place_id: placeId,
+        google_rating: googleRating,
+        google_user_ratings_total: googleTotal,
         fetched: 0,
         upserted_total: 0,
         inserted: 0,
         updated: 0,
         synced_at: new Date().toISOString(),
-        note: "No reviews returned by Google for this place",
+        note: "No reviews returned by Google for this place (this endpoint returns a sample).",
       });
     }
 
@@ -175,7 +189,6 @@ export async function GET(req: Request) {
     // 4a) Pre-check which IDs already exist for this business/org/source
     const ids = rows.map((x) => x.google_review_id);
 
-    // Supabase `in()` can handle decent sizes, but to be safe we can chunk if needed later.
     const { data: existing, error: existingErr } = await supabase
       .from("reviews")
       .select("google_review_id")
@@ -184,9 +197,7 @@ export async function GET(req: Request) {
       .eq("source", "google")
       .in("google_review_id", ids);
 
-    if (existingErr) {
-      return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
-    }
+    if (existingErr) return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
 
     const existingSet = new Set((existing ?? []).map((r) => r.google_review_id));
 
@@ -197,9 +208,7 @@ export async function GET(req: Request) {
       .select("id, source, google_review_id, rating, author_name, review_date, detected_language")
       .limit(10);
 
-    if (saveErr) {
-      return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
-    }
+    if (saveErr) return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
 
     const inserted = rows.reduce((acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1), 0);
     const updated = rows.length - inserted;
@@ -208,12 +217,15 @@ export async function GET(req: Request) {
       ok: true,
       business_id: businessId,
       google_place_id: placeId,
+      google_rating: googleRating,
+      google_user_ratings_total: googleTotal,
       fetched: rows.length,
       upserted_total: rows.length,
       inserted,
       updated,
       synced_at: new Date().toISOString(),
       savedPreview: savedPreview ?? [],
+      note: "Reviews returned here are a Google sample; summary metrics are authoritative.",
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

@@ -9,7 +9,18 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from("businesses")
-      .select("id, business_name, google_place_id, organization_id, created_at")
+      .select(
+        [
+          "id",
+          "business_name",
+          "google_place_id",
+          "google_place_name",
+          "google_rating",
+          "google_user_ratings_total",
+          "organization_id",
+          "created_at",
+        ].join(", ")
+      )
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
       .limit(1)

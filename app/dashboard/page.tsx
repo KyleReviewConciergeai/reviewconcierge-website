@@ -29,6 +29,9 @@ type CurrentBusiness = {
   id: string;
   business_name?: string | null;
   google_place_id?: string | null;
+  google_rating?: number | null;
+  google_user_ratings_total?: number | null;
+  google_place_name?: string | null;
 };
 
 type Toast = {
@@ -37,6 +40,12 @@ type Toast = {
 };
 
 type PlaceIdStatus = "idle" | "loading" | "success" | "error";
+
+type PlaceCandidate = {
+  place_id: string;
+  name: string;
+  formatted_address?: string;
+};
 
 function formatDate(iso: string | null) {
   if (!iso) return "";
@@ -82,9 +91,16 @@ export default function DashboardPage() {
     user_ratings_total?: number;
   } | null>(null);
 
-  // ✅ NEW: explicit onboarding UI states
+  // ✅ explicit onboarding UI states
   const [placeIdStatus, setPlaceIdStatus] = useState<PlaceIdStatus>("idle");
   const [placeIdError, setPlaceIdError] = useState<string | null>(null);
+
+  // ✅ NEW: iPhone-friendly search flow for Place ID
+  const [showPlaceSearch, setShowPlaceSearch] = useState(false);
+  const [placeSearchQuery, setPlaceSearchQuery] = useState("");
+  const [placeSearchLoading, setPlaceSearchLoading] = useState(false);
+  const [placeSearchResults, setPlaceSearchResults] = useState<PlaceCandidate[]>([]);
+  const [placeSearchError, setPlaceSearchError] = useState<string | null>(null);
 
   // Header
   const [userEmail, setUserEmail] = useState<string>("");
@@ -115,7 +131,6 @@ export default function DashboardPage() {
         setBusiness(b);
         setPlaceIdInput(b?.google_place_id ?? "");
 
-        // ✅ If already connected, reflect success state on load (nice polish)
         if (b?.google_place_id) {
           setPlaceIdStatus("success");
           setPlaceIdError(null);
@@ -124,11 +139,9 @@ export default function DashboardPage() {
           setPlaceIdError(null);
         }
       } else {
-        // If API returns ok:false, keep page usable
         setPlaceIdStatus("idle");
       }
     } catch {
-      // ignore (we still want the dashboard to render)
       setPlaceIdStatus("idle");
     } finally {
       setBusinessLoaded(true);
@@ -152,7 +165,6 @@ export default function DashboardPage() {
   async function refreshFromGoogleThenReload() {
     if (actionLoading) return;
 
-    // Don’t let users run Google sync if Place ID isn’t connected yet
     if (!business?.google_place_id) {
       showToast({ message: "Connect your Google Place ID first.", type: "error" }, 3500);
       return;
@@ -201,7 +213,6 @@ export default function DashboardPage() {
     const placeId = placeIdInput.trim();
     if (!placeId) return;
 
-    // ✅ NEW: enter "loading" state and clear any previous errors
     setPlaceIdStatus("loading");
     setPlaceIdError(null);
     setPlaceVerify(null);
@@ -223,19 +234,16 @@ export default function DashboardPage() {
           json?.googleError ??
           "We couldn’t verify this Place ID. Please double-check it and try again.";
 
-        // ✅ NEW: friendly error state (in-card) + toast
         setPlaceIdStatus("error");
         setPlaceIdError(msg);
         showToast({ message: msg, type: "error" }, 4000);
         return;
       }
 
-      // update local business state so onboarding disappears immediately
       setBusiness((json.business ?? null) as CurrentBusiness | null);
       setPlaceVerify(json.verified ?? null);
       setPlaceIdInput(json.business?.google_place_id ?? placeId);
 
-      // ✅ NEW: success state (in-card)
       setPlaceIdStatus("success");
       setPlaceIdError(null);
 
@@ -244,7 +252,12 @@ export default function DashboardPage() {
         3000
       );
 
-      // optional: reload reviews so header + stats reflect current org/business
+      // clear search UI after success (nice on mobile)
+      setShowPlaceSearch(false);
+      setPlaceSearchQuery("");
+      setPlaceSearchResults([]);
+      setPlaceSearchError(null);
+
       const r = await loadReviews();
       setData(r);
       setLastRefreshedAt(new Date().toISOString());
@@ -255,6 +268,35 @@ export default function DashboardPage() {
       showToast({ message: msg, type: "error" }, 4000);
     } finally {
       setActionLoading(null);
+    }
+  }
+
+  // ✅ NEW: server-side Places search to avoid the broken iPhone Place ID Finder flow
+  async function searchPlaces() {
+    const q = placeSearchQuery.trim();
+    if (!q || actionLoading) return;
+
+    setPlaceSearchLoading(true);
+    setPlaceSearchError(null);
+    setPlaceSearchResults([]);
+
+    try {
+      const res = await fetch(`/api/google/places-search?q=${encodeURIComponent(q)}`, {
+        cache: "no-store",
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json?.ok) {
+        setPlaceSearchError(json?.error ?? "Search failed");
+        return;
+      }
+
+      const candidates = Array.isArray(json?.candidates) ? (json.candidates as PlaceCandidate[]) : [];
+      setPlaceSearchResults(candidates);
+    } catch (e: any) {
+      setPlaceSearchError(e?.message ?? "Search failed");
+    } finally {
+      setPlaceSearchLoading(false);
     }
   }
 
@@ -274,14 +316,11 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
-        // signed-in user (header)
         const { data: userData } = await sb.auth.getUser();
         setUserEmail(userData?.user?.email ?? "");
 
-        // org-scoped business + place id
         await loadCurrentBusiness();
 
-        // reviews
         const json = await loadReviews();
         setData(json);
         setLastRefreshedAt(new Date().toISOString());
@@ -318,13 +357,14 @@ export default function DashboardPage() {
   }, [reviews, ratingFilter, query]);
 
   const avgRating = useMemo(() => {
-    const rated = reviews.filter((r) => typeof r.rating === "number") as Array<
-      Review & { rating: number }
-    >;
-    if (rated.length === 0) return null;
-    const sum = rated.reduce((acc, r) => acc + r.rating, 0);
-    return sum / rated.length;
-  }, [reviews]);
+    const n = business?.google_rating;
+    return typeof n === "number" ? n : null;
+  }, [business?.google_rating]);
+
+  const totalReviews = useMemo(() => {
+    const n = business?.google_user_ratings_total;
+    return typeof n === "number" ? n : null;
+  }, [business?.google_user_ratings_total]);
 
   const lastReviewDate = useMemo(() => {
     if (reviews.length === 0) return null;
@@ -383,14 +423,13 @@ export default function DashboardPage() {
           </div>
 
           <div
-  style={{
-    display: "flex",
-    gap: 10,
-    alignItems: "flex-start",
-    flexWrap: "wrap",
-  }}
->
-
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+            }}
+          >
             <button onClick={reloadList} disabled={actionLoading !== null} style={buttonStyle}>
               {actionLoading === "reload" ? "Reloading…" : "Reload list"}
             </button>
@@ -415,21 +454,30 @@ export default function DashboardPage() {
   }
 
   const displayBusinessName =
-    business?.business_name ?? data.business?.business_name ?? (businessLoaded ? "Unknown" : "Loading…");
+    business?.business_name ??
+    data.business?.business_name ??
+    (businessLoaded ? "Unknown" : "Loading…");
 
   const isPlaceConnectLoading = actionLoading === "connect" || placeIdStatus === "loading";
-const hasGoogleConnected = !!business?.google_place_id;
+  const hasGoogleConnected = !!business?.google_place_id;
 
-function maskPlaceId(pid?: string | null) {
-  if (!pid) return "";
-  const s = String(pid);
-  if (s.length <= 10) return s;
-  return `${s.slice(0, 6)}…${s.slice(-4)}`;
-}
+  function maskPlaceId(pid?: string | null) {
+    if (!pid) return "";
+    const s = String(pid);
+    if (s.length <= 10) return s;
+    return `${s.slice(0, 6)}…${s.slice(-4)}`;
+  }
 
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 14,
+          alignItems: "flex-start",
+        }}
+      >
         <div>
           <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
           <div style={{ opacity: 0.8 }}>
@@ -445,40 +493,54 @@ function maskPlaceId(pid?: string | null) {
         </div>
 
         <div
-  style={{
-    display: "flex",
-    gap: 10,
-    alignItems: "flex-start",
-    flexWrap: "wrap",
-  }}
->
-
-          <button onClick={reloadList} disabled={actionLoading !== null} style={{
-  ...buttonStyle,
-  minWidth: 120,
-  width: "100%",
-  maxWidth: 220,
-}}
->
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+          }}
+        >
+          <button
+            onClick={reloadList}
+            disabled={actionLoading !== null}
+            style={{
+              ...buttonStyle,
+              minWidth: 120,
+              width: "100%",
+              maxWidth: 220,
+            }}
+          >
             {actionLoading === "reload" ? "Reloading…" : "Reload list"}
           </button>
 
           <button
             onClick={refreshFromGoogleThenReload}
             disabled={actionLoading !== null || !business?.google_place_id}
-            style={{ ...buttonStyle, minWidth: 170, opacity: !business?.google_place_id ? 0.6 : 1 }}
-            title={!business?.google_place_id ? "Connect your Google Place ID first" : "Fetch from Google and reload"}
+            style={{
+              ...buttonStyle,
+              minWidth: 170,
+              opacity: !business?.google_place_id ? 0.6 : 1,
+            }}
+            title={
+              !business?.google_place_id
+                ? "Connect your Google Place ID first"
+                : "Fetch from Google and reload"
+            }
           >
             {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
           </button>
 
-          <button onClick={onLogout} disabled={actionLoading !== null} style={{ ...buttonStyle, minWidth: 110 }}>
+          <button
+            onClick={onLogout}
+            disabled={actionLoading !== null}
+            style={{ ...buttonStyle, minWidth: 110 }}
+          >
             {actionLoading === "logout" ? "Logging out…" : "Log out"}
           </button>
         </div>
       </div>
 
-      {/* ✅ Onboarding card: show if business missing OR missing google_place_id */}
+      {/* ✅ Onboarding card */}
       {needsOnboarding && (
         <div
           style={{
@@ -496,24 +558,145 @@ function maskPlaceId(pid?: string | null) {
           </div>
 
           <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
-            Paste a Place ID to verify your business and enable “Refresh from Google”.
+            On iPhone: tap “Find my business”, select it, then verify & connect.
           </div>
 
+          {/* ✅ NEW: iPhone-friendly business search */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              onClick={() => {
+                setShowPlaceSearch((v) => !v);
+                setPlaceSearchError(null);
+                setPlaceSearchResults([]);
+              }}
+              disabled={isPlaceConnectLoading}
+              style={{ ...buttonStyle, minWidth: 160 }}
+            >
+              {showPlaceSearch ? "Hide search" : "Find my business"}
+            </button>
+
+            <div style={{ fontSize: 12, opacity: 0.75 }}>
+              Tip: search “name + city” (e.g. “Delfina Palo Alto”)
+            </div>
+          </div>
+
+          {showPlaceSearch && (
+            <div
+              style={{
+                border: "1px solid rgba(148,163,184,0.25)",
+                borderRadius: 14,
+                padding: 12,
+                background: "rgba(2,6,23,0.35)",
+                marginTop: 12,
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <input
+                  value={placeSearchQuery}
+                  onChange={(e) => setPlaceSearchQuery(e.target.value)}
+                  placeholder="Business name + city"
+                  disabled={placeSearchLoading || isPlaceConnectLoading}
+                  style={{
+                    flex: "1 1 260px",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(148,163,184,0.35)",
+                    background: "rgba(15,23,42,0.7)",
+                    color: "inherit",
+                    outline: "none",
+                    opacity: placeSearchLoading ? 0.8 : 1,
+                  }}
+                />
+
+                <button
+                  onClick={searchPlaces}
+                  disabled={placeSearchLoading || !placeSearchQuery.trim()}
+                  style={{ ...buttonStyle, minWidth: 120 }}
+                >
+                  {placeSearchLoading ? "Searching…" : "Search"}
+                </button>
+              </div>
+
+              {placeSearchError && (
+                <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>
+                  {placeSearchError}
+                </div>
+              )}
+
+              {placeSearchResults.length > 0 && (
+                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+                  {placeSearchResults.map((p) => (
+                    <button
+                      key={p.place_id}
+                      onClick={() => {
+                        setPlaceIdInput(p.place_id);
+
+                        // reset errors (nice UX)
+                        if (placeIdStatus === "error") {
+                          setPlaceIdStatus("idle");
+                          setPlaceIdError(null);
+                        }
+
+                        setShowPlaceSearch(false);
+                        showToast({ message: `Selected: ${p.name}`, type: "success" }, 2200);
+                      }}
+                      style={{
+                        textAlign: "left",
+                        padding: "12px 12px",
+                        borderRadius: 14,
+                        border: "1px solid rgba(148,163,184,0.25)",
+                        background: "rgba(15,23,42,0.6)",
+                        color: "#e2e8f0",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+                      {p.formatted_address && (
+                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                          {p.formatted_address}
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          fontSize: 11,
+                          opacity: 0.55,
+                          marginTop: 8,
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {p.place_id}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {placeSearchResults.length === 0 &&
+                !placeSearchLoading &&
+                placeSearchQuery.trim() &&
+                !placeSearchError && (
+                  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
+                    No results yet — try adding the city/neighborhood.
+                  </div>
+                )}
+            </div>
+          )}
+
+          {/* existing Place ID input + connect */}
           <div
-  style={{
-    display: "flex",
-    gap: 10,
-    alignItems: "center",
-    flexWrap: "wrap",
-    marginTop: 16, // 👈 adds space above filters
-  }}
->
-  
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+              marginTop: 12,
+            }}
+          >
             <input
               value={placeIdInput}
               onChange={(e) => {
                 setPlaceIdInput(e.target.value);
-                // ✅ Reset error UI as user types again
                 if (placeIdStatus === "error") {
                   setPlaceIdStatus("idle");
                   setPlaceIdError(null);
@@ -542,7 +725,6 @@ function maskPlaceId(pid?: string | null) {
             </button>
           </div>
 
-          {/* ✅ NEW: Inline status messaging (Loading / Success / Friendly Error) */}
           <div style={{ marginTop: 10 }}>
             {placeIdStatus === "loading" && (
               <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying Place ID…</div>
@@ -550,12 +732,11 @@ function maskPlaceId(pid?: string | null) {
 
             {placeIdStatus === "error" && (
               <div style={{ fontSize: 13, color: "#f87171" }}>
-                {placeIdError ?? "We couldn’t verify this Place ID. Please double-check and try again."}
+                {placeIdError ??
+                  "We couldn’t verify this Place ID. Please double-check and try again."}
               </div>
             )}
 
-            {/* NOTE: success state will usually disappear quickly because onboarding card hides after setBusiness updates.
-                Still useful for the brief moment before re-render / when business exists but place_id not yet in state. */}
             {placeIdStatus === "success" && (
               <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 600 }}>
                 Connected successfully ✔
@@ -563,168 +744,180 @@ function maskPlaceId(pid?: string | null) {
             )}
           </div>
 
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-            Need help?{" "}
-            <a
-              href="https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder"
-              target="_blank"
-              rel="noreferrer"
-              style={{ textDecoration: "underline", color: "inherit" }}
-            >
-              Find your Google Place ID
-            </a>
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+            You can still paste a Place ID manually, but “Find my business” is best on iPhone.
           </div>
 
           {placeVerify?.name && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
               Connected to: <strong>{placeVerify.name}</strong> ✔
               <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-              You can now click “Refresh from Google” to pull in reviews.
+                You can now click “Refresh from Google” to pull in reviews.
               </div>
               {typeof placeVerify.rating === "number" ? ` • ${placeVerify.rating}★` : ""}
-              {typeof placeVerify.user_ratings_total === "number" ? ` • ${placeVerify.user_ratings_total} ratings` : ""}
+              {typeof placeVerify.user_ratings_total === "number"
+                ? ` • ${placeVerify.user_ratings_total} ratings`
+                : ""}
             </div>
           )}
+        </div>
+      )}
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            Tip: if you don’t know your Place ID, use the finder link above.
+      {/* ✅ Connected confirmation card */}
+      {!needsOnboarding && hasGoogleConnected && (
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 16,
+            padding: 16,
+            background: "#0f172a",
+            color: "#e2e8f0",
+            marginTop: 16,
+            marginBottom: 16,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 14,
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ minWidth: 260 }}>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 700,
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+              }}
+            >
+              <span style={{ color: "#22c55e" }}>●</span>
+              Google Connected
+            </div>
+
+            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
+              <div style={{ marginBottom: 6 }}>
+                <span style={{ opacity: 0.75 }}>Business:</span>{" "}
+                <strong>{displayBusinessName}</strong>
+              </div>
+
+              <div>
+                <span style={{ opacity: 0.75 }}>Place ID:</span>{" "}
+                <span style={{ fontFamily: "monospace", opacity: 0.95 }}>
+                  {maskPlaceId(business?.google_place_id)}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+              You can now click “Refresh from Google” to sync reviews.
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+              width: "100%",
+            }}
+          >
+            <button
+              onClick={refreshFromGoogleThenReload}
+              disabled={actionLoading !== null}
+              style={{
+                ...buttonStyle,
+                minWidth: 170,
+                width: "100%",
+                maxWidth: 240,
+              }}
+              title="Fetch from Google and reload"
+            >
+              {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+            </button>
           </div>
         </div>
       )}
 
-{/* ✅ Connected confirmation card (shows after Place ID is connected) */}
-{!needsOnboarding && hasGoogleConnected && (
-  <div
-    style={{
-      border: "1px solid rgba(148,163,184,0.25)",
-      borderRadius: 16,
-      padding: 16,
-      background: "#0f172a",
-      color: "#e2e8f0",
-      marginTop: 16,
-      marginBottom: 16,
-      display: "flex",
-      justifyContent: "space-between",
-      gap: 14,
-      alignItems: "flex-start",
-      flexWrap: "wrap",
-    }}
-  >
-    <div style={{ minWidth: 260 }}>
-      <div style={{ fontSize: 14, fontWeight: 700, display: "flex", gap: 10, alignItems: "center" }}>
-        <span style={{ color: "#22c55e" }}>●</span>
-        Google Connected
-      </div>
-
-      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
-        <div style={{ marginBottom: 6 }}>
-          <span style={{ opacity: 0.75 }}>Business:</span>{" "}
-          <strong>{displayBusinessName}</strong>
-        </div>
-
-        <div>
-          <span style={{ opacity: 0.75 }}>Place ID:</span>{" "}
-          <span style={{ fontFamily: "monospace", opacity: 0.95 }}>
-            {maskPlaceId(business?.google_place_id)}
-          </span>
-        </div>
-      </div>
-
-      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-        You can now click “Refresh from Google” to sync reviews.
-      </div>
-    </div>
-
-    <div
-  style={{
-    display: "flex",
-    gap: 10,
-    alignItems: "center",
-    flexWrap: "wrap",
-    width: "100%",
-  }}
->
-  <button
-    onClick={refreshFromGoogleThenReload}
-    disabled={actionLoading !== null}
-    style={{
-      ...buttonStyle,
-      minWidth: 170,
-      width: "100%",
-      maxWidth: 240,
-    }}
-    title="Fetch from Google and reload"
-  >
-    {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
-  </button>
-</div>
-
-  </div>
-)}
-
       {/* summary cards */}
-     <div
-  style={{
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: 16,
-    marginTop: 20,
-    marginBottom: 24, // 👈 THIS is the missing piece
-  }}
->
-  {/* Average Rating */}
-  <div style={cardStyle}>
-    <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
-    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-      {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
-      <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
-        {avgRating === null ? "" : stars(Math.round(avgRating))}
-      </span>
-    </div>
-  </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 16,
+          marginTop: 20,
+          marginBottom: 24,
+        }}
+      >
+        {/* Average Rating */}
+        <div style={cardStyle}>
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
+          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>from Google</div>
+          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+            {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
+            <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
+              {avgRating === null ? "" : stars(Math.round(avgRating))}
+            </span>
+          </div>
+        </div>
 
-  {/* Reviews */}
-  <div style={cardStyle}>
-    <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
-    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-      {data.count ?? reviews.length}
-      <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
-        showing {filteredReviews.length}
-      </span>
-    </div>
-  </div>
+        {/* Reviews */}
+        <div style={cardStyle}>
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
+          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>total on Google</div>
 
-  {/* Last Refresh */}
-  <div style={cardStyle}>
-    <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
-    <div style={{ fontSize: 14, fontWeight: 600, marginTop: 8 }}>
-      {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
-    </div>
-    <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
-      Latest review: {lastReviewDate ? formatDate(lastReviewDate) : "—"}
-    </div>
-  </div>
-</div>
+          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+            {totalReviews ?? data.count ?? reviews.length}
+            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
+              • showing {filteredReviews.length}
+            </span>
+          </div>
+        </div>
 
-{/* Mobile stacking */}
-<style jsx>{`
-  @media (max-width: 768px) {
-    div {
-      grid-template-columns: 1fr !important;
-    }
-  }
-`}</style>
+        {/* Last Refresh */}
+        <div style={cardStyle}>
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
 
-      {/* ✅ Pass business name down so DraftReplyPanel is not hardcoded */}
+          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 6 }}>
+            {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
+          </div>
+
+          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>
+            Latest review updated
+            {lastReviewDate ? ` • ${formatDate(lastReviewDate)}` : ""}
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile stacking */}
+      <style jsx>{`
+        @media (max-width: 768px) {
+          div {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+
       <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
 
       {/* filters */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          flexWrap: "wrap",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ opacity: 0.8, fontSize: 13 }}>Rating</span>
           <select
             value={ratingFilter}
-            onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+            onChange={(e) =>
+              setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+            }
             style={selectStyle}
           >
             <option value="all">All</option>
@@ -764,7 +957,14 @@ function maskPlaceId(pid?: string | null) {
         <div style={{ display: "grid", gap: 12 }}>
           {filteredReviews.map((r) => (
             <div key={r.id} style={cardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  marginBottom: 6,
+                }}
+              >
                 <div style={{ fontWeight: 600 }}>
                   {r.author_url ? (
                     <a
@@ -791,13 +991,14 @@ function maskPlaceId(pid?: string | null) {
                 </div>
               </div>
 
-              <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{r.review_text ?? ""}</div>
+              <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
+                {r.review_text ?? ""}
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* toast */}
       {toast && <div style={toastStyle(toast.type)}>{toast.message}</div>}
     </main>
   );
@@ -809,7 +1010,7 @@ const buttonStyle: React.CSSProperties = {
   border: "1px solid rgba(148,163,184,0.35)",
   background: "#0f172a",
   cursor: "pointer",
-  color: "#e2e8f0", // ✅ force readable text
+  color: "#e2e8f0",
 };
 
 const cardStyle: React.CSSProperties = {
@@ -817,7 +1018,7 @@ const cardStyle: React.CSSProperties = {
   borderRadius: 14,
   padding: 14,
   background: "#0f172a",
-  color: "#e2e8f0", // ✅ force readable text
+  color: "#e2e8f0",
 };
 
 const selectStyle: React.CSSProperties = {
@@ -825,7 +1026,7 @@ const selectStyle: React.CSSProperties = {
   borderRadius: 10,
   border: "1px solid rgba(148,163,184,0.35)",
   background: "#0f172a",
-  color: "#e2e8f0", // ✅ force readable text
+  color: "#e2e8f0",
   outline: "none",
 };
 
@@ -836,10 +1037,9 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 10,
   border: "1px solid rgba(148,163,184,0.35)",
   background: "#0f172a",
-  color: "#e2e8f0", // ✅ force readable text
+  color: "#e2e8f0",
   outline: "none",
 };
-
 
 function toastStyle(type?: "success" | "error"): React.CSSProperties {
   return {
