@@ -462,7 +462,11 @@ export default function DashboardPage() {
               <button
               onClick={refreshFromGoogleThenReload}
               disabled={actionLoading !== null || !business?.google_place_id}
-               title={!business?.google_place_id ? "Connect your business to enable refresh" : "Pull recent Google reviews"}
+               title={
+  !business?.google_place_id
+    ? "Connect your business to enable refresh"
+    : "Imports a recent sample of Google reviews for demo. Full history sync comes in Phase 2 via Google Business Profile."
+}
                style={buttonStyle}
                 >
                  {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
@@ -883,7 +887,7 @@ export default function DashboardPage() {
                 width: "100%",
                 maxWidth: 240,
               }}
-              title="Fetch from Google and reload"
+              title="Imports a recent sample of Google reviews for demo. Full history sync comes in Phase 2 via Google Business Profile."
             >
               {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
             </button>
@@ -1028,10 +1032,14 @@ export default function DashboardPage() {
       </div>
 
 {business?.google_place_id ? (
-  <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>
-    Showing recent Google reviews (sample)
+  <div
+    style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}
+    title="Demo mode: Places API returns a recent sample. Full review history sync comes in Phase 2 via Google Business Profile."
+  >
+    Recent Google reviews (demo sample)
   </div>
 ) : null}
+
 
      {/* list */}
 {filteredReviews.length === 0 ? (
@@ -1062,9 +1070,9 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div style={{ marginTop: 10, opacity: 0.7 }}>
-          Note: Places API provides a recent sample. Full history sync is coming via Google Business Profile (Phase 2).
-        </div>
+       <div style={{ marginTop: 10, opacity: 0.7 }}>
+  Demo note: Showing a recent sample. Full review history sync arrives in Phase 2 (Google Business Profile).
+</div>
       </>
     ) : (
       <>
