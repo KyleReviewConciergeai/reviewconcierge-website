@@ -36,16 +36,22 @@ type ReviewUpsertRow = {
   raw: unknown;
 };
 
-function makeGoogleReviewId(r: {
-  author_name?: string;
-  time?: number;
-  rating?: number;
-  text?: string;
-}) {
-  // NOTE: Using Google "time" alone is okay for MVP but can collide in rare cases.
-  // We preserve your approach but make the fallback deterministic.
-  const fallbackId = `${r.author_name ?? "unknown"}-${r.time ?? ""}-${r.rating ?? ""}-${r.text ?? ""}`;
-  return String(r.time ?? fallbackId).slice(0, 255);
+function makeGoogleReviewId(
+  placeId: string,
+  r: {
+    author_name?: string;
+    time?: number;
+    rating?: number;
+    text?: string;
+  }
+) {
+  const author = (r.author_name ?? "unknown").trim();
+  const t = typeof r.time === "number" ? r.time : "no_time";
+  const rating = typeof r.rating === "number" ? r.rating : "no_rating";
+  const textHead = (r.text ?? "").slice(0, 80);
+
+  // place-scoped, deterministic, short enough for varchar(255)
+  return `${placeId}:${t}:${author}:${rating}:${textHead}`.slice(0, 255);
 }
 
 export async function GET(req: Request) {
@@ -175,7 +181,7 @@ export async function GET(req: Request) {
       organization_id: organizationId,
       business_id: businessId,
       source: "google",
-      google_review_id: makeGoogleReviewId(r),
+     google_review_id: makeGoogleReviewId(placeId, r),
 
       author_name: r.author_name ?? null,
       author_url: r.author_url ?? null,
