@@ -1027,58 +1027,75 @@ export default function DashboardPage() {
         </button>
       </div>
 
-<div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>
-  Showing recent Google reviews (sample)
-</div>
+{business?.google_place_id ? (
+  <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>
+    Showing recent Google reviews (sample)
+  </div>
+) : null}
 
-      {/* list */}
-      {filteredReviews.length === 0 ? (
-        <p style={{ opacity: 0.85 }}>No reviews match your filters.</p>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {filteredReviews.map((r) => (
-            <div key={r.id} style={cardStyle}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  marginBottom: 6,
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>
-                  {r.author_url ? (
-                    <a
-                      href={r.author_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ color: "inherit", textDecoration: "underline" }}
-                    >
-                      {r.author_name ?? "Anonymous"}
-                    </a>
-                  ) : (
-                    <span>{r.author_name ?? "Anonymous"}</span>
-                  )}
-                  <span style={{ opacity: 0.8, marginLeft: 10 }}>
-                    {stars(r.rating)} {typeof r.rating === "number" ? `(${r.rating}/5)` : ""}
-                  </span>
-                </div>
+     {/* list */}
+{filteredReviews.length === 0 ? (
+  <div
+    style={{
+      border: "1px solid rgba(148,163,184,0.25)",
+      borderRadius: 16,
+      padding: 14,
+      background: "rgba(2,6,23,0.35)",
+      color: "rgba(226,232,240,0.92)",
+      fontSize: 13,
+      lineHeight: 1.45,
+    }}
+  >
+    {reviews.length === 0 ? (
+      <>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>No reviews imported yet.</div>
 
-                <div style={{ opacity: 0.75, fontSize: 12, textAlign: "right" }}>
-                  <div>{formatDate(r.review_date)}</div>
-                  <div>
-                    {r.source?.toUpperCase()} {r.detected_language ? `• ${r.detected_language}` : ""}
-                  </div>
-                </div>
-              </div>
+        {!business?.google_place_id ? (
+          <div style={{ opacity: 0.85 }}>
+            Connect your business first, then click <strong>“Refresh from Google”</strong> to import a recent
+            sample of reviews.
+          </div>
+        ) : (
+          <div style={{ opacity: 0.85 }}>
+            Click <strong>“Refresh from Google”</strong> to import a recent sample of reviews for demo
+            purposes.
+          </div>
+        )}
 
-              <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
-                {r.review_text ?? ""}
-              </div>
-            </div>
-          ))}
+        <div style={{ marginTop: 10, opacity: 0.7 }}>
+          Note: Places API provides a recent sample. Full history sync is coming via Google Business Profile (Phase 2).
         </div>
-      )}
+      </>
+    ) : (
+      <>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>No results for these filters.</div>
+        <div style={{ opacity: 0.85 }}>
+          Try clearing filters or searching a shorter keyword (author name, “service”, “wine”, etc.).
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <button
+            onClick={() => {
+              setRatingFilter("all");
+              setQuery("");
+            }}
+            style={{ ...buttonStyle, padding: "10px 14px", borderRadius: 10 }}
+          >
+            Clear filters
+          </button>
+        </div>
+      </>
+    )}
+  </div>
+) : (
+  <div style={{ display: "grid", gap: 12 }}>
+    {filteredReviews.map((r) => (
+      <div key={r.id} style={cardStyle}>
+        {/* ... your existing review card ... */}
+      </div>
+    ))}
+  </div>
+)}
+
 
       {toast && <div style={toastStyle(toast.type)}>{toast.message}</div>}
     </main>
