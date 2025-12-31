@@ -479,7 +479,25 @@ export default function DashboardPage() {
 )}
         </div>
 
-        <p style={{ color: "#ffb3b3", marginTop: 12 }}>Error: {data?.error ?? "Unknown error"}</p>
+        {data?.error && !toast && (
+  <div
+  className="rc-notice"
+  style={{
+    marginTop: 12,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.25)",
+    background: "rgba(2,6,23,0.35)",
+    color: "rgba(226,232,240,0.9)",
+    fontSize: 13,
+    lineHeight: 1.35,
+  }}
+>
+    <strong style={{ fontWeight: 700, opacity: 0.9 }}>Notice:</strong>{" "}
+    {String(data.error)}
+  </div>
+)}
+
 
         {toast && <div style={toastStyle(toast.type)}>{toast.message}</div>}
       </main>
@@ -949,6 +967,11 @@ export default function DashboardPage() {
   @media (max-width: 768px) {
     .summary-grid {
       grid-template-columns: 1fr !important;
+    }
+
+    /* Hide inline notice on mobile (toast is enough) */
+    .rc-notice {
+      display: none;
     }
   }
 `}</style>
