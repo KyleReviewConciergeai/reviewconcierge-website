@@ -904,7 +904,9 @@ export default function DashboardPage() {
   >
     <div>Verified from Google (Place ID).</div>
     <div>
-      Imported reviews in ReviewConcierge may be limited during demo (full sync via GBP API in Phase 2).
+      This dashboard shows a recent sample of Google reviews for demo purposes.
+      Total Google ratings and average score are fully verified.
+      Full review sync via Google Business Profile API is coming in Phase 2.
     </div>
   </div>
 ) : null}
@@ -968,6 +970,10 @@ export default function DashboardPage() {
           Clear
         </button>
       </div>
+
+<div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>
+  Showing recent Google reviews (sample)
+</div>
 
       {/* list */}
       {filteredReviews.length === 0 ? (
