@@ -163,49 +163,75 @@ export default function DashboardPage() {
   }
 
   async function refreshFromGoogleThenReload() {
-    if (actionLoading) return;
+  if (actionLoading) return;
 
-    if (!business?.google_place_id) {
-      showToast({ message: "Connect your Google Place ID first.", type: "error" }, 3500);
+  if (!business?.google_place_id) {
+    showToast(
+      { message: "Connect your business first, then refresh from Google.", type: "error" },
+      3500
+    );
+    return;
+  }
+
+  try {
+    setActionLoading("google");
+
+    const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
+    const googleJson = await googleRes.json();
+
+    if (!googleRes.ok || !googleJson?.ok) {
+      const raw =
+        googleJson?.error ??
+        googleJson?.googleError ??
+        googleJson?.googleStatus ??
+        "Google refresh failed";
+
+      // Debug detail in console, but keep UI copy sales-safe.
+      console.error("Google refresh failed:", raw, googleJson);
+
+      showToast(
+        {
+          message:
+            "Couldn’t refresh from Google right now. Please try again in a moment.",
+          type: "error",
+        },
+        4500
+      );
       return;
     }
 
-    try {
-      setActionLoading("google");
+    const fetched = Number(googleJson?.fetched ?? 0);
+    const inserted = Number(googleJson?.inserted ?? 0);
+    const updated = Number(googleJson?.updated ?? 0);
+    const syncedAt =
+      (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
 
-      const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
-      const googleJson = await googleRes.json();
+    // Reload local list after sync
+    const json = await loadReviews();
+    setData(json);
+    setLastRefreshedAt(syncedAt);
 
-      if (!googleRes.ok || !googleJson?.ok) {
-        const msg = googleJson?.error ?? googleJson?.googleError ?? "Google refresh failed";
-        setData({ ok: false, error: msg });
-        showToast({ message: msg, type: "error" }, 4000);
-        return;
-      }
+    // Sales-safe success messaging
+    const msg =
+      fetched === 0
+        ? "Synced from Google • No recent reviews returned (totals verified)."
+        : `Synced recent Google reviews • ${inserted} new, ${updated} updated (totals verified).`;
 
-      const fetched = Number(googleJson?.fetched ?? 0);
-      const inserted = Number(googleJson?.inserted ?? 0);
-      const updated = Number(googleJson?.updated ?? 0);
-      const syncedAt = (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
+    showToast({ message: msg, type: "success" }, 3500);
+  } catch (e: any) {
+    console.error("Refresh from Google error:", e);
 
-      const json = await loadReviews();
-      setData(json);
-      setLastRefreshedAt(syncedAt);
-
-      const msg =
-        fetched === 0
-          ? "Google sync complete: no reviews returned."
-          : `Google sync complete: ${fetched} fetched (${inserted} new, ${updated} updated).`;
-
-      showToast({ message: msg, type: "success" }, 3000);
-    } catch (e: any) {
-      const msg = e?.message ?? "Failed to refresh";
-      setData({ ok: false, error: msg });
-      showToast({ message: msg, type: "error" }, 4000);
-    } finally {
-      setActionLoading(null);
-    }
+    showToast(
+      {
+        message: "Couldn’t refresh from Google right now. Please try again.",
+        type: "error",
+      },
+      4500
+    );
+  } finally {
+    setActionLoading(null);
   }
+}
 
   async function connectGooglePlaceId() {
     if (actionLoading) return;
