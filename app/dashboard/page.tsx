@@ -840,66 +840,85 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* summary cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 16,
-          marginTop: 20,
-          marginBottom: 24,
-        }}
-      >
-        {/* Average Rating */}
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
-          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>from Google</div>
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-            {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
-            <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
-              {avgRating === null ? "" : stars(Math.round(avgRating))}
-            </span>
-          </div>
-        </div>
+ {/* summary cards */}
+<div
+  className="summary-grid"
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: 16,
+    marginTop: 20,
+    marginBottom: 24,
+  }}
+>
+  {/* Average Rating */}
+  <div style={cardStyle}>
+    <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
+    <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>from Google</div>
+    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+      {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
+      <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
+        {avgRating === null ? "" : stars(Math.round(avgRating))}
+      </span>
+    </div>
+  </div>
 
-        {/* Reviews */}
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
-          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>total on Google</div>
+  {/* Reviews */}
+  <div style={cardStyle}>
+    <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
+    <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>total on Google</div>
 
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
-            {totalReviews ?? data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
-              • showing {filteredReviews.length}
-            </span>
-          </div>
-        </div>
+    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+      {totalReviews ?? data.count ?? reviews.length}
+      <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
+        • showing {filteredReviews.length}
+      </span>
+    </div>
+  </div>
 
-        {/* Last Refresh */}
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
+  {/* Last Refresh */}
+  <div style={cardStyle}>
+    <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
 
-          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 6 }}>
-            {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
-          </div>
+    <div style={{ fontSize: 14, fontWeight: 600, marginTop: 6 }}>
+      {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
+    </div>
 
-          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>
-            Latest review updated
-            {lastReviewDate ? ` • ${formatDate(lastReviewDate)}` : ""}
-          </div>
-        </div>
-      </div>
+    <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>
+      Latest review updated
+      {lastReviewDate ? ` • ${formatDate(lastReviewDate)}` : ""}
+    </div>
+  </div>
+</div>
 
-      {/* Mobile stacking */}
-      <style jsx>{`
-        @media (max-width: 768px) {
-          div {
-            grid-template-columns: 1fr !important;
-          }
-        }
-      `}</style>
+{/* ✅ credibility / demo disclosure */}
+{business?.google_place_id ? (
+  <div
+    style={{
+      marginTop: -12,
+      marginBottom: 20,
+      fontSize: 12,
+      color: "#6b7280",
+      lineHeight: 1.4,
+    }}
+  >
+    <div>Verified from Google (Place ID).</div>
+    <div>
+      Imported reviews in ReviewConcierge may be limited during demo (full sync via GBP API in Phase 2).
+    </div>
+  </div>
+) : null}
 
-      <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
+{/* ✅ Mobile stacking (scoped only to summary cards) */}
+<style jsx>{`
+  @media (max-width: 768px) {
+    .summary-grid {
+      grid-template-columns: 1fr !important;
+    }
+  }
+`}</style>
+
+<DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
 
       {/* filters */}
       <div
