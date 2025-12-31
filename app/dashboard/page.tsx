@@ -433,17 +433,24 @@ export default function DashboardPage() {
             <button onClick={reloadList} disabled={actionLoading !== null} style={buttonStyle}>
               {actionLoading === "reload" ? "Reloading…" : "Reload list"}
             </button>
-            <button
+              <button
               onClick={refreshFromGoogleThenReload}
               disabled={actionLoading !== null || !business?.google_place_id}
-              style={buttonStyle}
-            >
-              {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
-            </button>
+               title={!business?.google_place_id ? "Connect your business to enable refresh" : "Pull recent Google reviews"}
+               style={buttonStyle}
+                >
+                 {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
+              </button>
+
             <button onClick={onLogout} disabled={actionLoading !== null} style={buttonStyle}>
               {actionLoading === "logout" ? "Logging out…" : "Log out"}
             </button>
           </div>
+          {!business?.google_place_id && (
+  <div style={{ marginTop: 10, opacity: 0.7, fontSize: 13 }}>
+  🔒 Connect your business to enable “Refresh from Google”.
+</div>
+)}
         </div>
 
         <p style={{ color: "#ffb3b3", marginTop: 12 }}>Error: {data?.error ?? "Unknown error"}</p>
