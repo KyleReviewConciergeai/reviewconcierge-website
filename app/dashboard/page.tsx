@@ -1005,10 +1005,61 @@ export default function DashboardPage() {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           {filteredReviews.map((r) => (
-            <div key={r.id} style={cardStyle}>
-              {/* ... your existing review card ... */}
-            </div>
-          ))}
+  <div key={r.id} style={cardStyle}>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>
+          {stars(r.rating)}
+          <span style={{ opacity: 0.7, marginLeft: 8, fontWeight: 600 }}>
+            {typeof r.rating === "number" ? r.rating.toFixed(0) : "—"}
+          </span>
+        </div>
+
+        <div style={{ fontSize: 13, opacity: 0.9 }}>
+          {r.author_url ? (
+            <a
+              href={r.author_url}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}
+            >
+              {r.author_name ?? "Anonymous"}
+            </a>
+          ) : (
+            <span>{r.author_name ?? "Anonymous"}</span>
+          )}
+        </div>
+
+        {r.detected_language && (
+          <span
+            style={{
+              fontSize: 11,
+              opacity: 0.7,
+              border: "1px solid rgba(148,163,184,0.25)",
+              padding: "2px 8px",
+              borderRadius: 999,
+            }}
+          >
+            {r.detected_language}
+          </span>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
+        {formatDate(r.review_date ?? r.created_at)}
+      </div>
+    </div>
+
+    <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.5, opacity: 0.92 }}>
+      {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
+    </div>
+
+    <div style={{ marginTop: 10, fontSize: 11, opacity: 0.6 }}>
+      Source: {r.source}
+    </div>
+  </div>
+))}
+
         </div>
       )}
 
