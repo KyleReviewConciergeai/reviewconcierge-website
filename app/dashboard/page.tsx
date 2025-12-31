@@ -891,6 +891,17 @@ export default function DashboardPage() {
             >
               {actionLoading === "google" ? "Refreshing…" : "Refresh from Google"}
             </button>
+
+{lastRefreshedAt && (
+  <div
+    title="Shows when reviews were last fetched from Google"
+    style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}
+  >
+    Last synced from Google:{" "}
+    {new Date(lastRefreshedAt).toLocaleString()}
+  </div>
+)}
+
           </div>
         </div>
       )}
