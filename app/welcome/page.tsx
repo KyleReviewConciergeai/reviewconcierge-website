@@ -23,11 +23,25 @@ export default function WelcomePage() {
                 href="/connect/google"
                 className="inline-flex w-full items-center justify-center rounded-xl bg-black px-5 py-3 text-white font-medium hover:bg-gray-900"
               >
-                Connect Google Business Profile
+                Connect Google Reviews
               </Link>
 
-              <p className="text-sm text-gray-600">
-                Secure access. We never post without your approval.
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-gray-600">
+                  Secure access. We never post without your approval.
+                </p>
+
+                <Link
+                  href="/dashboard"
+                  className="text-sm font-medium text-gray-900 underline underline-offset-4 hover:text-gray-700"
+                >
+                  Skip for now →
+                </Link>
+              </div>
+
+              <p className="text-xs text-gray-500">
+                Demo note: this pulls a recent sample via Google Places today. Full review history sync
+                comes in Phase 2 via Google Business Profile.
               </p>
             </div>
           </div>
@@ -40,7 +54,7 @@ export default function WelcomePage() {
               <li>
                 <span className="font-medium">1) 🔗 Connect Google</span>
                 <div className="text-sm text-gray-600">
-                  We’ll pull in your recent reviews instantly.
+                  Find your business and verify in seconds (best on iPhone too).
                 </div>
               </li>
 
