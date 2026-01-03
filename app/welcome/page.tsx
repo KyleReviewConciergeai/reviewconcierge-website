@@ -5,9 +5,9 @@ import Link from "next/link";
 export default function WelcomePage() {
   return (
     <main className="min-h-screen bg-white">
-      <div className="mx-auto max-w-2xl px-6 py-16">
+      <div className="mx-auto max-w-2xl px-6 py-12">
         <div className="space-y-6">
-          <h1 className="text-3xl font-semibold tracking-tight">
+          <h1 className="text-3xl font-semibold tracking-tight text-gray-900">
             🎉 Welcome to Review Concierge
           </h1>
 
@@ -21,52 +21,54 @@ export default function WelcomePage() {
             <div className="space-y-3">
               <Link
                 href="/connect/google"
-                className="inline-flex w-full items-center justify-center rounded-xl bg-black px-5 py-3 text-white font-medium hover:bg-gray-900"
+                className="inline-flex w-full items-center justify-center rounded-xl bg-black px-5 py-3 text-white font-semibold hover:bg-gray-900 transition shadow-sm hover:shadow focus:outline-none focus:ring-2 focus:ring-black/20 focus:ring-offset-2"
               >
-                Connect Google Reviews
+                Connect Google Business Profile
               </Link>
 
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-gray-600">
+              <div className="flex items-center justify-between gap-4">
+                <p className="text-sm text-gray-700">
                   Secure access. We never post without your approval.
                 </p>
 
                 <Link
                   href="/dashboard"
-                  className="text-sm font-medium text-gray-900 underline underline-offset-4 hover:text-gray-700"
+                  className="shrink-0 text-sm text-gray-500 hover:text-gray-700 hover:underline"
                 >
                   Skip for now →
                 </Link>
               </div>
 
-              <p className="text-xs text-gray-500">
-                Demo note: this pulls a recent sample via Google Places today. Full review history sync
-                comes in Phase 2 via Google Business Profile.
+              <p className="text-sm text-gray-600">
+                Demo note: this pulls a recent sample via Google Places today. Full review
+                history sync comes in Phase 2 via Google Business Profile.
               </p>
             </div>
           </div>
 
+          <hr className="border-gray-200" />
+
           {/* What happens next */}
           <div className="space-y-3">
-            <h2 className="text-lg font-semibold">What happens next</h2>
+            <h2 className="text-lg font-semibold text-gray-900">What happens next</h2>
 
-            <ol className="space-y-3 text-gray-700">
+            <ol className="space-y-2 text-gray-700">
               <li>
-                <span className="font-medium">1) 🔗 Connect Google</span>
+                <div className="text-gray-900 font-medium">1) 🔗 Connect Google</div>
                 <div className="text-sm text-gray-600">
-                  Find your business and verify in seconds (best on iPhone too).
+                  We’ll pull in your recent reviews instantly.
                 </div>
               </li>
 
               <li>
-                <span className="font-medium">2) ✨ Review AI replies</span>
+                <div className="text-gray-900 font-medium">2) ✨ Review AI replies</div>
                 <div className="text-sm text-gray-600">
                   Drafts match your brand voice and tone.
                 </div>
               </li>
 
               <li>
-                <span className="font-medium">3) 📋 Copy & paste into Google</span>
+                <div className="text-gray-900 font-medium">3) 📋 Copy &amp; paste into Google</div>
                 <div className="text-sm text-gray-600">
                   (Auto-posting can come later.)
                 </div>
@@ -75,16 +77,17 @@ export default function WelcomePage() {
           </div>
 
           {/* Trial reassurance */}
-          <div className="rounded-2xl bg-gray-50 p-6">
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
             <p className="text-sm text-gray-700">
-              ⏳ You’re on a <span className="font-medium">14-day free trial</span>.
-              We’ll email you before billing starts. Cancel anytime.
+              ⏳ You’re on a{" "}
+              <span className="font-medium text-emerald-700">14-day free trial</span>. We’ll
+              email you before billing starts. Cancel anytime.
             </p>
           </div>
 
           {/* Founder trust line */}
           <div className="text-sm text-gray-700">
-            <p className="font-medium">Founder note</p>
+            <p className="font-medium text-gray-900">Founder note</p>
             <p className="text-gray-600">
               I’m personally onboarding our first group of founders. If you want help,
               reply to the welcome email.
