@@ -31,6 +31,10 @@ export default function ConnectGooglePage() {
   const [business, setBusiness] = useState<CurrentBusiness | null>(null);
   const [userEmail, setUserEmail] = useState("");
 
+  // If already connected, we show a “connected” view.
+  // User can optionally click “Reconnect” to use the search/connect UI.
+  const [showReconnectUI, setShowReconnectUI] = useState(false);
+
   // search flow
   const [placeSearchQuery, setPlaceSearchQuery] = useState("");
   const [placeSearchResults, setPlaceSearchResults] = useState<PlaceCandidate[]>([]);
@@ -40,7 +44,11 @@ export default function ConnectGooglePage() {
   const [placeIdInput, setPlaceIdInput] = useState("");
   const [placeIdStatus, setPlaceIdStatus] = useState<PlaceIdStatus>("idle");
   const [placeIdError, setPlaceIdError] = useState<string | null>(null);
-  const [verified, setVerified] = useState<{ name?: string; rating?: number; user_ratings_total?: number } | null>(null);
+  const [verified, setVerified] = useState<{
+    name?: string;
+    rating?: number;
+    user_ratings_total?: number;
+  } | null>(null);
 
   async function loadCurrentBusiness() {
     const res = await fetch("/api/businesses/current", { cache: "no-store" });
@@ -73,7 +81,9 @@ export default function ConnectGooglePage() {
         return;
       }
 
-      const candidates = Array.isArray(json?.candidates) ? (json.candidates as PlaceCandidate[]) : [];
+      const candidates = Array.isArray(json?.candidates)
+        ? (json.candidates as PlaceCandidate[])
+        : [];
       setPlaceSearchResults(candidates);
     } catch (e: any) {
       setPlaceSearchError(e?.message ?? "Search failed");
@@ -142,18 +152,25 @@ export default function ConnectGooglePage() {
       }
 
       const b = await loadCurrentBusiness();
+
+      // Instead of forcing redirect if already connected,
+      // keep user here and show a “Connected” summary.
       if (b?.google_place_id) {
-        // already connected → dashboard
-        router.replace("/dashboard");
+        setShowReconnectUI(false);
+        setLoading(false);
         return;
       }
 
+      // not connected → show connect UI
+      setShowReconnectUI(true);
       setLoading(false);
     }
 
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const isAlreadyConnected = !!business?.google_place_id;
 
   if (loading) {
     return (
@@ -164,10 +181,107 @@ export default function ConnectGooglePage() {
     );
   }
 
+  // Connected view (default when already connected)
+  if (isAlreadyConnected && !showReconnectUI) {
+    return (
+      <main style={{ padding: 24, maxWidth: 760, margin: "0 auto" }}>
+        <h1 style={{ fontSize: 22, marginBottom: 6 }}>Google Connected ✅</h1>
+
+        {userEmail && (
+          <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 14 }}>
+            Signed in as {userEmail}
+          </div>
+        )}
+
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 16,
+            padding: 16,
+            background: "#0f172a",
+            color: "#e2e8f0",
+          }}
+        >
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+            Connected business
+          </div>
+
+          <div style={{ fontSize: 14, opacity: 0.95 }}>
+            <strong>{business?.google_place_name ?? business?.business_name ?? "Your Business"}</strong>
+          </div>
+
+          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+            Place ID:{" "}
+            <span style={{ fontFamily: "monospace" }}>{business?.google_place_id}</span>
+          </div>
+
+          {(typeof business?.google_rating === "number" ||
+            typeof business?.google_user_ratings_total === "number") && (
+            <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>
+              {typeof business?.google_rating === "number" ? `${business.google_rating}★` : ""}
+              {typeof business?.google_user_ratings_total === "number"
+                ? ` • ${business.google_user_ratings_total} ratings`
+                : ""}
+            </div>
+          )}
+
+          <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={() => router.push("/dashboard")}
+              style={buttonStyle}
+              title="Go to dashboard"
+            >
+              Go to Dashboard
+            </button>
+
+            <button
+              onClick={() => {
+                // reveal connect UI
+                setShowReconnectUI(true);
+                setPlaceSearchQuery("");
+                setPlaceSearchResults([]);
+                setPlaceSearchError(null);
+                setPlaceIdStatus("idle");
+                setPlaceIdError(null);
+                setVerified(null);
+              }}
+              style={{
+                ...buttonStyle,
+                background: "rgba(226,232,240,0.08)",
+              }}
+              title="Reconnect or change business"
+            >
+              Change / Reconnect
+            </button>
+          </div>
+
+          <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
+            Tip: If you want to switch to a different location/business, use “Change / Reconnect”.
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // Connect UI (either not connected, or user clicked reconnect)
   return (
     <main style={{ padding: 24, maxWidth: 760, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 22, marginBottom: 6 }}>Connect Google</h1>
-      {userEmail && <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 14 }}>Signed in as {userEmail}</div>}
+      <h1 style={{ fontSize: 22, marginBottom: 6 }}>
+        {isAlreadyConnected ? "Reconnect Google" : "Connect Google"}
+      </h1>
+      {userEmail && (
+        <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 14 }}>
+          Signed in as {userEmail}
+        </div>
+      )}
+
+      {isAlreadyConnected && (
+        <div style={{ marginBottom: 14, fontSize: 13, opacity: 0.85 }}>
+          Currently connected to{" "}
+          <strong>{business?.google_place_name ?? business?.business_name ?? "Your Business"}</strong>.{" "}
+          Select a new business below to switch.
+        </div>
+      )}
 
       <div
         style={{
@@ -178,7 +292,9 @@ export default function ConnectGooglePage() {
           color: "#e2e8f0",
         }}
       >
-        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Find your business</div>
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+          Find your business
+        </div>
         <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
           Tip: search “name + city” (e.g. “Delfina Palo Alto”)
         </div>
@@ -211,7 +327,9 @@ export default function ConnectGooglePage() {
         </div>
 
         {placeSearchError && (
-          <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>{placeSearchError}</div>
+          <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>
+            {placeSearchError}
+          </div>
         )}
 
         {placeSearchResults.length > 0 && (
@@ -237,9 +355,18 @@ export default function ConnectGooglePage() {
               >
                 <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
                 {p.formatted_address && (
-                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{p.formatted_address}</div>
+                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                    {p.formatted_address}
+                  </div>
                 )}
-                <div style={{ fontSize: 11, opacity: 0.55, marginTop: 8, fontFamily: "monospace" }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    opacity: 0.55,
+                    marginTop: 8,
+                    fontFamily: "monospace",
+                  }}
+                >
                   {p.place_id}
                 </div>
               </button>
@@ -247,7 +374,13 @@ export default function ConnectGooglePage() {
           </div>
         )}
 
-        <div style={{ marginTop: 14, borderTop: "1px solid rgba(148,163,184,0.18)", paddingTop: 14 }}>
+        <div
+          style={{
+            marginTop: 14,
+            borderTop: "1px solid rgba(148,163,184,0.18)",
+            paddingTop: 14,
+          }}
+        >
           <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
             Or paste a Place ID manually:
           </div>
@@ -286,8 +419,12 @@ export default function ConnectGooglePage() {
           </div>
 
           <div style={{ marginTop: 10 }}>
-            {placeIdStatus === "loading" && <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>}
-            {placeIdStatus === "error" && <div style={{ fontSize: 13, color: "#f87171" }}>{placeIdError}</div>}
+            {placeIdStatus === "loading" && (
+              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>
+            )}
+            {placeIdStatus === "error" && (
+              <div style={{ fontSize: 13, color: "#f87171" }}>{placeIdError}</div>
+            )}
             {placeIdStatus === "success" && (
               <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>
                 Connected ✔ Redirecting…
@@ -299,7 +436,26 @@ export default function ConnectGooglePage() {
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9 }}>
               Connected to: <strong>{verified.name}</strong>
               {typeof verified.rating === "number" ? ` • ${verified.rating}★` : ""}
-              {typeof verified.user_ratings_total === "number" ? ` • ${verified.user_ratings_total} ratings` : ""}
+              {typeof verified.user_ratings_total === "number"
+                ? ` • ${verified.user_ratings_total} ratings`
+                : ""}
+            </div>
+          )}
+
+          {isAlreadyConnected && (
+            <div style={{ marginTop: 14 }}>
+              <button
+                onClick={() => {
+                  setShowReconnectUI(false);
+                  router.refresh();
+                }}
+                style={{
+                  ...buttonStyle,
+                  background: "rgba(226,232,240,0.08)",
+                }}
+              >
+                Cancel (keep current connection)
+              </button>
             </div>
           )}
         </div>
