@@ -60,15 +60,29 @@ export async function POST(_req: Request) {
 
     // 3) Create Checkout Session (subscription) + set org metadata everywhere
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${siteUrl}/dashboard?billing=success`,
-      cancel_url: `${siteUrl}/dashboard?billing=cancel`,
-      metadata: { organization_id: organizationId },
-      subscription_data: { metadata: { organization_id: organizationId } },
-      allow_promotion_codes: true,
-    });
+  mode: "subscription",
+  customer: customerId,
+  line_items: [{ price: priceId, quantity: 1 }],
+
+  success_url: `${siteUrl}/dashboard?billing=success`,
+  cancel_url: `${siteUrl}/dashboard?billing=cancel`,
+
+  // ✅ Keep org mapping for webhooks
+  metadata: { organization_id: organizationId },
+
+  // ✅ ADD TRIAL HERE (this is the fix)
+  subscription_data: {
+    metadata: { organization_id: organizationId },
+    trial_period_days: 14,
+
+    // Optional but recommended safety:
+    // trial_settings: {
+    //   end_behavior: { missing_payment_method: "cancel" },
+    // },
+  },
+
+  allow_promotion_codes: true,
+});
 
     return NextResponse.json({ ok: true, url: session.url });
   } catch (err: any) {

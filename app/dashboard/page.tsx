@@ -119,6 +119,10 @@ export default function DashboardPage() {
   const [business, setBusiness] = useState<CurrentBusiness | null>(null);
   const [businessLoaded, setBusinessLoaded] = useState(false);
 
+  // ✅ subscription gating UI (MOVED UP to avoid TS “used before declaration”)
+  const [upgradeRequired, setUpgradeRequired] = useState(false);
+  const [subscriptionActive, setSubscriptionActive] = useState<boolean | null>(null);
+
   // Place ID onboarding
   const [placeIdInput, setPlaceIdInput] = useState("");
   const [placeVerify, setPlaceVerify] = useState<{
@@ -145,12 +149,10 @@ export default function DashboardPage() {
   const [ratingFilter, setRatingFilter] = useState<number | "all">("all");
   const [query, setQuery] = useState("");
 
+  // ✅ Derived flags (MOVED BELOW subscription state so TS is happy)
   const needsOnboarding = businessLoaded && (!business || !business.google_place_id);
   const hasGoogleConnected = !!business?.google_place_id;
-
-  // ✅ subscription gating UI
-  const [upgradeRequired, setUpgradeRequired] = useState(false);
-  const [subscriptionActive, setSubscriptionActive] = useState<boolean | null>(null);
+  const canGoogleSync = hasGoogleConnected && subscriptionActive !== false;
 
   // single source of truth:
   // - subscriptionActive === false => show subscribe
@@ -207,27 +209,27 @@ export default function DashboardPage() {
   }
 
   async function loadSubscriptionStatus() {
-  try {
-    const res = await fetch("/api/subscription/status", { cache: "no-store" });
-    const json = (await res.json()) as any;
+    try {
+      const res = await fetch("/api/subscription/status", { cache: "no-store" });
+      const json = await res.json();
 
-    // Accept either "isActive" OR "active" to be robust
-    const isActive = Boolean(json?.isActive ?? json?.active);
+      // expects: { ok: true, isActive: boolean, status: string|null }
+      if (res.ok && json?.ok) {
+        const isActive = !!json?.isActive;
 
-    if (res.ok && json?.ok) {
-      setUpgradeRequired(!isActive);
-      setSubscriptionActive(isActive);
-      return;
+        setSubscriptionActive(isActive);
+        setUpgradeRequired(!isActive);
+        return;
+      }
+
+      // If endpoint fails, don't hard-block UI
+      setSubscriptionActive(null);
+      setUpgradeRequired(false);
+    } catch {
+      setSubscriptionActive(null);
+      setUpgradeRequired(false);
     }
-
-    // if endpoint fails, don't hard-block UI
-    setUpgradeRequired(false);
-    setSubscriptionActive(null);
-  } catch {
-    setUpgradeRequired(false);
-    setSubscriptionActive(null);
   }
-}
 
   async function reloadList() {
     if (actionLoading) return;
@@ -556,8 +558,14 @@ export default function DashboardPage() {
 
             <button
               onClick={refreshFromGoogleThenReload}
-              disabled={actionLoading !== null || !business?.google_place_id}
-              title={!business?.google_place_id ? COPY.refreshTooltipDisabled : COPY.refreshTooltipEnabled}
+              disabled={actionLoading !== null || !business?.google_place_id || subscriptionActive === false}
+              title={
+                !business?.google_place_id
+                  ? COPY.refreshTooltipDisabled
+                  : subscriptionActive === false
+                    ? "Subscribe to enable Google sync"
+                    : COPY.refreshTooltipEnabled
+              }
               style={buttonStyle}
             >
               {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
@@ -644,14 +652,20 @@ export default function DashboardPage() {
 
           <button
             onClick={refreshFromGoogleThenReload}
-            disabled={actionLoading !== null || !business?.google_place_id}
+            disabled={actionLoading !== null || !business?.google_place_id || subscriptionActive === false}
             style={{
               ...buttonStyle,
               minWidth: 170,
-              opacity: !business?.google_place_id ? 0.6 : 1,
+              opacity: !business?.google_place_id || subscriptionActive === false ? 0.6 : 1,
             }}
-            title={!business?.google_place_id ? COPY.refreshTooltipDisabled : COPY.refreshTooltipEnabled}
-            aria-disabled={actionLoading !== null || !business?.google_place_id}
+            title={
+              !business?.google_place_id
+                ? COPY.refreshTooltipDisabled
+                : subscriptionActive === false
+                  ? "Subscribe to enable Google sync"
+                  : COPY.refreshTooltipEnabled
+            }
+            aria-disabled={actionLoading !== null || !business?.google_place_id || subscriptionActive === false}
           >
             {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
           </button>
@@ -937,15 +951,23 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Plan not active + Subscribe on the right */}
-          {showSubscribe && (
-            <div style={{ minWidth: 220, textAlign: "right" }}>
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-                Plan: Not active
+          {/* ✅ Plan status (Active / Not active / Checking) */}
+          <div style={{ minWidth: 220, textAlign: "right" }}>
+            {subscriptionActive === null ? (
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>Plan: Checking…</div>
+            ) : subscriptionActive ? (
+              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
+                Plan: <span style={{ color: "#22c55e", fontWeight: 700 }}>Active ✓</span>
               </div>
-              <SubscribeButton />
-            </div>
-          )}
+            ) : (
+              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
+                Plan: <span style={{ color: "#f87171", fontWeight: 700 }}>Not active</span>
+              </div>
+            )}
+
+            {/* Only show Subscribe CTA when not active */}
+            {subscriptionActive === false && <SubscribeButton />}
+          </div>
         </div>
       )}
 
