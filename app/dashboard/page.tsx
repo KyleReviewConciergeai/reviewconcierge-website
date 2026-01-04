@@ -207,25 +207,27 @@ export default function DashboardPage() {
   }
 
   async function loadSubscriptionStatus() {
-    try {
-      const res = await fetch("/api/subscription/status", { cache: "no-store" });
-      const json = (await res.json()) as SubscriptionStatusResponse;
+  try {
+    const res = await fetch("/api/subscription/status", { cache: "no-store" });
+    const json = (await res.json()) as any;
 
-      // expects: { ok: true, active: boolean, status: string|null }
-      if (res.ok && json?.ok) {
-        setSubscriptionActive(!!json.active);
-        setUpgradeRequired(!json.active);
-        return;
-      }
+    // Accept either "isActive" OR "active" to be robust
+    const isActive = Boolean(json?.isActive ?? json?.active);
 
-      // if endpoint fails, don't hard-block UI
-      setSubscriptionActive(null);
-      setUpgradeRequired(false);
-    } catch {
-      setSubscriptionActive(null);
-      setUpgradeRequired(false);
+    if (res.ok && json?.ok) {
+      setUpgradeRequired(!isActive);
+      setSubscriptionActive(isActive);
+      return;
     }
+
+    // if endpoint fails, don't hard-block UI
+    setUpgradeRequired(false);
+    setSubscriptionActive(null);
+  } catch {
+    setUpgradeRequired(false);
+    setSubscriptionActive(null);
   }
+}
 
   async function reloadList() {
     if (actionLoading) return;
