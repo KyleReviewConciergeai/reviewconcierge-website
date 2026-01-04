@@ -185,6 +185,24 @@ export default function DashboardPage() {
     }
   }
 
+async function loadSubscriptionStatus() {
+  try {
+    const res = await fetch("/api/subscription/status", { cache: "no-store" });
+    const json = await res.json();
+
+    // expects: { ok: true, isActive: boolean, status: string|null }
+    if (res.ok && json?.ok) {
+      setUpgradeRequired(!json?.isActive);
+      return;
+    }
+
+    // if endpoint fails, don't hard-block UI
+    setUpgradeRequired(false);
+  } catch {
+    setUpgradeRequired(false);
+  }
+}
+
   async function reloadList() {
     if (actionLoading) return;
     try {
@@ -394,6 +412,7 @@ export default function DashboardPage() {
         setUserEmail(userData?.user?.email ?? "");
 
         await loadCurrentBusiness();
+        await loadSubscriptionStatus();
 
         const json = await loadReviews();
         setData(json);
@@ -881,12 +900,12 @@ export default function DashboardPage() {
 
             {/* ✅ Step 4: show Plan not active + Subscribe inside this card */}
             {showSubscribe && (
-              <div style={{ marginTop: 14 }}>
-                <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-                  Plan: Not active
-                </div>
-                <SubscribeButton />
-              </div>
+  <div style={{ minWidth: 220, textAlign: "right" }}>
+    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+      Plan: Not active
+    </div>
+    <SubscribeButton />
+  </div>
             )}
           </div>
         </div>
@@ -1041,16 +1060,6 @@ export default function DashboardPage() {
               ) : (
                 <div style={{ opacity: 0.85 }}>
                   Click <strong>“Refresh from Google”</strong> to import a recent sample of reviews for demo purposes.
-                </div>
-              )}
-
-              {/* ✅ Step 4: subscribe CTA in the empty state */}
-              {showSubscribe && (
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-                    Plan: Not active
-                  </div>
-                  <SubscribeButton />
                 </div>
               )}
 
