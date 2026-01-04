@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireOrgContext } from "@/lib/orgServer";
 import { requireActiveSubscription } from "@/lib/subscriptionServer";
+import crypto from "crypto";
 
 type GooglePlaceDetailsResponse = {
   status: string;
@@ -36,20 +37,30 @@ type ReviewUpsertRow = {
   raw: unknown;
 };
 
+// ✅ more stable + shorter: hash-based ID (avoids huge strings + reduces collision risk)
 function makeGoogleReviewId(
   placeId: string,
   r: { author_name?: string; time?: number; rating?: number; text?: string }
 ) {
-  const author = (r.author_name ?? "unknown").trim();
-  const t = typeof r.time === "number" ? r.time : "no_time";
-  const rating = typeof r.rating === "number" ? r.rating : "no_rating";
-  const textHead = (r.text ?? "").slice(0, 80);
-  return `${placeId}:${t}:${author}:${rating}:${textHead}`.slice(0, 255);
+  const payload = JSON.stringify({
+    p: placeId,
+    t: typeof r.time === "number" ? r.time : null,
+    a: (r.author_name ?? "").trim(),
+    r: typeof r.rating === "number" ? r.rating : null,
+    x: (r.text ?? "").trim(),
+  });
+
+  const hash = crypto.createHash("sha256").update(payload).digest("hex").slice(0, 40);
+  // Keep it readable + deterministic, max length safe
+  return `${placeId}:${hash}`.slice(0, 255);
 }
 
 export async function GET(req: Request) {
   try {
-    // ✅ GATING (MVP)
+    // 1) Org context first (safer if subscription logic relies on org context)
+    const { supabase, organizationId } = await requireOrgContext();
+
+    // 2) Subscription gating (MVP)
     const sub = await requireActiveSubscription();
     if (!sub.ok) {
       return NextResponse.json(
@@ -61,9 +72,6 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const google_place_id_param = searchParams.get("google_place_id")?.trim() || "";
 
-    // We still need org context for DB access + orgId
-    const { supabase, organizationId } = await requireOrgContext();
-
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
@@ -72,7 +80,7 @@ export async function GET(req: Request) {
       );
     }
 
-    // 1) Resolve google_place_id
+    // 3) Resolve google_place_id
     let placeId = google_place_id_param;
 
     if (!placeId) {
@@ -84,15 +92,16 @@ export async function GET(req: Request) {
         .limit(1)
         .maybeSingle();
 
-      if (bizErr)
+      if (bizErr) {
         return NextResponse.json({ ok: false, error: bizErr.message }, { status: 500 });
+      }
 
       if (!biz?.google_place_id) {
         return NextResponse.json(
           {
             ok: false,
             error:
-              "No google_place_id found for your organization. Create/connect a business first (via /api/businesses) and ensure it’s linked to your org.",
+              "No google_place_id found for your organization. Connect a business first (Place ID) on the dashboard.",
           },
           { status: 400 }
         );
@@ -101,7 +110,7 @@ export async function GET(req: Request) {
       placeId = biz.google_place_id;
     }
 
-    // 2) Find the business row for this org + placeId
+    // 4) Find the business row for this org + placeId
     const { data: business, error: businessErr } = await supabase
       .from("businesses")
       .select("id, google_place_id")
@@ -111,15 +120,16 @@ export async function GET(req: Request) {
       .limit(1)
       .maybeSingle();
 
-    if (businessErr)
+    if (businessErr) {
       return NextResponse.json({ ok: false, error: businessErr.message }, { status: 500 });
+    }
 
     if (!business?.id || !business?.google_place_id) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            "No matching business found for this org + google_place_id. Ensure your business is created and linked to your organization.",
+            "No matching business found for this org + google_place_id. Make sure your business is connected to your organization.",
         },
         { status: 404 }
       );
@@ -127,7 +137,7 @@ export async function GET(req: Request) {
 
     const businessId = business.id as string;
 
-    // 3) Fetch Google details
+    // 5) Fetch Google Place details (sample reviews + authoritative summary stats)
     const url =
       "https://maps.googleapis.com/maps/api/place/details/json" +
       `?place_id=${encodeURIComponent(placeId)}` +
@@ -135,23 +145,24 @@ export async function GET(req: Request) {
       `&key=${encodeURIComponent(apiKey)}`;
 
     const res = await fetch(url, { cache: "no-store" });
-    const data = (await res.json()) as GooglePlaceDetailsResponse;
+    const google = (await res.json()) as GooglePlaceDetailsResponse;
 
-    if (data.status !== "OK") {
+    if (google.status !== "OK") {
+      // Treat as a Google upstream issue (not your server)
       return NextResponse.json(
-        { ok: false, googleStatus: data.status, googleError: data.error_message },
-        { status: 500 }
+        { ok: false, googleStatus: google.status, googleError: google.error_message },
+        { status: 502 }
       );
     }
 
-    const googleRating = typeof data.result?.rating === "number" ? data.result.rating : null;
+    const googleRating = typeof google.result?.rating === "number" ? google.result.rating : null;
     const googleTotal =
-      typeof data.result?.user_ratings_total === "number"
-        ? data.result.user_ratings_total
+      typeof google.result?.user_ratings_total === "number"
+        ? google.result.user_ratings_total
         : null;
-    const googleName = typeof data.result?.name === "string" ? data.result.name : null;
+    const googleName = typeof google.result?.name === "string" ? google.result.name : null;
 
-    // 3a) Update business row with authoritative stats
+    // 5a) Update business row with authoritative stats
     const { error: bizUpdateErr } = await supabase
       .from("businesses")
       .update({
@@ -166,7 +177,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: bizUpdateErr.message }, { status: 500 });
     }
 
-    const googleReviews = Array.isArray(data.result?.reviews) ? data.result!.reviews! : [];
+    const googleReviews = Array.isArray(google.result?.reviews) ? google.result!.reviews! : [];
 
     if (googleReviews.length === 0) {
       return NextResponse.json({
@@ -180,11 +191,11 @@ export async function GET(req: Request) {
         inserted: 0,
         updated: 0,
         synced_at: new Date().toISOString(),
-        note: "No reviews returned by Google for this place (this endpoint returns a sample).",
+        note: "No reviews returned by Google for this place (Places API returns a sample).",
       });
     }
 
-    // 4) Map → upsert into schema
+    // 6) Map → upsert into schema
     const rows: ReviewUpsertRow[] = googleReviews.map((r) => ({
       organization_id: organizationId,
       business_id: businessId,
@@ -199,7 +210,7 @@ export async function GET(req: Request) {
       raw: r,
     }));
 
-    // 4a) Pre-check existing IDs
+    // 6a) Pre-check existing IDs (for inserted/updated counts)
     const ids = rows.map((x) => x.google_review_id);
 
     const { data: existing, error: existingErr } = await supabase
@@ -210,22 +221,24 @@ export async function GET(req: Request) {
       .eq("source", "google")
       .in("google_review_id", ids);
 
-    if (existingErr)
+    if (existingErr) {
       return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
+    }
 
     const existingSet = new Set((existing ?? []).map((r) => r.google_review_id));
+    const inserted = rows.reduce((acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1), 0);
+    const updated = rows.length - inserted;
 
-    // 4b) Upsert
+    // 6b) Upsert
     const { data: savedPreview, error: saveErr } = await supabase
       .from("reviews")
       .upsert(rows, { onConflict: "organization_id,source,google_review_id" })
       .select("id, source, google_review_id, rating, author_name, review_date, detected_language")
       .limit(10);
 
-    if (saveErr) return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
-
-    const inserted = rows.reduce((acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1), 0);
-    const updated = rows.length - inserted;
+    if (saveErr) {
+      return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
+    }
 
     return NextResponse.json({
       ok: true,

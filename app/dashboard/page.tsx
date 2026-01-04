@@ -49,6 +49,22 @@ type PlaceCandidate = {
   formatted_address?: string;
 };
 
+type SubscriptionStatus =
+  | "active"
+  | "trialing"
+  | "past_due"
+  | "canceled"
+  | "incomplete"
+  | "incomplete_expired"
+  | "unpaid"
+  | null;
+
+type SubscriptionStatusResponse = {
+  ok: boolean;
+  status: SubscriptionStatus;
+  active: boolean; // true when status is active OR trialing
+};
+
 function formatDate(iso: string | null) {
   if (!iso) return "";
   try {
@@ -134,7 +150,13 @@ export default function DashboardPage() {
 
   // ✅ subscription gating UI
   const [upgradeRequired, setUpgradeRequired] = useState(false);
-  const showSubscribe = upgradeRequired; // keep it simple for now
+  const [subscriptionActive, setSubscriptionActive] = useState<boolean | null>(null);
+
+  // single source of truth:
+  // - subscriptionActive === false => show subscribe
+  // - upgradeRequired === true => also show subscribe (fallback)
+  // - null => unknown yet (first load), do not show
+  const showSubscribe = subscriptionActive === false || upgradeRequired === true;
 
   function showToast(t: Toast, ms = 3000) {
     setToast(t);
@@ -145,16 +167,15 @@ export default function DashboardPage() {
     const res = await fetch("/api/reviews", { cache: "no-store" });
     const json = (await res.json()) as ReviewsApiResponse;
 
-    // ✅ recommended: if list endpoint is gated, surface subscribe immediately
-    if ((res.status === 402 && (json as any)?.upgradeRequired) || json?.upgradeRequired) {
+    // If backend explicitly says gated, honor it.
+    if (res.status === 402 || json?.upgradeRequired) {
       setUpgradeRequired(true);
+      setSubscriptionActive(false);
     }
 
-    // ✅ if it’s OK and not gated, clear it
-    if (res.ok && json?.ok && !json?.upgradeRequired) {
-      setUpgradeRequired(false);
-    }
-
+    // IMPORTANT:
+    // Do NOT flip upgradeRequired/subscriptionActive to "good" just because /api/reviews returned ok.
+    // Only /api/subscription/status should confirm active subscription.
     return json;
   }
 
@@ -185,23 +206,26 @@ export default function DashboardPage() {
     }
   }
 
-async function loadSubscriptionStatus() {
-  try {
-    const res = await fetch("/api/subscription/status", { cache: "no-store" });
-    const json = await res.json();
+  async function loadSubscriptionStatus() {
+    try {
+      const res = await fetch("/api/subscription/status", { cache: "no-store" });
+      const json = (await res.json()) as SubscriptionStatusResponse;
 
-    // expects: { ok: true, isActive: boolean, status: string|null }
-    if (res.ok && json?.ok) {
-      setUpgradeRequired(!json?.isActive);
-      return;
+      // expects: { ok: true, active: boolean, status: string|null }
+      if (res.ok && json?.ok) {
+        setSubscriptionActive(!!json.active);
+        setUpgradeRequired(!json.active);
+        return;
+      }
+
+      // if endpoint fails, don't hard-block UI
+      setSubscriptionActive(null);
+      setUpgradeRequired(false);
+    } catch {
+      setSubscriptionActive(null);
+      setUpgradeRequired(false);
     }
-
-    // if endpoint fails, don't hard-block UI
-    setUpgradeRequired(false);
-  } catch {
-    setUpgradeRequired(false);
   }
-}
 
   async function reloadList() {
     if (actionLoading) return;
@@ -237,6 +261,7 @@ async function loadSubscriptionStatus() {
       // ✅ If gated, show subscribe CTA (and stop here)
       if (googleRes.status === 402 && googleJson?.upgradeRequired) {
         setUpgradeRequired(true);
+        setSubscriptionActive(false);
         showToast(
           { message: "Your plan isn’t active yet — subscribe to enable Google sync.", type: "error" },
           4500
@@ -264,7 +289,7 @@ async function loadSubscriptionStatus() {
         return;
       }
 
-      // ✅ If refresh succeeds, clear upgrade flag
+      // ✅ If refresh succeeds, clear upgrade flag (status endpoint remains authoritative)
       setUpgradeRequired(false);
 
       const fetched = Number(googleJson?.fetched ?? 0);
@@ -411,8 +436,9 @@ async function loadSubscriptionStatus() {
         const { data: userData } = await sb.auth.getUser();
         setUserEmail(userData?.user?.email ?? "");
 
-        await loadCurrentBusiness();
+        // subscription status first so the UI is correct immediately
         await loadSubscriptionStatus();
+        await loadCurrentBusiness();
 
         const json = await loadReviews();
         setData(json);
@@ -535,7 +561,7 @@ async function loadSubscriptionStatus() {
               {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
             </button>
 
-            {/* ✅ Optional nicer placement: only show when gated */}
+            {/* ✅ only show when gated */}
             {showSubscribe && <SubscribeButton />}
 
             <button onClick={onLogout} disabled={actionLoading !== null} style={buttonStyle}>
@@ -628,7 +654,7 @@ async function loadSubscriptionStatus() {
             {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
           </button>
 
-          {/* ✅ Optional nicer placement: only show when gated */}
+          {/* ✅ only show when gated */}
           {showSubscribe && <SubscribeButton />}
 
           <button
@@ -850,7 +876,9 @@ async function loadSubscriptionStatus() {
                 You can now click “Refresh from Google” above to pull in reviews.
               </div>
               {typeof placeVerify.rating === "number" ? ` • ${placeVerify.rating}★` : ""}
-              {typeof placeVerify.user_ratings_total === "number" ? ` • ${placeVerify.user_ratings_total} ratings` : ""}
+              {typeof placeVerify.user_ratings_total === "number"
+                ? ` • ${placeVerify.user_ratings_total} ratings`
+                : ""}
             </div>
           )}
         </div>
@@ -874,8 +902,16 @@ async function loadSubscriptionStatus() {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ minWidth: 260 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ minWidth: 260, flex: "1 1 420px" }}>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 700,
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+              }}
+            >
               <span style={{ color: "#22c55e" }}>●</span>
               Google Connected
             </div>
@@ -897,17 +933,17 @@ async function loadSubscriptionStatus() {
             <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
               Use <strong>“Refresh from Google”</strong> above to sync a recent sample of reviews.
             </div>
-
-            {/* ✅ Step 4: show Plan not active + Subscribe inside this card */}
-            {showSubscribe && (
-  <div style={{ minWidth: 220, textAlign: "right" }}>
-    <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-      Plan: Not active
-    </div>
-    <SubscribeButton />
-  </div>
-            )}
           </div>
+
+          {/* Plan not active + Subscribe on the right */}
+          {showSubscribe && (
+            <div style={{ minWidth: 220, textAlign: "right" }}>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+                Plan: Not active
+              </div>
+              <SubscribeButton />
+            </div>
+          )}
         </div>
       )}
 
