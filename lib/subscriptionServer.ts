@@ -30,6 +30,8 @@ export async function requireActiveSubscription() {
   const status = (data?.status ?? null) as SubscriptionStatus;
   const isActive = status === "active" || status === "trialing";
 
+  console.log("[SUBSCRIPTION]", { organizationId, status, isActive, });
+
   if (!isActive) {
     return {
       ok: false as const,
