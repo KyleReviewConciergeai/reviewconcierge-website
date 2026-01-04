@@ -10,10 +10,9 @@ export type SubscriptionStatus =
   | "unpaid"
   | null;
 
-export async function requireActiveSubscription() {
+export async function getSubscriptionStatus() {
   const { supabase, organizationId } = await requireOrgContext();
 
-  // Optional: user email (for logging / UI messages if needed)
   const { data: userData } = await supabase.auth.getUser();
   const userEmail = userData?.user?.email ?? null;
 
@@ -24,28 +23,42 @@ export async function requireActiveSubscription() {
     .maybeSingle();
 
   if (error) {
+    // Treat as unknown, not inactive
     console.error("[subscription] lookup error", error);
-  }
-
-  const status = (data?.status ?? null) as SubscriptionStatus;
-  const isActive = status === "active" || status === "trialing";
-
-  console.log("[SUBSCRIPTION]", { organizationId, status, isActive, });
-
-  if (!isActive) {
     return {
       ok: false as const,
       organizationId,
       userEmail,
-      status,
+      status: null as SubscriptionStatus,
+      isActive: null as boolean | null,
+      error: error.message,
     };
   }
+
+  const status = (data?.status ?? null) as SubscriptionStatus;
+  const isActive = status === "active" || status === "trialing";
 
   return {
     ok: true as const,
     organizationId,
     userEmail,
     status,
-    supabase,
+    isActive,
   };
+}
+
+export async function requireActiveSubscription() {
+  const s = await getSubscriptionStatus();
+
+  // Remove `ok` from the spread so we don't define it twice
+  const { ok: _ignoredOk, ...rest } = s;
+
+  // If we can’t determine status because DB errored, fail CLOSED for gated endpoints
+  if (!s.ok || s.isActive !== true) {
+    return { ok: false as const, ...rest };
+  }
+
+  // If you want to return supabase for downstream use, grab it again
+  const { supabase } = await requireOrgContext();
+  return { ok: true as const, ...rest, supabase };
 }
