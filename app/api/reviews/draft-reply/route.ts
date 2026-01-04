@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+export const runtime = "nodejs";
 
-export const runtime = "nodejs"; // ensure Node runtime (good for env + fetch reliability)
+import { NextResponse } from "next/server";
+import { requireActiveSubscription } from "@/lib/subscriptionServer";
 
 function cleanString(v: unknown, maxLen = 4000) {
   if (typeof v !== "string") return "";
@@ -9,7 +10,6 @@ function cleanString(v: unknown, maxLen = 4000) {
 
 function cleanLanguage(v: unknown) {
   const raw = cleanString(v, 20) || "en";
-  // Keep it simple: allow "en", "es", "pt", "en-US", etc. but cap length.
   return raw.slice(0, 12);
 }
 
@@ -97,6 +97,15 @@ Style guidelines:
 
 export async function POST(req: Request) {
   try {
+    // ✅ GATING (MVP)
+    const sub = await requireActiveSubscription();
+    if (!sub.ok) {
+      return NextResponse.json(
+        { ok: false, upgradeRequired: true, status: sub.status },
+        { status: 402 }
+      );
+    }
+
     const body = await req.json().catch(() => null);
 
     const review_text = cleanString(body?.review_text, 5000);
@@ -137,7 +146,6 @@ export async function POST(req: Request) {
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
         ],
-        // Helps keep replies short; model can still exceed slightly, but usually stays tight.
         max_tokens: 220,
       }),
       cache: "no-store",
@@ -148,11 +156,10 @@ export async function POST(req: Request) {
     try {
       upstreamJson = JSON.parse(rawText);
     } catch {
-      // leave as null; we’ll return rawText if needed
+      // keep null
     }
 
     if (!upstream.ok) {
-      // Return real upstream error (without leaking API key)
       return NextResponse.json(
         {
           ok: false,
@@ -165,7 +172,6 @@ export async function POST(req: Request) {
     }
 
     const content = upstreamJson?.choices?.[0]?.message?.content?.trim?.() ?? "";
-
     if (!content) {
       return NextResponse.json(
         { ok: false, error: "No reply content returned from OpenAI", upstreamBody: upstreamJson },

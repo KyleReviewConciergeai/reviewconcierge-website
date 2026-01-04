@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DraftReplyPanel from "./DraftReplyPanel";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import SubscribeButton from "./SubscribeButton";
 
 type Review = {
   id: string;
@@ -23,6 +24,7 @@ type ReviewsApiResponse = {
   count?: number;
   reviews?: Review[];
   error?: string;
+  upgradeRequired?: boolean; // ✅ gate hint from API
 };
 
 type CurrentBusiness = {
@@ -130,6 +132,10 @@ export default function DashboardPage() {
   const needsOnboarding = businessLoaded && (!business || !business.google_place_id);
   const hasGoogleConnected = !!business?.google_place_id;
 
+  // ✅ subscription gating UI
+  const [upgradeRequired, setUpgradeRequired] = useState(false);
+  const showSubscribe = upgradeRequired; // keep it simple for now
+
   function showToast(t: Toast, ms = 3000) {
     setToast(t);
     window.setTimeout(() => setToast(null), ms);
@@ -138,6 +144,17 @@ export default function DashboardPage() {
   async function loadReviews() {
     const res = await fetch("/api/reviews", { cache: "no-store" });
     const json = (await res.json()) as ReviewsApiResponse;
+
+    // ✅ recommended: if list endpoint is gated, surface subscribe immediately
+    if ((res.status === 402 && (json as any)?.upgradeRequired) || json?.upgradeRequired) {
+      setUpgradeRequired(true);
+    }
+
+    // ✅ if it’s OK and not gated, clear it
+    if (res.ok && json?.ok && !json?.upgradeRequired) {
+      setUpgradeRequired(false);
+    }
+
     return json;
   }
 
@@ -199,6 +216,17 @@ export default function DashboardPage() {
       const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
       const googleJson = await googleRes.json();
 
+      // ✅ If gated, show subscribe CTA (and stop here)
+      if (googleRes.status === 402 && googleJson?.upgradeRequired) {
+        setUpgradeRequired(true);
+        showToast(
+          { message: "Your plan isn’t active yet — subscribe to enable Google sync.", type: "error" },
+          4500
+        );
+        return;
+      }
+
+      // Normal error handling
       if (!googleRes.ok || !googleJson?.ok) {
         const raw =
           googleJson?.error ??
@@ -206,7 +234,6 @@ export default function DashboardPage() {
           googleJson?.googleStatus ??
           "Google refresh failed";
 
-        // Debug detail in console, but keep UI copy sales-safe.
         console.error("Google refresh failed:", raw, googleJson);
 
         showToast(
@@ -218,6 +245,9 @@ export default function DashboardPage() {
         );
         return;
       }
+
+      // ✅ If refresh succeeds, clear upgrade flag
+      setUpgradeRequired(false);
 
       const fetched = Number(googleJson?.fetched ?? 0);
       const inserted = Number(googleJson?.inserted ?? 0);
@@ -333,7 +363,9 @@ export default function DashboardPage() {
         return;
       }
 
-      const candidates = Array.isArray(json?.candidates) ? (json.candidates as PlaceCandidate[]) : [];
+      const candidates = Array.isArray(json?.candidates)
+        ? (json.candidates as PlaceCandidate[])
+        : [];
       setPlaceSearchResults(candidates);
     } catch (e: any) {
       setPlaceSearchError(e?.message ?? "Search failed");
@@ -382,12 +414,19 @@ export default function DashboardPage() {
 
     return reviews.filter((r) => {
       const matchesRating =
-        ratingFilter === "all" ? true : typeof r.rating === "number" && r.rating === ratingFilter;
+        ratingFilter === "all"
+          ? true
+          : typeof r.rating === "number" && r.rating === ratingFilter;
 
       if (!matchesRating) return false;
       if (!q) return true;
 
-      const haystack = [r.author_name ?? "", r.review_text ?? "", r.source ?? "", r.detected_language ?? ""]
+      const haystack = [
+        r.author_name ?? "",
+        r.review_text ?? "",
+        r.source ?? "",
+        r.detected_language ?? "",
+      ]
         .join(" ")
         .toLowerCase();
 
@@ -448,10 +487,19 @@ export default function DashboardPage() {
   if (!data?.ok) {
     return (
       <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 14,
+            alignItems: "flex-start",
+          }}
+        >
           <div>
             <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
-            {userEmail && <div style={{ opacity: 0.7, fontSize: 13 }}>Signed in as {userEmail}</div>}
+            {userEmail && (
+              <div style={{ opacity: 0.7, fontSize: 13 }}>Signed in as {userEmail}</div>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -467,6 +515,9 @@ export default function DashboardPage() {
             >
               {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
             </button>
+
+            {/* ✅ Optional nicer placement: only show when gated */}
+            {showSubscribe && <SubscribeButton />}
 
             <button onClick={onLogout} disabled={actionLoading !== null} style={buttonStyle}>
               {actionLoading === "logout" ? "Logging out…" : "Log out"}
@@ -499,7 +550,11 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {toast && <div style={toastStyle(toast.type)} aria-live="polite">{toast.message}</div>}
+        {toast && (
+          <div style={toastStyle(toast.type)} aria-live="polite">
+            {toast.message}
+          </div>
+        )}
 
         <style jsx>{`
           @media (max-width: 768px) {
@@ -553,6 +608,9 @@ export default function DashboardPage() {
           >
             {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
           </button>
+
+          {/* ✅ Optional nicer placement: only show when gated */}
+          {showSubscribe && <SubscribeButton />}
 
           <button
             onClick={onLogout}
@@ -779,7 +837,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ✅ Connected confirmation card (NO duplicate refresh button) */}
+      {/* ✅ Connected confirmation card + (Plan not active + Subscribe) */}
       {!needsOnboarding && hasGoogleConnected && (
         <div
           style={{
@@ -820,6 +878,16 @@ export default function DashboardPage() {
             <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
               Use <strong>“Refresh from Google”</strong> above to sync a recent sample of reviews.
             </div>
+
+            {/* ✅ Step 4: show Plan not active + Subscribe inside this card */}
+            {showSubscribe && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+                  Plan: Not active
+                </div>
+                <SubscribeButton />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -976,6 +1044,16 @@ export default function DashboardPage() {
                 </div>
               )}
 
+              {/* ✅ Step 4: subscribe CTA in the empty state */}
+              {showSubscribe && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+                    Plan: Not active
+                  </div>
+                  <SubscribeButton />
+                </div>
+              )}
+
               {hasGoogleConnected ? (
                 <div style={{ marginTop: 10, opacity: 0.7 }}>
                   Demo note: showing a recent sample. Full history sync arrives in Phase 2 (Google Business Profile).
@@ -1005,61 +1083,60 @@ export default function DashboardPage() {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           {filteredReviews.map((r) => (
-  <div key={r.id} style={cardStyle}>
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ fontSize: 14, fontWeight: 700 }}>
-          {stars(r.rating)}
-          <span style={{ opacity: 0.7, marginLeft: 8, fontWeight: 600 }}>
-            {typeof r.rating === "number" ? r.rating.toFixed(0) : "—"}
-          </span>
-        </div>
+            <div key={r.id} style={cardStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>
+                    {stars(r.rating)}
+                    <span style={{ opacity: 0.7, marginLeft: 8, fontWeight: 600 }}>
+                      {typeof r.rating === "number" ? r.rating.toFixed(0) : "—"}
+                    </span>
+                  </div>
 
-        <div style={{ fontSize: 13, opacity: 0.9 }}>
-          {r.author_url ? (
-            <a
-              href={r.author_url}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}
-            >
-              {r.author_name ?? "Anonymous"}
-            </a>
-          ) : (
-            <span>{r.author_name ?? "Anonymous"}</span>
-          )}
-        </div>
+                  <div style={{ fontSize: 13, opacity: 0.9 }}>
+                    {r.author_url ? (
+                      <a
+                        href={r.author_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}
+                      >
+                        {r.author_name ?? "Anonymous"}
+                      </a>
+                    ) : (
+                      <span>{r.author_name ?? "Anonymous"}</span>
+                    )}
+                  </div>
 
-        {r.detected_language && (
-          <span
-            style={{
-              fontSize: 11,
-              opacity: 0.7,
-              border: "1px solid rgba(148,163,184,0.25)",
-              padding: "2px 8px",
-              borderRadius: 999,
-            }}
-          >
-            {r.detected_language}
-          </span>
-        )}
-      </div>
+                  {r.detected_language && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        opacity: 0.7,
+                        border: "1px solid rgba(148,163,184,0.25)",
+                        padding: "2px 8px",
+                        borderRadius: 999,
+                      }}
+                    >
+                      {r.detected_language}
+                    </span>
+                  )}
+                </div>
 
-      <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
-        {formatDate(r.review_date ?? r.created_at)}
-      </div>
-    </div>
+                <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
+                  {formatDate(r.review_date ?? r.created_at)}
+                </div>
+              </div>
 
-    <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.5, opacity: 0.92 }}>
-      {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
-    </div>
+              <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.5, opacity: 0.92 }}>
+                {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
+              </div>
 
-    <div style={{ marginTop: 10, fontSize: 11, opacity: 0.6 }}>
-      Source: {r.source}
-    </div>
-  </div>
-))}
-
+              <div style={{ marginTop: 10, fontSize: 11, opacity: 0.6 }}>
+                Source: {r.source}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

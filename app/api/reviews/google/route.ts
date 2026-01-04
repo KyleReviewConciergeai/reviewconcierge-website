@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireOrgContext } from "@/lib/orgServer";
+import { requireActiveSubscription } from "@/lib/subscriptionServer";
 
 type GooglePlaceDetailsResponse = {
   status: string;
@@ -26,7 +27,6 @@ type ReviewUpsertRow = {
   business_id: string;
   source: "google";
   google_review_id: string;
-
   author_name: string | null;
   author_url: string | null;
   rating: number | null;
@@ -38,34 +38,38 @@ type ReviewUpsertRow = {
 
 function makeGoogleReviewId(
   placeId: string,
-  r: {
-    author_name?: string;
-    time?: number;
-    rating?: number;
-    text?: string;
-  }
+  r: { author_name?: string; time?: number; rating?: number; text?: string }
 ) {
   const author = (r.author_name ?? "unknown").trim();
   const t = typeof r.time === "number" ? r.time : "no_time";
   const rating = typeof r.rating === "number" ? r.rating : "no_rating";
   const textHead = (r.text ?? "").slice(0, 80);
-
-  // place-scoped, deterministic, short enough for varchar(255)
   return `${placeId}:${t}:${author}:${rating}:${textHead}`.slice(0, 255);
 }
 
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
+    // ✅ GATING (MVP)
+    const sub = await requireActiveSubscription();
+    if (!sub.ok) {
+      return NextResponse.json(
+        { ok: false, upgradeRequired: true, status: sub.status },
+        { status: 402 }
+      );
+    }
 
-    // Optional override (debugging)
+    const { searchParams } = new URL(req.url);
     const google_place_id_param = searchParams.get("google_place_id")?.trim() || "";
 
+    // We still need org context for DB access + orgId
     const { supabase, organizationId } = await requireOrgContext();
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ ok: false, error: "Missing GOOGLE_PLACES_API_KEY" }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "Missing GOOGLE_PLACES_API_KEY" },
+        { status: 500 }
+      );
     }
 
     // 1) Resolve google_place_id
@@ -80,7 +84,8 @@ export async function GET(req: Request) {
         .limit(1)
         .maybeSingle();
 
-      if (bizErr) return NextResponse.json({ ok: false, error: bizErr.message }, { status: 500 });
+      if (bizErr)
+        return NextResponse.json({ ok: false, error: bizErr.message }, { status: 500 });
 
       if (!biz?.google_place_id) {
         return NextResponse.json(
@@ -106,7 +111,8 @@ export async function GET(req: Request) {
       .limit(1)
       .maybeSingle();
 
-    if (businessErr) return NextResponse.json({ ok: false, error: businessErr.message }, { status: 500 });
+    if (businessErr)
+      return NextResponse.json({ ok: false, error: businessErr.message }, { status: 500 });
 
     if (!business?.id || !business?.google_place_id) {
       return NextResponse.json(
@@ -121,7 +127,7 @@ export async function GET(req: Request) {
 
     const businessId = business.id as string;
 
-    // 3) Fetch Google details (reviews sample + authoritative summary metrics)
+    // 3) Fetch Google details
     const url =
       "https://maps.googleapis.com/maps/api/place/details/json" +
       `?place_id=${encodeURIComponent(placeId)}` +
@@ -139,11 +145,13 @@ export async function GET(req: Request) {
     }
 
     const googleRating = typeof data.result?.rating === "number" ? data.result.rating : null;
-    const googleTotal = typeof data.result?.user_ratings_total === "number" ? data.result.user_ratings_total : null;
+    const googleTotal =
+      typeof data.result?.user_ratings_total === "number"
+        ? data.result.user_ratings_total
+        : null;
     const googleName = typeof data.result?.name === "string" ? data.result.name : null;
 
-    // 3a) Update the business row with authoritative stats (long-term credibility)
-    // NOTE: Requires businesses.google_rating + businesses.google_user_ratings_total columns.
+    // 3a) Update business row with authoritative stats
     const { error: bizUpdateErr } = await supabase
       .from("businesses")
       .update({
@@ -181,8 +189,7 @@ export async function GET(req: Request) {
       organization_id: organizationId,
       business_id: businessId,
       source: "google",
-     google_review_id: makeGoogleReviewId(placeId, r),
-
+      google_review_id: makeGoogleReviewId(placeId, r),
       author_name: r.author_name ?? null,
       author_url: r.author_url ?? null,
       rating: typeof r.rating === "number" ? r.rating : null,
@@ -192,7 +199,7 @@ export async function GET(req: Request) {
       raw: r,
     }));
 
-    // 4a) Pre-check which IDs already exist for this business/org/source
+    // 4a) Pre-check existing IDs
     const ids = rows.map((x) => x.google_review_id);
 
     const { data: existing, error: existingErr } = await supabase
@@ -203,7 +210,8 @@ export async function GET(req: Request) {
       .eq("source", "google")
       .in("google_review_id", ids);
 
-    if (existingErr) return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
+    if (existingErr)
+      return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
 
     const existingSet = new Set((existing ?? []).map((r) => r.google_review_id));
 
