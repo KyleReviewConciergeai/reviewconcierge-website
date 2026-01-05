@@ -1,64 +1,86 @@
+import "server-only";
+
 import { supabaseServerClient } from "@/lib/supabaseServerClient";
-
-export class OrgContextError extends Error {
-  status: number;
-  code: string;
-
-  constructor(message: string, status = 500, code = "org_context_error") {
-    super(message);
-    this.name = "OrgContextError";
-    this.status = status;
-    this.code = code;
-  }
-}
+import { supabaseServer } from "@/lib/supabaseServer";
 
 export type OrgContext = {
   supabase: Awaited<ReturnType<typeof supabaseServerClient>>;
   userId: string;
   organizationId: string;
-  /**
-   * Back-compat: some callers used `email`.
-   * Prefer `userEmail` going forward.
-   */
   email?: string | null;
-  userEmail?: string | null;
 };
 
+function defaultOrgName(email?: string | null) {
+  if (!email) return "New Organization";
+  const at = email.indexOf("@");
+  if (at > 0) return email.slice(0, at);
+  return "New Organization";
+}
+
 export async function requireOrgContext(): Promise<OrgContext> {
-  // ✅ Your supabaseServerClient() returns a Promise, so we must await it
+  // Session-aware client (anon + cookies) for auth
   const supabase = await supabaseServerClient();
 
   const { data: authData, error: authError } = await supabase.auth.getUser();
   const user = authData?.user;
 
   if (authError || !user) {
-    throw new OrgContextError("Unauthorized", 401, "unauthorized");
+    throw new Error("Unauthorized");
   }
 
-  // Profile → org mapping (server-enforced)
-  const { data: profile, error: profErr } = await supabase
+  const admin = supabaseServer(); // ✅ service role (server-only)
+
+  // 1) Try to load profile (service role avoids RLS surprises)
+  const { data: profile, error: profErr } = await admin
     .from("profiles")
-    .select("organization_id,email")
+    .select("id, organization_id, email")
     .eq("id", user.id)
     .maybeSingle();
 
   if (profErr) {
-    // Don’t leak internal schema details beyond what’s helpful
-    throw new OrgContextError("Profile lookup failed", 500, "profile_lookup_failed");
+    throw new Error(`Profile lookup failed: ${profErr.message}`);
   }
 
-  const organizationId = (profile?.organization_id ?? "").trim();
-  if (!organizationId) {
-    throw new OrgContextError("User has no organization", 403, "missing_organization");
+  // 2) If missing or missing org_id -> bootstrap
+  if (!profile || !profile.organization_id) {
+    // Create an org row
+    const { data: org, error: orgErr } = await admin
+      .from("organizations")
+      .insert([{ name: defaultOrgName(user.email ?? null) }])
+      .select("id")
+      .single();
+
+    if (orgErr || !org?.id) {
+      throw new Error(`Organization create failed: ${orgErr?.message || "Unknown error"}`);
+    }
+
+    // Upsert profile with org_id
+    const { error: upsertErr } = await admin.from("profiles").upsert(
+      {
+        id: user.id,
+        email: (user.email ?? null) as string | null,
+        organization_id: org.id,
+      },
+      { onConflict: "id" }
+    );
+
+    if (upsertErr) {
+      throw new Error(`Profile bootstrap failed: ${upsertErr.message}`);
+    }
+
+    return {
+      supabase,
+      userId: user.id,
+      organizationId: org.id,
+      email: user.email ?? null,
+    };
   }
 
-  const resolvedEmail = (profile?.email ?? user.email ?? null) as string | null;
-
+  // 3) Normal path (profile exists + has org_id)
   return {
     supabase,
     userId: user.id,
-    organizationId,
-    email: resolvedEmail, // back-compat
-    userEmail: resolvedEmail,
+    organizationId: profile.organization_id,
+    email: profile.email ?? user.email ?? null,
   };
 }
