@@ -122,7 +122,7 @@ export default function Home() {
 
           <nav className="nav-links">
             <a href="#how-it-works">How it works</a>
-            <a href="#features">Features</a>
+            <a href="#features">What it does</a>
             <a href="#pricing">Pricing</a>
           </nav>
 
@@ -140,19 +140,17 @@ export default function Home() {
         {/* Hero */}
         <section className="hero">
           <div className="hero-text">
-            {/* ✅ Removed Mendoza-specific positioning */}
-            <div className="badge">Google reviews • reply drafts • clean workflow</div>
+            <div className="badge">Owner-voice replies • AI drafts • you stay in control</div>
 
             <h1>
-              Respond to Google reviews
+              Reply to reviews in your voice
               <br />
-              <span className="accent">faster — without sounding robotic.</span>
+              <span className="accent">in minutes — not hours.</span>
             </h1>
 
             <p className="hero-subtitle">
-              Review Concierge helps hospitality operators generate on-brand reply
-              drafts and keep a clean review workflow — so your reputation stays
-              strong while you focus on guests.
+              Review Concierge drafts short, human replies that sound like you — so you can
+              respond fast without giving up control.
             </p>
 
             <div className="hero-ctas">
@@ -171,15 +169,15 @@ export default function Home() {
               <div className="micro-item">
                 <div className="micro-title">Today</div>
                 <div className="micro-text">
-                  Connect a Google Place ID • sync a recent sample of reviews •
-                  generate reply drafts you can copy.
+                  Connect a Google Place ID • sync a recent sample of reviews • generate
+                  reply drafts you can copy, tweak (optional), and post manually.
                 </div>
               </div>
               <div className="micro-item">
                 <div className="micro-title">Next</div>
                 <div className="micro-text">
-                  Full Google Business Profile sync + posting replies directly
-                  (Phase 2).
+                  Stronger voice training, multilingual replies, and better support for
+                  multi-location operators.
                 </div>
               </div>
             </div>
@@ -187,13 +185,16 @@ export default function Home() {
 
           {/* Right-side card */}
           <div className="hero-card">
-            <h2>What you can do right now</h2>
-            <p>A lightweight workflow built for early customers.</p>
+            <h2>Draft replies that sound like you</h2>
+            <p>
+              Pull recent Google reviews and generate owner-voice drafts you can post in minutes.
+            </p>
             <ul>
-              <li>Connect Google Place ID in minutes</li>
-              <li>Sync a recent review sample (totals verified)</li>
-              <li>Generate professional reply drafts (copy + paste)</li>
-              <li>Clear plan gating: Subscribe to enable Google sync</li>
+              <li>Connect your Google Place ID</li>
+              <li>Sync a recent sample of reviews</li>
+              <li>Generate a reply draft in your voice</li>
+              <li>Copy, lightly edit (optional), and post manually</li>
+              <li>Never auto-posts</li>
             </ul>
 
             <div className="card-divider" />
@@ -201,8 +202,7 @@ export default function Home() {
             <div className="card-foot">
               <div className="card-foot-title">Coming soon</div>
               <div className="card-foot-text">
-                Full history sync, multi-location management, and direct posting
-                via Google Business Profile.
+                Better voice training, multilingual support, and workflows for teams and multi-location groups.
               </div>
             </div>
           </div>
@@ -216,8 +216,7 @@ export default function Home() {
           <div className="waitlist-head">
             <h2>Join the beta waitlist</h2>
             <p className="section-intro" style={{ marginBottom: 0 }}>
-              Not ready to create an account yet? Join the waitlist and we’ll
-              reach out when slots open.
+              Not ready to create an account yet? Join the waitlist and we’ll reach out when slots open.
             </p>
           </div>
 
@@ -300,9 +299,7 @@ export default function Home() {
                   pattern="[0-9]*"
                   placeholder="# of locations *"
                   value={locationsCount}
-                  onChange={(e) =>
-                    setLocationsCount(e.target.value.replace(/\D/g, ""))
-                  }
+                  onChange={(e) => setLocationsCount(e.target.value.replace(/\D/g, ""))}
                   className="waitlist-input"
                   required
                 />
@@ -376,48 +373,33 @@ export default function Home() {
           <div className="grid-3">
             <div className="card">
               <h3>1. Create an account</h3>
-              <p>Sign up in seconds. No sales call required for early demos.</p>
+              <p>Sign up in seconds. No call. No setup fees.</p>
             </div>
             <div className="card">
               <h3>2. Connect Google</h3>
-              <p>
-                Add your Google Place ID and confirm your business. Subscription
-                enables Google sync.
-              </p>
+              <p>Add your Google Place ID and confirm your business. Subscription enables sync.</p>
             </div>
             <div className="card">
-              <h3>3. Draft responses</h3>
-              <p>
-                Generate replies you can copy/paste. Full direct posting comes in
-                Phase 2.
-              </p>
+              <h3>3. Draft &amp; post</h3>
+              <p>Generate replies you can copy/paste into Google. You stay in control.</p>
             </div>
           </div>
         </section>
 
         <section className="section" id="features">
-          <h2>Built for busy hospitality operators</h2>
+          <h2>What it does (and doesn’t)</h2>
           <div className="grid-3">
             <div className="card">
-              <h3>Fast reply drafts</h3>
-              <p>
-                Professional drafts in seconds — tuned for hospitality, not
-                generic templates.
-              </p>
+              <h3>Owner-voice drafts</h3>
+              <p>Short, human replies that feel like they were written by the owner — not a bot.</p>
             </div>
             <div className="card">
-              <h3>Clean review workflow</h3>
-              <p>
-                Keep everything in one dashboard. Reload, filter, and work through
-                reviews quickly.
-              </p>
+              <h3>Human control</h3>
+              <p>RC drafts. You decide. No auto-posting, no automation that risks your reputation.</p>
             </div>
             <div className="card">
-              <h3>Phase 2 roadmap</h3>
-              <p>
-                Full history sync + direct posting via Google Business Profile is
-                next on the roadmap.
-              </p>
+              <h3>Lightweight workflow</h3>
+              <p>See reviews, draft replies, copy/paste. Everything else stays out of your way.</p>
             </div>
           </div>
         </section>
@@ -425,8 +407,7 @@ export default function Home() {
         <section className="section" id="pricing">
           <h2>Early-access pricing</h2>
           <p className="section-intro">
-            Simple subscription to enable Google sync. Waitlist remains available
-            if you’re not ready yet.
+            Simple subscription to enable Google sync. Join the waitlist if you’re not ready yet.
           </p>
 
           <div className="pricing-card">
@@ -437,8 +418,8 @@ export default function Home() {
             <ul>
               <li>Enable Google sync (recent sample)</li>
               <li>Reply drafting inside the dashboard</li>
-              <li>Roadmap input &amp; priority support</li>
-              <li>Upgrade path to Phase 2 features</li>
+              <li>Priority support + roadmap input</li>
+              <li>Multilingual support coming soon</li>
             </ul>
 
             <div className="pricing-actions">
@@ -451,8 +432,7 @@ export default function Home() {
             </div>
 
             <p className="pricing-note">
-              Demo note: today uses Google Places “recent sample”. Full history +
-              direct posting comes in Phase 2.
+              Note: today uses Google Places “recent sample”. We focus on voice fidelity first — not feature bloat.
             </p>
           </div>
         </section>
