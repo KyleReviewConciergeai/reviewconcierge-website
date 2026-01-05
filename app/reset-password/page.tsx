@@ -1,20 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
 type Mode = "request" | "update";
 
 function getBaseUrl() {
-  // Prefer explicit site URL if you set it in Vercel
   const envUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (envUrl) return envUrl.replace(/\/$/, "");
   if (typeof window !== "undefined") return window.location.origin;
   return "https://www.reviewconcierge.ai";
 }
 
-export default function ResetPasswordPage() {
+function ResetPasswordInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -30,37 +29,31 @@ export default function ResetPasswordPage() {
 
   const baseUrl = useMemo(() => getBaseUrl(), []);
 
-  // Detect recovery/update mode more reliably
   useEffect(() => {
     const supabase = supabaseBrowser();
 
     const type = (searchParams.get("type") || "").toLowerCase();
     const hasRecoverySignals =
       type === "recovery" ||
-      !!searchParams.get("code") || // some Supabase flows
-      !!searchParams.get("token") || // older flows
-      !!searchParams.get("access_token"); // hash-based, but sometimes appears
+      !!searchParams.get("code") ||
+      !!searchParams.get("token") ||
+      !!searchParams.get("access_token");
 
-    // 1) If URL suggests recovery, attempt session check -> update mode
     if (hasRecoverySignals) {
       supabase.auth.getSession().then(({ data }) => {
         if (data.session) setMode("update");
       });
     }
 
-    // 2) Always check session on load (handles cases without query params)
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) setMode("update");
     });
 
-    // 3) Also listen for auth state changes (some flows set session after load)
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) setMode("update");
     });
 
-    return () => {
-      sub.subscription.unsubscribe();
-    };
+    return () => sub.subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -117,7 +110,6 @@ export default function ResetPasswordPage() {
       const { error } = await supabase.auth.updateUser({ password: pw });
       if (error) throw error;
 
-      // Recommended: end recovery session and go through normal auth flow
       await supabase.auth.signOut();
 
       setMsg("Password updated. Redirecting…");
@@ -144,7 +136,10 @@ export default function ResetPasswordPage() {
             Enter your email and we’ll send a password reset link.
           </p>
 
-          <form onSubmit={onRequestReset} style={{ display: "grid", gap: 10, marginTop: 16 }}>
+          <form
+            onSubmit={onRequestReset}
+            style={{ display: "grid", gap: 10, marginTop: 16 }}
+          >
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -174,7 +169,10 @@ export default function ResetPasswordPage() {
             Enter a new password for your account.
           </p>
 
-          <form onSubmit={onUpdatePassword} style={{ display: "grid", gap: 10, marginTop: 16 }}>
+          <form
+            onSubmit={onUpdatePassword}
+            style={{ display: "grid", gap: 10, marginTop: 16 }}
+          >
             <input
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -207,6 +205,15 @@ export default function ResetPasswordPage() {
         </>
       )}
     </main>
+  );
+}
+
+export default function ResetPasswordPage() {
+  // ✅ REQUIRED when using useSearchParams in App Router
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>Loading…</main>}>
+      <ResetPasswordInner />
+    </Suspense>
   );
 }
 
