@@ -2,9 +2,10 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireOrgContext } from "@/lib/orgServer";
+import { requireActiveSubscription } from "@/lib/subscriptionServer";
 
 type Body = {
-  google_place_id?: string;
+  google_place_id?: unknown;
 };
 
 type GooglePlaceDetailsResponse = {
@@ -17,7 +18,7 @@ type GooglePlaceDetailsResponse = {
   };
 };
 
-// Explicit “row shape” to prevent Supabase generated types mismatches
+// Explicit row shape to avoid generated-type drift
 type BusinessRow = {
   id: string;
   business_name: string | null;
@@ -29,34 +30,48 @@ type BusinessRow = {
   created_at: string | null;
 };
 
+function cleanString(v: unknown, maxLen = 255) {
+  if (typeof v !== "string") return "";
+  return v.trim().slice(0, maxLen);
+}
+
+function safeJsonError(e: unknown) {
+  return e instanceof Error ? e.message : "Unknown error";
+}
+
 export async function POST(req: Request) {
   try {
+    // 1) Auth + org context (fail closed)
     const { supabase, organizationId } = await requireOrgContext();
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
 
-    if (!apiKey) {
+    // 2) Subscription gating (doctrine: paid action = behind subscription)
+    // If you want “connect” to be free pre-billing, remove this gate.
+    const sub = await requireActiveSubscription();
+    if (!sub.ok) {
       return NextResponse.json(
-        { ok: false, error: "Missing GOOGLE_PLACES_API_KEY" },
-        { status: 500 }
+        { ok: false, upgradeRequired: true, status: sub.status ?? null },
+        { status: 402 }
       );
     }
 
-    let body: Body;
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ ok: false, error: "Missing GOOGLE_PLACES_API_KEY" }, { status: 500 });
+    }
+
+    let body: Body | null = null;
     try {
       body = (await req.json()) as Body;
     } catch {
       return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const placeId = (body.google_place_id ?? "").trim();
+    const placeId = cleanString(body?.google_place_id, 200);
     if (!placeId) {
-      return NextResponse.json(
-        { ok: false, error: "google_place_id is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "google_place_id is required" }, { status: 400 });
     }
 
-    // 1) Verify Place ID with Google
+    // 3) Verify Place ID with Google (server-side)
     const url =
       "https://maps.googleapis.com/maps/api/place/details/json" +
       `?place_id=${encodeURIComponent(placeId)}` +
@@ -67,7 +82,7 @@ export async function POST(req: Request) {
 
     if (!res.ok) {
       return NextResponse.json(
-        { ok: false, error: "Google verification request failed", status: res.status },
+        { ok: false, error: "Google verification request failed", upstreamStatus: res.status },
         { status: 502 }
       );
     }
@@ -80,21 +95,20 @@ export async function POST(req: Request) {
           ok: false,
           error: "Google verification failed",
           googleStatus: g.status,
-          googleError: g.error_message,
+          googleError: g.error_message ?? null,
         },
         { status: 400 }
       );
     }
 
-    const placeName = g.result?.name ?? null;
+    const placeName = typeof g.result?.name === "string" ? g.result.name : null;
     const googleRating = typeof g.result?.rating === "number" ? g.result.rating : null;
-    const googleTotal =
-      typeof g.result?.user_ratings_total === "number" ? g.result.user_ratings_total : null;
+    const googleTotal = typeof g.result?.user_ratings_total === "number" ? g.result.user_ratings_total : null;
 
     const returningSelect =
       "id, business_name, google_place_id, google_place_name, google_rating, google_user_ratings_total, organization_id, created_at";
 
-    // 2) Find latest business for org
+    // 4) Find most recent business for org (single "current" business model)
     const { data: currentData, error: currentErr } = await supabase
       .from("businesses")
       .select("id, business_name, organization_id, created_at")
@@ -109,7 +123,7 @@ export async function POST(req: Request) {
 
     const currentBiz = (currentData as unknown as { id?: string; business_name?: string | null }) ?? null;
 
-    // If none exists, create it
+    // 5) If none exists, create it
     if (!currentBiz?.id) {
       const { data: createdData, error: createErr } = await supabase
         .from("businesses")
@@ -130,15 +144,18 @@ export async function POST(req: Request) {
 
       const created = createdData as unknown as BusinessRow;
 
-      return NextResponse.json({
-        ok: true,
-        business: created,
-        verified: { name: placeName, rating: googleRating, user_ratings_total: googleTotal },
-      });
+      return NextResponse.json(
+        {
+          ok: true,
+          business: created,
+          verified: { name: placeName, rating: googleRating, user_ratings_total: googleTotal },
+        },
+        { status: 200 }
+      );
     }
 
-    // Otherwise update existing business
-    const updatePayload: Record<string, any> = {
+    // 6) Otherwise update existing business row (scoped by org + id)
+    const updatePayload: Record<string, unknown> = {
       google_place_id: placeId,
       google_rating: googleRating,
       google_user_ratings_total: googleTotal,
@@ -146,9 +163,7 @@ export async function POST(req: Request) {
     };
 
     const existingName = (currentBiz.business_name ?? "").trim();
-    if (!existingName) {
-      updatePayload.business_name = placeName ?? "My Business";
-    }
+    if (!existingName) updatePayload.business_name = placeName ?? "My Business";
 
     const { data: updatedData, error: updateErr } = await supabase
       .from("businesses")
@@ -164,12 +179,15 @@ export async function POST(req: Request) {
 
     const updated = updatedData as unknown as BusinessRow;
 
-    return NextResponse.json({
-      ok: true,
-      business: updated,
-      verified: { name: placeName, rating: googleRating, user_ratings_total: googleTotal },
-    });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Failed" }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: true,
+        business: updated,
+        verified: { name: placeName, rating: googleRating, user_ratings_total: googleTotal },
+      },
+      { status: 200 }
+    );
+  } catch (e: unknown) {
+    return NextResponse.json({ ok: false, error: safeJsonError(e) }, { status: 500 });
   }
 }

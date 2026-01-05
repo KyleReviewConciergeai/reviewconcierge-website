@@ -1,73 +1,120 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Props = {
   isConnected: boolean;
 };
 
+type Msg =
+  | { type: "success"; text: string }
+  | { type: "error"; text: string }
+  | { type: "upgrade"; text: string };
+
+function friendlyErrorFromResponse(payload: any): string {
+  return (
+    payload?.error ||
+    payload?.googleError ||
+    payload?.message ||
+    "We couldn’t refresh from Google right now. Please try again."
+  );
+}
+
 export default function RefreshReviewsButton({ isConnected }: Props) {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(
-    null
-  );
 
-  // Optional polish: auto-clear success messages after a moment
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<Msg | null>(null);
+
+  const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  // Auto-clear success messages after a moment
   useEffect(() => {
     if (!message || message.type !== "success") return;
-    const t = setTimeout(() => setMessage(null), 4500);
+    const t = setTimeout(() => {
+      if (mountedRef.current) setMessage(null);
+    }, 4500);
     return () => clearTimeout(t);
   }, [message]);
 
   async function refresh() {
     if (!isConnected || loading) return;
 
+    // cancel any prior in-flight request
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
       setLoading(true);
       setMessage(null);
 
-      const res = await fetch("/api/reviews/google", { method: "GET" });
-      const data = await res.json();
+      const res = await fetch("/api/reviews/google", {
+        method: "GET",
+        cache: "no-store",
+        signal: ac.signal,
+      });
+
+      // Parse JSON safely (some upstream errors might not be JSON)
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+
+      // Subscription gating
+      if (res.status === 402 || data?.upgradeRequired) {
+        const text =
+          "Sync requires an active subscription. Start your trial to enable Google refresh.";
+        if (mountedRef.current) {
+          setMessage({ type: "upgrade", text });
+        }
+        return;
+      }
 
       if (!res.ok || !data?.ok) {
-        const friendly =
-          data?.error ||
-          data?.googleError ||
-          "We couldn’t refresh from Google right now. Please try again.";
-        throw new Error(friendly);
+        throw new Error(friendlyErrorFromResponse(data));
       }
 
       const fetched = Number(data?.fetched ?? 0);
       const inserted = typeof data?.inserted === "number" ? data.inserted : null;
       const updated = typeof data?.updated === "number" ? data.updated : null;
 
-      if (fetched === 0) {
-        setMessage({
-          type: "success",
-          text: "Synced from Google • No recent reviews returned (totals still verified)",
-        });
-      } else {
-        const detail =
-          inserted !== null && updated !== null
-            ? `Imported ${inserted} new • Updated ${updated}`
-            : `Synced ${fetched} recent reviews`;
+      const text =
+        fetched === 0
+          ? "Synced from Google • No recent reviews returned (totals still verified)"
+          : inserted !== null && updated !== null
+          ? `Imported ${inserted} new • Updated ${updated} • Ratings verified`
+          : `Synced ${fetched} recent reviews • Ratings verified`;
 
-        setMessage({
-          type: "success",
-          text: `${detail} • Ratings verified`,
-        });
+      if (mountedRef.current) {
+        setMessage({ type: "success", text });
       }
 
       router.refresh();
     } catch (err: any) {
-      setMessage({
-        type: "error",
-        text: err?.message ?? "Something went wrong. Please try again.",
-      });
+      // Ignore abort errors
+      if (err?.name === "AbortError") return;
+
+      if (mountedRef.current) {
+        setMessage({
+          type: "error",
+          text: err?.message ?? "Something went wrong. Please try again.",
+        });
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }
 
@@ -86,7 +133,7 @@ export default function RefreshReviewsButton({ isConnected }: Props) {
           background: disabled ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)",
           cursor: disabled ? "not-allowed" : "pointer",
           color: "white",
-          minWidth: 160,
+          minWidth: 170,
           opacity: disabled ? 0.75 : 1,
         }}
         aria-busy={loading}
@@ -105,10 +152,19 @@ export default function RefreshReviewsButton({ isConnected }: Props) {
           style={{
             opacity: 0.9,
             fontSize: 14,
-            color: message.type === "error" ? "#fca5a5" : "rgba(255,255,255,0.85)",
+            color:
+              message.type === "error"
+                ? "#fca5a5"
+                : message.type === "upgrade"
+                ? "#fde68a"
+                : "rgba(255,255,255,0.85)",
           }}
         >
-          {message.type === "error" ? `❌ ${message.text}` : `✅ ${message.text}`}
+          {message.type === "error"
+            ? `❌ ${message.text}`
+            : message.type === "upgrade"
+            ? `⚡ ${message.text}`
+            : `✅ ${message.text}`}
         </span>
       )}
     </div>

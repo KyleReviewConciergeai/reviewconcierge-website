@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 
@@ -21,6 +21,18 @@ type CurrentBusiness = {
 
 type PlaceIdStatus = "idle" | "loading" | "success" | "error";
 
+type Toast = {
+  message: string;
+  type?: "success" | "error";
+};
+
+function maskPlaceId(pid?: string | null) {
+  if (!pid) return "";
+  const s = String(pid);
+  if (s.length <= 10) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
 export default function ConnectGooglePage() {
   const sb = supabaseBrowser();
   const router = useRouter();
@@ -31,16 +43,15 @@ export default function ConnectGooglePage() {
   const [business, setBusiness] = useState<CurrentBusiness | null>(null);
   const [userEmail, setUserEmail] = useState("");
 
-  // If already connected, we show a “connected” view.
-  // User can optionally click “Reconnect” to use the search/connect UI.
+  // If already connected, show a calm summary.
   const [showReconnectUI, setShowReconnectUI] = useState(false);
 
-  // search flow
+  // Search flow
   const [placeSearchQuery, setPlaceSearchQuery] = useState("");
   const [placeSearchResults, setPlaceSearchResults] = useState<PlaceCandidate[]>([]);
   const [placeSearchError, setPlaceSearchError] = useState<string | null>(null);
 
-  // connect flow
+  // Connect flow
   const [placeIdInput, setPlaceIdInput] = useState("");
   const [placeIdStatus, setPlaceIdStatus] = useState<PlaceIdStatus>("idle");
   const [placeIdError, setPlaceIdError] = useState<string | null>(null);
@@ -49,6 +60,13 @@ export default function ConnectGooglePage() {
     rating?: number;
     user_ratings_total?: number;
   } | null>(null);
+
+  const [toast, setToast] = useState<Toast | null>(null);
+
+  function showToast(t: Toast, ms = 3200) {
+    setToast(t);
+    window.setTimeout(() => setToast(null), ms);
+  }
 
   async function loadCurrentBusiness() {
     const res = await fetch("/api/businesses/current", { cache: "no-store" });
@@ -77,7 +95,7 @@ export default function ConnectGooglePage() {
       const json = await res.json();
 
       if (!res.ok || !json?.ok) {
-        setPlaceSearchError(json?.error ?? "Search failed");
+        setPlaceSearchError(json?.error ?? "Search didn’t work. Try again.");
         return;
       }
 
@@ -85,8 +103,12 @@ export default function ConnectGooglePage() {
         ? (json.candidates as PlaceCandidate[])
         : [];
       setPlaceSearchResults(candidates);
+
+      if (candidates.length === 0) {
+        setPlaceSearchError("No matches yet — try adding the city or neighborhood.");
+      }
     } catch (e: any) {
-      setPlaceSearchError(e?.message ?? "Search failed");
+      setPlaceSearchError(e?.message ?? "Search didn’t work. Try again.");
     } finally {
       setActionLoading(null);
     }
@@ -116,23 +138,28 @@ export default function ConnectGooglePage() {
         const msg =
           json?.error ??
           json?.googleError ??
-          "We couldn’t verify this Place ID. Please double-check it and try again.";
+          "We couldn’t confirm that listing. Please try again.";
         setPlaceIdStatus("error");
         setPlaceIdError(msg);
+        showToast({ message: msg, type: "error" }, 4200);
         return;
       }
 
       setPlaceIdStatus("success");
       setVerified(json?.verified ?? null);
 
-      // refresh business and send to dashboard
+      // Refresh business and send to dashboard
       await loadCurrentBusiness();
+
+      showToast({ message: "Connected. Taking you to your dashboard…", type: "success" }, 2200);
+
       router.push("/dashboard");
       router.refresh();
     } catch (e: any) {
-      const msg = e?.message ?? "Network error verifying Place ID. Please try again.";
+      const msg = e?.message ?? "Network error. Please try again.";
       setPlaceIdStatus("error");
       setPlaceIdError(msg);
+      showToast({ message: msg, type: "error" }, 4200);
     } finally {
       setActionLoading(null);
     }
@@ -153,15 +180,14 @@ export default function ConnectGooglePage() {
 
       const b = await loadCurrentBusiness();
 
-      // Instead of forcing redirect if already connected,
-      // keep user here and show a “Connected” summary.
+      // If already connected, show summary first (no forced redirect).
       if (b?.google_place_id) {
         setShowReconnectUI(false);
         setLoading(false);
         return;
       }
 
-      // not connected → show connect UI
+      // Not connected → show connect UI
       setShowReconnectUI(true);
       setLoading(false);
     }
@@ -172,20 +198,28 @@ export default function ConnectGooglePage() {
 
   const isAlreadyConnected = !!business?.google_place_id;
 
+  const pageTitle = useMemo(() => {
+    if (isAlreadyConnected && !showReconnectUI) return "Connected";
+    if (isAlreadyConnected && showReconnectUI) return "Change connection";
+    return "Connect";
+  }, [isAlreadyConnected, showReconnectUI]);
+
   if (loading) {
     return (
       <main style={{ padding: 24, maxWidth: 760, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 22, marginBottom: 8 }}>Connect Google</h1>
+        <h1 style={{ fontSize: 22, marginBottom: 8 }}>Connect</h1>
         <div style={{ opacity: 0.8 }}>Loading…</div>
       </main>
     );
   }
 
-  // Connected view (default when already connected)
+  // Connected summary view
   if (isAlreadyConnected && !showReconnectUI) {
+    const name = business?.google_place_name ?? business?.business_name ?? "Your business";
+
     return (
       <main style={{ padding: 24, maxWidth: 760, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 22, marginBottom: 6 }}>Google Connected ✅</h1>
+        <h1 style={{ fontSize: 22, marginBottom: 6 }}>Connected ✅</h1>
 
         {userEmail && (
           <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 14 }}>
@@ -193,26 +227,15 @@ export default function ConnectGooglePage() {
           </div>
         )}
 
-        <div
-          style={{
-            border: "1px solid rgba(148,163,184,0.25)",
-            borderRadius: 16,
-            padding: 16,
-            background: "#0f172a",
-            color: "#e2e8f0",
-          }}
-        >
-          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
-            Connected business
-          </div>
+        <div style={cardStyle}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Your connected listing</div>
 
           <div style={{ fontSize: 14, opacity: 0.95 }}>
-            <strong>{business?.google_place_name ?? business?.business_name ?? "Your Business"}</strong>
+            <strong>{name}</strong>
           </div>
 
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-            Place ID:{" "}
-            <span style={{ fontFamily: "monospace" }}>{business?.google_place_id}</span>
+            Listing ID: <span style={{ fontFamily: "monospace" }}>{maskPlaceId(business?.google_place_id)}</span>
           </div>
 
           {(typeof business?.google_rating === "number" ||
@@ -226,17 +249,12 @@ export default function ConnectGooglePage() {
           )}
 
           <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              onClick={() => router.push("/dashboard")}
-              style={buttonStyle}
-              title="Go to dashboard"
-            >
-              Go to Dashboard
+            <button onClick={() => router.push("/dashboard")} style={buttonStyle} title="Go to dashboard">
+              Go to dashboard
             </button>
 
             <button
               onClick={() => {
-                // reveal connect UI
                 setShowReconnectUI(true);
                 setPlaceSearchQuery("");
                 setPlaceSearchResults([]);
@@ -245,30 +263,32 @@ export default function ConnectGooglePage() {
                 setPlaceIdError(null);
                 setVerified(null);
               }}
-              style={{
-                ...buttonStyle,
-                background: "rgba(226,232,240,0.08)",
-              }}
-              title="Reconnect or change business"
+              style={{ ...buttonStyle, background: "rgba(226,232,240,0.08)" }}
+              title="Change connected listing"
             >
-              Change / Reconnect
+              Change listing
             </button>
           </div>
 
           <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
-            Tip: If you want to switch to a different location/business, use “Change / Reconnect”.
+            Review Concierge drafts replies — it never posts anything for you.
           </div>
         </div>
+
+        {toast && (
+          <div style={toastStyle(toast.type)} aria-live="polite">
+            {toast.message}
+          </div>
+        )}
       </main>
     );
   }
 
-  // Connect UI (either not connected, or user clicked reconnect)
+  // Connect / Change UI
   return (
     <main style={{ padding: 24, maxWidth: 760, margin: "0 auto" }}>
-      <h1 style={{ fontSize: 22, marginBottom: 6 }}>
-        {isAlreadyConnected ? "Reconnect Google" : "Connect Google"}
-      </h1>
+      <h1 style={{ fontSize: 22, marginBottom: 6 }}>{pageTitle}</h1>
+
       {userEmail && (
         <div style={{ opacity: 0.7, fontSize: 13, marginBottom: 14 }}>
           Signed in as {userEmail}
@@ -278,25 +298,16 @@ export default function ConnectGooglePage() {
       {isAlreadyConnected && (
         <div style={{ marginBottom: 14, fontSize: 13, opacity: 0.85 }}>
           Currently connected to{" "}
-          <strong>{business?.google_place_name ?? business?.business_name ?? "Your Business"}</strong>.{" "}
-          Select a new business below to switch.
+          <strong>{business?.google_place_name ?? business?.business_name ?? "your business"}</strong>.
+          You can switch to a different listing below.
         </div>
       )}
 
-      <div
-        style={{
-          border: "1px solid rgba(148,163,184,0.25)",
-          borderRadius: 16,
-          padding: 16,
-          background: "#0f172a",
-          color: "#e2e8f0",
-        }}
-      >
-        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
-          Find your business
-        </div>
+      <div style={cardStyle}>
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Find your listing</div>
+
         <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
-          Tip: search “name + city” (e.g. “Delfina Palo Alto”)
+          Search using <strong>name + city</strong> (example: “Delfina Palo Alto”).
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -305,31 +316,21 @@ export default function ConnectGooglePage() {
             onChange={(e) => setPlaceSearchQuery(e.target.value)}
             placeholder="Business name + city"
             disabled={actionLoading === "search" || actionLoading === "connect"}
-            style={{
-              flex: "1 1 260px",
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid rgba(148,163,184,0.35)",
-              background: "rgba(15,23,42,0.7)",
-              color: "inherit",
-              outline: "none",
-            }}
+            style={inputStyle}
           />
 
           <button
             onClick={searchPlaces}
             disabled={actionLoading === "search" || !placeSearchQuery.trim()}
             style={buttonStyle}
-            title="Search Google Places"
+            title="Search"
           >
             {actionLoading === "search" ? "Searching…" : "Search"}
           </button>
         </div>
 
         {placeSearchError && (
-          <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>
-            {placeSearchError}
-          </div>
+          <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>{placeSearchError}</div>
         )}
 
         {placeSearchResults.length > 0 && (
@@ -342,47 +343,23 @@ export default function ConnectGooglePage() {
                   setPlaceIdStatus("idle");
                   setPlaceIdError(null);
                   setVerified(null);
+                  showToast({ message: `Selected: ${p.name}`, type: "success" }, 1800);
                 }}
-                style={{
-                  textAlign: "left",
-                  padding: "12px 12px",
-                  borderRadius: 14,
-                  border: "1px solid rgba(148,163,184,0.25)",
-                  background: "rgba(15,23,42,0.6)",
-                  color: "#e2e8f0",
-                  cursor: "pointer",
-                }}
+                style={resultButtonStyle}
+                title="Select this listing"
               >
                 <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
                 {p.formatted_address && (
-                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                    {p.formatted_address}
-                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{p.formatted_address}</div>
                 )}
-                <div
-                  style={{
-                    fontSize: 11,
-                    opacity: 0.55,
-                    marginTop: 8,
-                    fontFamily: "monospace",
-                  }}
-                >
-                  {p.place_id}
-                </div>
               </button>
             ))}
           </div>
         )}
 
-        <div
-          style={{
-            marginTop: 14,
-            borderTop: "1px solid rgba(148,163,184,0.18)",
-            paddingTop: 14,
-          }}
-        >
+        <div style={{ marginTop: 14, borderTop: "1px solid rgba(148,163,184,0.18)", paddingTop: 14 }}>
           <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
-            Or paste a Place ID manually:
+            Or paste a listing ID:
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -395,36 +372,24 @@ export default function ConnectGooglePage() {
                   setPlaceIdError(null);
                 }
               }}
-              placeholder="Google Place ID"
+              placeholder="Listing ID"
               disabled={actionLoading === "connect"}
-              style={{
-                flex: "1 1 320px",
-                padding: "10px 12px",
-                borderRadius: 10,
-                border: "1px solid rgba(148,163,184,0.35)",
-                background: "rgba(15,23,42,0.7)",
-                color: "inherit",
-                outline: "none",
-              }}
+              style={inputStyle}
             />
 
             <button
               onClick={connectGoogle}
               disabled={actionLoading === "connect" || !placeIdInput.trim()}
               style={buttonStyle}
-              title="Verify & Connect"
+              title="Connect"
             >
-              {actionLoading === "connect" ? "Verifying…" : "Verify & Connect"}
+              {actionLoading === "connect" ? "Connecting…" : "Connect"}
             </button>
           </div>
 
           <div style={{ marginTop: 10 }}>
-            {placeIdStatus === "loading" && (
-              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>
-            )}
-            {placeIdStatus === "error" && (
-              <div style={{ fontSize: 13, color: "#f87171" }}>{placeIdError}</div>
-            )}
+            {placeIdStatus === "loading" && <div style={{ fontSize: 13, opacity: 0.9 }}>Connecting…</div>}
+            {placeIdStatus === "error" && <div style={{ fontSize: 13, color: "#f87171" }}>{placeIdError}</div>}
             {placeIdStatus === "success" && (
               <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>
                 Connected ✔ Redirecting…
@@ -436,9 +401,7 @@ export default function ConnectGooglePage() {
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9 }}>
               Connected to: <strong>{verified.name}</strong>
               {typeof verified.rating === "number" ? ` • ${verified.rating}★` : ""}
-              {typeof verified.user_ratings_total === "number"
-                ? ` • ${verified.user_ratings_total} ratings`
-                : ""}
+              {typeof verified.user_ratings_total === "number" ? ` • ${verified.user_ratings_total} ratings` : ""}
             </div>
           )}
 
@@ -449,20 +412,36 @@ export default function ConnectGooglePage() {
                   setShowReconnectUI(false);
                   router.refresh();
                 }}
-                style={{
-                  ...buttonStyle,
-                  background: "rgba(226,232,240,0.08)",
-                }}
+                style={{ ...buttonStyle, background: "rgba(226,232,240,0.08)" }}
               >
-                Cancel (keep current connection)
+                Cancel (keep current)
               </button>
             </div>
           )}
         </div>
+
+        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
+          We’ll show your reviews inside Review Concierge so you can draft replies in your voice.
+          You approve, edit, and post.
+        </div>
       </div>
+
+      {toast && (
+        <div style={toastStyle(toast.type)} aria-live="polite">
+          {toast.message}
+        </div>
+      )}
     </main>
   );
 }
+
+const cardStyle: React.CSSProperties = {
+  border: "1px solid rgba(148,163,184,0.25)",
+  borderRadius: 16,
+  padding: 16,
+  background: "#0f172a",
+  color: "#e2e8f0",
+};
 
 const buttonStyle: React.CSSProperties = {
   padding: "10px 12px",
@@ -472,3 +451,39 @@ const buttonStyle: React.CSSProperties = {
   cursor: "pointer",
   color: "#e2e8f0",
 };
+
+const inputStyle: React.CSSProperties = {
+  flex: "1 1 260px",
+  padding: "10px 12px",
+  borderRadius: 10,
+  border: "1px solid rgba(148,163,184,0.35)",
+  background: "rgba(15,23,42,0.7)",
+  color: "inherit",
+  outline: "none",
+};
+
+const resultButtonStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "12px 12px",
+  borderRadius: 14,
+  border: "1px solid rgba(148,163,184,0.25)",
+  background: "rgba(15,23,42,0.6)",
+  color: "#e2e8f0",
+  cursor: "pointer",
+};
+
+function toastStyle(type?: "success" | "error"): React.CSSProperties {
+  return {
+    position: "fixed",
+    bottom: 24,
+    right: 24,
+    padding: "12px 16px",
+    borderRadius: 12,
+    background: type === "error" ? "rgba(220,38,38,0.95)" : "rgba(15,23,42,0.95)",
+    color: "#fff",
+    fontSize: 14,
+    boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    zIndex: 1000,
+    maxWidth: 360,
+  };
+}

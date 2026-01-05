@@ -37,7 +37,10 @@ type ReviewUpsertRow = {
   raw: unknown;
 };
 
-// ✅ more stable + shorter: hash-based ID (avoids huge strings + reduces collision risk)
+/**
+ * Deterministic, short, low-collision ID derived from place + review payload.
+ * (Places API doesn't give stable review IDs.)
+ */
 function makeGoogleReviewId(
   placeId: string,
   r: { author_name?: string; time?: number; rating?: number; text?: string }
@@ -51,36 +54,41 @@ function makeGoogleReviewId(
   });
 
   const hash = crypto.createHash("sha256").update(payload).digest("hex").slice(0, 40);
-  // Keep it readable + deterministic, max length safe
   return `${placeId}:${hash}`.slice(0, 255);
+}
+
+function asString(v: unknown) {
+  return typeof v === "string" ? v : "";
 }
 
 export async function GET(req: Request) {
   try {
-    // 1) Org context first (safer if subscription logic relies on org context)
+    // 1) Org context
     const { supabase, organizationId } = await requireOrgContext();
 
-    // 2) Subscription gating (MVP)
+    // 2) Subscription gating (unlock Google fetch)
     const sub = await requireActiveSubscription();
     if (!sub.ok) {
       return NextResponse.json(
-        { ok: false, upgradeRequired: true, status: sub.status },
+        {
+          ok: false,
+          upgradeRequired: true,
+          status: sub.status ?? null,
+          error: "Drafting isn’t unlocked yet.",
+        },
         { status: 402 }
       );
     }
 
     const { searchParams } = new URL(req.url);
-    const google_place_id_param = searchParams.get("google_place_id")?.trim() || "";
+    const google_place_id_param = asString(searchParams.get("google_place_id")).trim();
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { ok: false, error: "Missing GOOGLE_PLACES_API_KEY" },
-        { status: 500 }
-      );
+      return NextResponse.json({ ok: false, error: "Missing GOOGLE_PLACES_API_KEY" }, { status: 500 });
     }
 
-    // 3) Resolve google_place_id
+    // 3) Resolve placeId
     let placeId = google_place_id_param;
 
     if (!placeId) {
@@ -100,8 +108,7 @@ export async function GET(req: Request) {
         return NextResponse.json(
           {
             ok: false,
-            error:
-              "No google_place_id found for your organization. Connect a business first (Place ID) on the dashboard.",
+            error: "No connected Google Place ID found. Connect your business first.",
           },
           { status: 400 }
         );
@@ -110,7 +117,7 @@ export async function GET(req: Request) {
       placeId = biz.google_place_id;
     }
 
-    // 4) Find the business row for this org + placeId
+    // 4) Find matching business row for org + placeId
     const { data: business, error: businessErr } = await supabase
       .from("businesses")
       .select("id, google_place_id")
@@ -126,18 +133,14 @@ export async function GET(req: Request) {
 
     if (!business?.id || !business?.google_place_id) {
       return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "No matching business found for this org + google_place_id. Make sure your business is connected to your organization.",
-        },
+        { ok: false, error: "No matching business found for this connected Place ID." },
         { status: 404 }
       );
     }
 
     const businessId = business.id as string;
 
-    // 5) Fetch Google Place details (sample reviews + authoritative summary stats)
+    // 5) Fetch Place details (includes a limited set of recent reviews + summary metrics)
     const url =
       "https://maps.googleapis.com/maps/api/place/details/json" +
       `?place_id=${encodeURIComponent(placeId)}` +
@@ -148,7 +151,6 @@ export async function GET(req: Request) {
     const google = (await res.json()) as GooglePlaceDetailsResponse;
 
     if (google.status !== "OK") {
-      // Treat as a Google upstream issue (not your server)
       return NextResponse.json(
         { ok: false, googleStatus: google.status, googleError: google.error_message },
         { status: 502 }
@@ -157,12 +159,10 @@ export async function GET(req: Request) {
 
     const googleRating = typeof google.result?.rating === "number" ? google.result.rating : null;
     const googleTotal =
-      typeof google.result?.user_ratings_total === "number"
-        ? google.result.user_ratings_total
-        : null;
+      typeof google.result?.user_ratings_total === "number" ? google.result.user_ratings_total : null;
     const googleName = typeof google.result?.name === "string" ? google.result.name : null;
 
-    // 5a) Update business row with authoritative stats
+    // 5a) Update business row with summary stats
     const { error: bizUpdateErr } = await supabase
       .from("businesses")
       .update({
@@ -179,6 +179,7 @@ export async function GET(req: Request) {
 
     const googleReviews = Array.isArray(google.result?.reviews) ? google.result!.reviews! : [];
 
+    // Note: Places API returns a limited set of reviews (often recent / helpful), not full history.
     if (googleReviews.length === 0) {
       return NextResponse.json({
         ok: true,
@@ -190,12 +191,12 @@ export async function GET(req: Request) {
         upserted_total: 0,
         inserted: 0,
         updated: 0,
-        synced_at: new Date().toISOString(),
-        note: "No reviews returned by Google for this place (Places API returns a sample).",
+        fetched_at: new Date().toISOString(),
+        note: "Google returned no reviews in this fetch.",
       });
     }
 
-    // 6) Map → upsert into schema
+    // 6) Map → upsert rows
     const rows: ReviewUpsertRow[] = googleReviews.map((r) => ({
       organization_id: organizationId,
       business_id: businessId,
@@ -210,7 +211,7 @@ export async function GET(req: Request) {
       raw: r,
     }));
 
-    // 6a) Pre-check existing IDs (for inserted/updated counts)
+    // 6a) Pre-check existing IDs for inserted/updated counts
     const ids = rows.map((x) => x.google_review_id);
 
     const { data: existing, error: existingErr } = await supabase
@@ -250,9 +251,9 @@ export async function GET(req: Request) {
       upserted_total: rows.length,
       inserted,
       updated,
-      synced_at: new Date().toISOString(),
+      fetched_at: new Date().toISOString(),
       savedPreview: savedPreview ?? [],
-      note: "Reviews returned here are a Google sample; summary metrics are authoritative.",
+      note: "This fetch may include only a limited set of reviews from Google (not full history).",
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";

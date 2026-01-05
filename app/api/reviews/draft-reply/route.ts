@@ -3,13 +3,23 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireActiveSubscription } from "@/lib/subscriptionServer";
 
+/**
+ * Doctrine-aligned draft API
+ * - Output is a *suggested* reply, meant to be edited by the owner
+ * - No automation language, no “brand concierge”, no “premium winery” specificity
+ * - Voice-first: natural, human, believable
+ * - Safety: calm + respectful, but not legalistic / corporate
+ */
+
 function cleanString(v: unknown, maxLen = 4000) {
   if (typeof v !== "string") return "";
   return v.trim().slice(0, maxLen);
 }
 
 function cleanLanguage(v: unknown) {
+  // Expected: reviewer language (reply should be drafted in this language)
   const raw = cleanString(v, 20) || "en";
+  // Keep it simple: allow short tags like "en", "es", "pt", "fr", etc.
   return raw.slice(0, 12);
 }
 
@@ -19,21 +29,34 @@ function parseRating(v: unknown) {
   return n;
 }
 
+function safeTrimReply(s: string, maxLen = 800) {
+  // Keep it short and clean for a public reply
+  const t = (s ?? "").trim();
+  if (!t) return "";
+  // Avoid giant responses if the model goes off
+  return t.slice(0, maxLen);
+}
+
 const SYSTEM_PROMPT = `
-You are a professional hospitality brand concierge writing public responses to Google reviews on behalf of premium wineries, lodges, and restaurants.
+You write short, human-sounding public replies to online guest reviews for a hospitality business.
 
-Your job is to write warm, thoughtful, brand-safe replies that:
-• Sound human, calm, and polished
-• Reflect high-end hospitality standards
-• Protect the business legally and reputationally
-• Feel appropriate for Google Reviews (public-facing)
+Core doctrine:
+- The reply is a *suggestion* written in the owner/manager’s voice.
+- The human stays in control: the output should be easy to edit and post manually.
+- Authenticity > efficiency. Believability > polish.
+- Do not sound like corporate PR or automated templates.
 
-You are not customer support.
-You are not defensive.
-You never argue.
-You never sound automated.
-
-The goal is to make future readers feel confident, welcomed, and cared for.
+Hard rules:
+- Write in the reviewer’s language.
+- 2–4 short sentences.
+- No emojis.
+- Do not quote the review verbatim.
+- Do not mention policies, investigations, “our team will look into it”, or anything internal.
+- Do not admit legal fault or responsibility.
+- Do not offer refunds/discounts/compensation.
+- Do not mention AI, prompts, or that this is a draft.
+- Avoid generic, repeated openings like “Thank you for your feedback.” Vary the opening naturally.
+- Keep it warm, calm, and specific to the review when possible.
 `.trim();
 
 function buildUserPrompt(params: {
@@ -44,64 +67,72 @@ function buildUserPrompt(params: {
 }) {
   const { business_name, rating, language, review_text } = params;
 
-  return `
-Write a public Google review reply using the following context:
+  const ratingGuidance =
+    rating >= 5
+      ? `
+For 5-star reviews:
+- Be genuinely warm and appreciative.
+- Mention 1 specific detail or theme (service, atmosphere, food, etc.) if present.
+- Invite them back in a natural way (not salesy).
+`.trim()
+      : rating === 4
+        ? `
+For 4-star reviews:
+- Thank them, acknowledge what went well.
+- If there's a minor issue hinted, acknowledge lightly and appreciate the note.
+- Invite them back.
+`.trim()
+        : rating === 3
+          ? `
+For 3-star reviews:
+- Thank them and acknowledge the mixed experience.
+- Show you care and you’re listening (without sounding corporate).
+- Invite them to return and, if appropriate, offer a simple offline follow-up line.
+`.trim()
+          : `
+For 1–2 star reviews:
+- Lead with empathy and calm.
+- Acknowledge their experience without arguing or being defensive.
+- Offer a brief offline follow-up line (email/phone) without sounding legalistic.
+- Do not over-apologize; keep it steady and respectful.
+`.trim();
 
+  return `
+Context:
 Business name: ${business_name}
 Star rating: ${rating} out of 5
-Review language: ${language}
+Reviewer language: ${language}
+
 Review text:
 """
 ${review_text}
 """
 
-Tone and rules based on star rating:
+Guidance:
+${ratingGuidance}
 
-⭐⭐⭐⭐⭐ (5 stars)
-• Express genuine gratitude
-• Reinforce what the guest enjoyed
-• Celebrate the experience without overdoing it
-• Warm, welcoming, and confident
-
-⭐⭐⭐ (3 stars)
-• Thank the guest sincerely
-• Acknowledge their feedback
-• Show openness to improvement
-• Balanced, calm, and appreciative
-
-⭐–⭐⭐ (1–2 stars)
-• Lead with empathy and professionalism
-• Acknowledge the experience without admitting fault
-• Avoid excuses or defensiveness
-• Encourage offline follow-up (email or phone)
-• Reassuring, respectful, and composed
-
-Global guardrails (always follow):
-• Do NOT admit legal responsibility or fault
-• Do NOT offer refunds, discounts, or compensation
-• Do NOT mention internal issues, policies, or investigations
-• Do NOT copy or quote the review verbatim
-• Do NOT use emojis
-• Do NOT sound robotic or overly corporate
-
-Style guidelines:
-• Length: 2–4 short sentences
-• Use the business name naturally if appropriate
-• End with a warm invitation to return or reconnect
-• Write in the same language as the review
-• Keep it human, elegant, and calm
-• Avoid generic or overly formal openings (e.g., “Dear Guest,” or “Thank you for sharing”). Vary the opening naturally.
-• Express gratitude once per reply; avoid repeating multiple “thank you” phrases.
+Output requirements:
+- 2–4 short sentences
+- Write in ${language}
+- Natural, human, owner/manager voice
+- No emojis
+- Do not quote the review
+- Do not be generic or overly formal
 `.trim();
 }
 
 export async function POST(req: Request) {
   try {
-    // ✅ GATING (MVP)
+    // ✅ Subscription gating (MVP)
     const sub = await requireActiveSubscription();
     if (!sub.ok) {
       return NextResponse.json(
-        { ok: false, upgradeRequired: true, status: sub.status },
+        {
+          ok: false,
+          upgradeRequired: true,
+          status: sub.status,
+          error: "Your plan isn’t active yet. Subscribe to draft replies.",
+        },
         { status: 402 }
       );
     }
@@ -141,7 +172,7 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0.5,
+        temperature: 0.4,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: userPrompt },
@@ -156,7 +187,7 @@ export async function POST(req: Request) {
     try {
       upstreamJson = JSON.parse(rawText);
     } catch {
-      // keep null
+      // ignore
     }
 
     if (!upstream.ok) {
@@ -171,7 +202,9 @@ export async function POST(req: Request) {
       );
     }
 
-    const content = upstreamJson?.choices?.[0]?.message?.content?.trim?.() ?? "";
+    const contentRaw = upstreamJson?.choices?.[0]?.message?.content ?? "";
+    const content = safeTrimReply(String(contentRaw));
+
     if (!content) {
       return NextResponse.json(
         { ok: false, error: "No reply content returned from OpenAI", upstreamBody: upstreamJson },
@@ -182,7 +215,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, reply: content }, { status: 200 });
   } catch (err: any) {
     console.error("DRAFT-REPLY ERROR:", err);
-    const message = err instanceof Error ? err.message : "Server error generating draft reply";
+    const message = err instanceof Error ? err.message : "Server error drafting reply";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

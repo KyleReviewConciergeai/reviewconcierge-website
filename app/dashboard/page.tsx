@@ -24,7 +24,7 @@ type ReviewsApiResponse = {
   count?: number;
   reviews?: Review[];
   error?: string;
-  upgradeRequired?: boolean; // ✅ gate hint from API
+  upgradeRequired?: boolean; // gate hint from API
 };
 
 type CurrentBusiness = {
@@ -59,12 +59,6 @@ type SubscriptionStatus =
   | "unpaid"
   | null;
 
-type SubscriptionStatusResponse = {
-  ok: boolean;
-  status: SubscriptionStatus;
-  active: boolean; // true when status is active OR trialing
-};
-
 function formatDate(iso: string | null) {
   if (!iso) return "";
   try {
@@ -87,18 +81,44 @@ export default function DashboardPage() {
   const sb = supabaseBrowser();
 
   /**
-   * Mendoza-ready copy + future GBP prep notes:
-   * - Today: Places API = "recent sample" of reviews for demo.
-   * - Phase 2: Google Business Profile API = full history sync + official replying/management.
+   * Pre-Mendoza doctrine alignment:
+   * - This space is for reading guest feedback and drafting replies in the owner’s voice.
+   * - RC drafts. The owner edits and posts.
+   * - No automation language. No “Phase 2” promises. No “workflow” framing.
    */
   const COPY = {
-    refreshBtn: "Refresh from Google",
-    refreshBtnLoading: "Refreshing…",
-    refreshTooltipDisabled: "Connect your Google Place ID first",
-    refreshTooltipEnabled:
-      "Imports a recent sample of Google reviews for demo. Full history sync comes in Phase 2 via Google Business Profile.",
-    demoLabelTooltip:
-      "Demo mode: Places API returns a recent sample. Full review history sync comes in Phase 2 via Google Business Profile.",
+    title: "Your guest feedback",
+    subtitle:
+      "Read what guests wrote, then draft a short reply that sounds like you. You’ll edit it before you post anywhere.",
+    reloadBtn: "Reload",
+    reloadBtnLoading: "Reloading…",
+    syncBtn: "Bring in recent Google reviews",
+    syncBtnLoading: "Bringing them in…",
+    syncTooltipDisabled: "Connect your Google business first",
+    syncTooltipEnabled:
+      "Fetches a recent sample of your Google reviews to read and reply to here.",
+    connectHeader: "Connect Google reviews",
+    connectBody:
+      "This links your business so we can bring in a recent sample of your Google reviews for drafting replies. Nothing is posted on your behalf.",
+    connectTip: "Tip: search “business name + city”.",
+    connectBtn: "Verify & connect",
+    connectBtnLoading: "Verifying…",
+    connectedLabel: "Google connected",
+    connectedHelp:
+      "Use “Bring in recent Google reviews” to pull a recent sample. You’ll always review and choose what to post.",
+    planLockedTitle: "Google sync is currently locked",
+    planLockedBody:
+      "To bring in reviews from Google, you’ll need an active plan. Drafting and editing stays fully in your control.",
+    emptyTitle: "No reviews here yet.",
+    emptyBodyNoGoogle:
+      "Connect your business, then bring in recent Google reviews to start drafting replies in your voice.",
+    emptyBodyHasGoogle:
+      "Bring in recent Google reviews to start drafting replies in your voice.",
+    filtersRating: "Rating",
+    filtersSearch: "Search",
+    filtersClear: "Clear",
+    listLabel: "Recent reviews",
+    listLabelNote: "A recent sample from Google",
   };
 
   // API data (reviews)
@@ -110,7 +130,7 @@ export default function DashboardPage() {
     "reload" | "google" | "logout" | "connect" | null
   >(null);
 
-  // "Last synced from Google" (only set on Google refresh success)
+  // "Last fetched from Google" (only set on Google fetch success)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
 
   const [toast, setToast] = useState<Toast | null>(null);
@@ -119,7 +139,7 @@ export default function DashboardPage() {
   const [business, setBusiness] = useState<CurrentBusiness | null>(null);
   const [businessLoaded, setBusinessLoaded] = useState(false);
 
-  // ✅ subscription gating UI (MOVED UP to avoid TS “used before declaration”)
+  // subscription gating UI
   const [upgradeRequired, setUpgradeRequired] = useState(false);
   const [subscriptionActive, setSubscriptionActive] = useState<boolean | null>(null);
 
@@ -131,11 +151,11 @@ export default function DashboardPage() {
     user_ratings_total?: number;
   } | null>(null);
 
-  // ✅ explicit onboarding UI states
+  // explicit onboarding UI states
   const [placeIdStatus, setPlaceIdStatus] = useState<PlaceIdStatus>("idle");
   const [placeIdError, setPlaceIdError] = useState<string | null>(null);
 
-  // ✅ iPhone-friendly search flow for Place ID
+  // iPhone-friendly search flow for Place ID
   const [showPlaceSearch, setShowPlaceSearch] = useState(false);
   const [placeSearchQuery, setPlaceSearchQuery] = useState("");
   const [placeSearchLoading, setPlaceSearchLoading] = useState(false);
@@ -149,10 +169,9 @@ export default function DashboardPage() {
   const [ratingFilter, setRatingFilter] = useState<number | "all">("all");
   const [query, setQuery] = useState("");
 
-  // ✅ Derived flags (MOVED BELOW subscription state so TS is happy)
+  // Derived flags
   const needsOnboarding = businessLoaded && (!business || !business.google_place_id);
   const hasGoogleConnected = !!business?.google_place_id;
-  const canGoogleSync = hasGoogleConnected && subscriptionActive !== false;
 
   // single source of truth:
   // - subscriptionActive === false => show subscribe
@@ -216,7 +235,6 @@ export default function DashboardPage() {
       // expects: { ok: true, isActive: boolean, status: string|null }
       if (res.ok && json?.ok) {
         const isActive = !!json?.isActive;
-
         setSubscriptionActive(isActive);
         setUpgradeRequired(!isActive);
         return;
@@ -237,7 +255,6 @@ export default function DashboardPage() {
       setActionLoading("reload");
       const json = await loadReviews();
       setData(json);
-      // NOTE: Do not set lastRefreshedAt here — it should reflect Google fetch time only.
     } catch (e: any) {
       setData({ ok: false, error: e?.message ?? "Failed to load" });
     } finally {
@@ -249,10 +266,7 @@ export default function DashboardPage() {
     if (actionLoading) return;
 
     if (!business?.google_place_id) {
-      showToast(
-        { message: "Connect your business first, then refresh from Google.", type: "error" },
-        3500
-      );
+      showToast({ message: "Connect your Google business first.", type: "error" }, 3500);
       return;
     }
 
@@ -262,12 +276,12 @@ export default function DashboardPage() {
       const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
       const googleJson = await googleRes.json();
 
-      // ✅ If gated, show subscribe CTA (and stop here)
+      // If gated, show subscribe CTA (and stop here)
       if (googleRes.status === 402 && googleJson?.upgradeRequired) {
         setUpgradeRequired(true);
         setSubscriptionActive(false);
         showToast(
-          { message: "Your plan isn’t active yet — subscribe to enable Google sync.", type: "error" },
+          { message: "Google sync is locked until your plan is active.", type: "error" },
           4500
         );
         return;
@@ -275,25 +289,15 @@ export default function DashboardPage() {
 
       // Normal error handling
       if (!googleRes.ok || !googleJson?.ok) {
-        const raw =
-          googleJson?.error ??
-          googleJson?.googleError ??
-          googleJson?.googleStatus ??
-          "Google refresh failed";
-
-        console.error("Google refresh failed:", raw, googleJson);
-
+        console.error("Google refresh failed:", googleJson);
         showToast(
-          {
-            message: "Couldn’t refresh from Google right now. Please try again in a moment.",
-            type: "error",
-          },
+          { message: "Couldn’t fetch from Google right now. Please try again.", type: "error" },
           4500
         );
         return;
       }
 
-      // ✅ If refresh succeeds, clear upgrade flag (status endpoint remains authoritative)
+      // If refresh succeeds, clear upgrade flag (status endpoint remains authoritative)
       setUpgradeRequired(false);
 
       const fetched = Number(googleJson?.fetched ?? 0);
@@ -307,18 +311,16 @@ export default function DashboardPage() {
       setData(json);
       setLastRefreshedAt(syncedAt);
 
-      // Sales-safe success messaging
       const msg =
         fetched === 0
-          ? "Synced from Google • No recent reviews returned (totals verified)."
-          : `Synced recent Google reviews • ${inserted} new, ${updated} updated (totals verified).`;
+          ? "Fetched from Google • No recent reviews returned."
+          : `Fetched from Google • ${inserted} new, ${updated} updated.`;
 
       showToast({ message: msg, type: "success" }, 3500);
     } catch (e: any) {
       console.error("Refresh from Google error:", e);
-
       showToast(
-        { message: "Couldn’t refresh from Google right now. Please try again.", type: "error" },
+        { message: "Couldn’t fetch from Google right now. Please try again.", type: "error" },
         4500
       );
     } finally {
@@ -368,7 +370,7 @@ export default function DashboardPage() {
 
       showToast(
         { message: `Connected: ${json?.verified?.name ?? "Place verified"}`, type: "success" },
-        3000
+        2800
       );
 
       // clear search UI after success (nice on mobile)
@@ -379,7 +381,6 @@ export default function DashboardPage() {
 
       const r = await loadReviews();
       setData(r);
-      // NOTE: Do not set lastRefreshedAt here — only set on actual Google fetch.
     } catch (e: any) {
       const msg = e?.message ?? "Network error verifying Place ID. Please try again.";
       setPlaceIdStatus("error");
@@ -390,7 +391,7 @@ export default function DashboardPage() {
     }
   }
 
-  // ✅ server-side Places search (iPhone-friendly)
+  // server-side Places search (iPhone-friendly)
   async function searchPlaces() {
     const q = placeSearchQuery.trim();
     if (!q || actionLoading) return;
@@ -520,8 +521,8 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 24, marginBottom: 12 }}>Dashboard</h1>
-        <p style={{ opacity: 0.8 }}>Loading…</p>
+        <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
+        <p style={{ opacity: 0.8 }}>{COPY.subtitle}</p>
 
         {toast && (
           <div style={toastStyle(toast.type)} aria-live="polite">
@@ -532,7 +533,7 @@ export default function DashboardPage() {
     );
   }
 
-  // ✅ Error view
+  // Error view
   if (!data?.ok) {
     return (
       <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
@@ -545,50 +546,47 @@ export default function DashboardPage() {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
+            <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
+            <p style={{ opacity: 0.8, marginTop: 0 }}>{COPY.subtitle}</p>
             {userEmail && (
-              <div style={{ opacity: 0.7, fontSize: 13 }}>Signed in as {userEmail}</div>
+              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 10 }}>
+                Signed in as {userEmail}
+              </div>
             )}
           </div>
 
           <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
             <button onClick={reloadList} disabled={actionLoading !== null} style={buttonStyle}>
-              {actionLoading === "reload" ? "Reloading…" : "Reload list"}
+              {actionLoading === "reload" ? COPY.reloadBtnLoading : COPY.reloadBtn}
             </button>
 
             <button
               onClick={refreshFromGoogleThenReload}
-              disabled={actionLoading !== null || !business?.google_place_id || subscriptionActive === false}
+              disabled={
+                actionLoading !== null || !business?.google_place_id || subscriptionActive === false
+              }
               title={
                 !business?.google_place_id
-                  ? COPY.refreshTooltipDisabled
+                  ? COPY.syncTooltipDisabled
                   : subscriptionActive === false
-                    ? "Subscribe to enable Google sync"
-                    : COPY.refreshTooltipEnabled
+                  ? "Activate a plan to enable Google sync"
+                  : COPY.syncTooltipEnabled
               }
               style={buttonStyle}
             >
-              {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
+              {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
             </button>
 
-            {/* ✅ only show when gated */}
             {showSubscribe && <SubscribeButton />}
 
             <button onClick={onLogout} disabled={actionLoading !== null} style={buttonStyle}>
-              {actionLoading === "logout" ? "Logging out…" : "Log out"}
+              {actionLoading === "logout" ? "Signing out…" : "Sign out"}
             </button>
           </div>
         </div>
 
-        {!business?.google_place_id && (
-          <div style={{ marginTop: 10, opacity: 0.7, fontSize: 13 }}>
-            🔒 Connect your business to enable “Refresh from Google”.
-          </div>
-        )}
-
-        {data?.error && !toast && (
+        {data?.error && (
           <div
-            className="rc-notice"
             style={{
               marginTop: 12,
               padding: "10px 12px",
@@ -600,7 +598,7 @@ export default function DashboardPage() {
               lineHeight: 1.35,
             }}
           >
-            <strong style={{ fontWeight: 700, opacity: 0.9 }}>Notice:</strong>{" "}
+            <strong style={{ fontWeight: 700, opacity: 0.9 }}>Couldn’t load right now:</strong>{" "}
             {String(data.error)}
           </div>
         )}
@@ -610,14 +608,6 @@ export default function DashboardPage() {
             {toast.message}
           </div>
         )}
-
-        <style jsx>{`
-          @media (max-width: 768px) {
-            .rc-notice {
-              display: none;
-            }
-          }
-        `}</style>
       </main>
     );
   }
@@ -625,15 +615,26 @@ export default function DashboardPage() {
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 14,
+          alignItems: "flex-start",
+        }}
+      >
         <div>
-          <h1 style={{ fontSize: 24, marginBottom: 6 }}>Dashboard</h1>
-          <div style={{ opacity: 0.8 }}>
+          <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
+          <p style={{ opacity: 0.82, marginTop: 0, maxWidth: 680, lineHeight: 1.45 }}>
+            {COPY.subtitle}
+          </p>
+
+          <div style={{ opacity: 0.82, marginTop: 12 }}>
             <div>
               <strong>Business:</strong> {displayBusinessName}
             </div>
             {userEmail && (
-              <div style={{ opacity: 0.7, fontSize: 13, marginTop: 6 }}>
+              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 6 }}>
                 Signed in as {userEmail}
               </div>
             )}
@@ -644,33 +645,36 @@ export default function DashboardPage() {
           <button
             onClick={reloadList}
             disabled={actionLoading !== null}
-            style={{ ...buttonStyle, minWidth: 120, width: "100%", maxWidth: 220 }}
-            title="Reload the current list from ReviewConcierge"
+            style={{ ...buttonStyle, minWidth: 120, width: "100%", maxWidth: 240 }}
+            title="Reload the list"
           >
-            {actionLoading === "reload" ? "Reloading…" : "Reload list"}
+            {actionLoading === "reload" ? COPY.reloadBtnLoading : COPY.reloadBtn}
           </button>
 
           <button
             onClick={refreshFromGoogleThenReload}
-            disabled={actionLoading !== null || !business?.google_place_id || subscriptionActive === false}
+            disabled={
+              actionLoading !== null || !business?.google_place_id || subscriptionActive === false
+            }
             style={{
               ...buttonStyle,
-              minWidth: 170,
+              minWidth: 230,
               opacity: !business?.google_place_id || subscriptionActive === false ? 0.6 : 1,
             }}
             title={
               !business?.google_place_id
-                ? COPY.refreshTooltipDisabled
+                ? COPY.syncTooltipDisabled
                 : subscriptionActive === false
-                  ? "Subscribe to enable Google sync"
-                  : COPY.refreshTooltipEnabled
+                ? "Activate a plan to enable Google sync"
+                : COPY.syncTooltipEnabled
             }
-            aria-disabled={actionLoading !== null || !business?.google_place_id || subscriptionActive === false}
+            aria-disabled={
+              actionLoading !== null || !business?.google_place_id || subscriptionActive === false
+            }
           >
-            {actionLoading === "google" ? COPY.refreshBtnLoading : COPY.refreshBtn}
+            {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
           </button>
 
-          {/* ✅ only show when gated */}
           {showSubscribe && <SubscribeButton />}
 
           <button
@@ -679,22 +683,19 @@ export default function DashboardPage() {
             style={{ ...buttonStyle, minWidth: 110 }}
             title="Sign out"
           >
-            {actionLoading === "logout" ? "Logging out…" : "Log out"}
+            {actionLoading === "logout" ? "Signing out…" : "Sign out"}
           </button>
         </div>
       </div>
 
-      {/* Last synced (only meaningful after Google refresh) */}
+      {/* “Last fetched” is helpful, but keep it soft (no operations vibe) */}
       {hasGoogleConnected && lastRefreshedAt && (
-        <div
-          title="Shows when reviews were last fetched from Google"
-          style={{ fontSize: 12, opacity: 0.65, marginTop: 8 }}
-        >
-          Last synced from Google: {new Date(lastRefreshedAt).toLocaleString()}
+        <div style={{ fontSize: 12, opacity: 0.65, marginTop: 8 }}>
+          Last fetched from Google: {new Date(lastRefreshedAt).toLocaleString()}
         </div>
       )}
 
-      {/* ✅ Onboarding card */}
+      {/* Onboarding card */}
       {needsOnboarding && (
         <div
           style={{
@@ -707,15 +708,15 @@ export default function DashboardPage() {
             marginBottom: 16,
           }}
         >
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
-            Connect your Google Place ID
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+            {COPY.connectHeader}
           </div>
 
-          <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
-            On iPhone: tap “Find my business”, select it, then verify & connect.
+          <div style={{ opacity: 0.85, fontSize: 13, marginBottom: 12, lineHeight: 1.45 }}>
+            {COPY.connectBody}
           </div>
 
-          {/* ✅ iPhone-friendly business search */}
+          {/* iPhone-friendly business search */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button
               onClick={() => {
@@ -724,14 +725,12 @@ export default function DashboardPage() {
                 setPlaceSearchResults([]);
               }}
               disabled={isPlaceConnectLoading}
-              style={{ ...buttonStyle, minWidth: 160 }}
+              style={{ ...buttonStyle, minWidth: 170 }}
             >
               {showPlaceSearch ? "Hide search" : "Find my business"}
             </button>
 
-            <div style={{ fontSize: 12, opacity: 0.75 }}>
-              Tip: search “name + city” (e.g. “Delfina Palo Alto”)
-            </div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>{COPY.connectTip}</div>
           </div>
 
           {showPlaceSearch && (
@@ -810,7 +809,14 @@ export default function DashboardPage() {
                           {p.formatted_address}
                         </div>
                       )}
-                      <div style={{ fontSize: 11, opacity: 0.55, marginTop: 8, fontFamily: "monospace" }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          opacity: 0.55,
+                          marginTop: 8,
+                          fontFamily: "monospace",
+                        }}
+                      >
                         {p.place_id}
                       </div>
                     </button>
@@ -830,7 +836,15 @@ export default function DashboardPage() {
           )}
 
           {/* Place ID input + connect */}
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+              marginTop: 12,
+            }}
+          >
             <input
               value={placeIdInput}
               onChange={(e) => {
@@ -840,7 +854,7 @@ export default function DashboardPage() {
                   setPlaceIdError(null);
                 }
               }}
-              placeholder="e.g. ChIJN1t_tDeuEmsRUsoyG83frY4"
+              placeholder="Paste a Google Place ID"
               disabled={isPlaceConnectLoading}
               style={{
                 flex: "1 1 320px",
@@ -857,15 +871,15 @@ export default function DashboardPage() {
             <button
               onClick={connectGooglePlaceId}
               disabled={actionLoading !== null || !placeIdInput.trim() || isPlaceConnectLoading}
-              style={{ ...buttonStyle, minWidth: 160 }}
+              style={{ ...buttonStyle, minWidth: 170 }}
             >
-              {isPlaceConnectLoading ? "Verifying…" : "Verify & Connect"}
+              {isPlaceConnectLoading ? COPY.connectBtnLoading : COPY.connectBtn}
             </button>
           </div>
 
           <div style={{ marginTop: 10 }}>
             {placeIdStatus === "loading" && (
-              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying Place ID…</div>
+              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>
             )}
 
             {placeIdStatus === "error" && (
@@ -875,32 +889,24 @@ export default function DashboardPage() {
             )}
 
             {placeIdStatus === "success" && (
-              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 600 }}>
-                Connected successfully ✔
+              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>
+                Connected ✔
               </div>
             )}
           </div>
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            You can still paste a Place ID manually, but “Find my business” is best on iPhone.
-          </div>
-
           {placeVerify?.name && (
-            <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-              Connected to: <strong>{placeVerify.name}</strong> ✔
+            <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
+              Connected to <strong>{placeVerify.name}</strong>.
               <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                You can now click “Refresh from Google” above to pull in reviews.
+                Next: bring in recent Google reviews above.
               </div>
-              {typeof placeVerify.rating === "number" ? ` • ${placeVerify.rating}★` : ""}
-              {typeof placeVerify.user_ratings_total === "number"
-                ? ` • ${placeVerify.user_ratings_total} ratings`
-                : ""}
             </div>
           )}
         </div>
       )}
 
-      {/* ✅ Connected confirmation card + (Plan not active + Subscribe) */}
+      {/* Connected confirmation + plan status (soft) */}
       {!needsOnboarding && hasGoogleConnected && (
         <div
           style={{
@@ -922,17 +928,17 @@ export default function DashboardPage() {
             <div
               style={{
                 fontSize: 14,
-                fontWeight: 700,
+                fontWeight: 800,
                 display: "flex",
                 gap: 10,
                 alignItems: "center",
               }}
             >
               <span style={{ color: "#22c55e" }}>●</span>
-              Google Connected
+              {COPY.connectedLabel}
             </div>
 
-            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
+            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.92 }}>
               <div style={{ marginBottom: 6 }}>
                 <span style={{ opacity: 0.75 }}>Business:</span>{" "}
                 <strong>{displayBusinessName}</strong>
@@ -946,47 +952,66 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-              Use <strong>“Refresh from Google”</strong> above to sync a recent sample of reviews.
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
+              {COPY.connectedHelp}
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
+              Nothing is posted automatically.
             </div>
           </div>
 
-          {/* ✅ Plan status (Active / Not active / Checking) */}
-          <div style={{ minWidth: 220, textAlign: "right" }}>
+          <div style={{ minWidth: 240, textAlign: "right" }}>
             {subscriptionActive === null ? (
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>Plan: Checking…</div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+                Google sync: Checking…
+              </div>
             ) : subscriptionActive ? (
               <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                Plan: <span style={{ color: "#22c55e", fontWeight: 700 }}>Active ✓</span>
+                Google sync: <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
               </div>
             ) : (
-              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                Plan: <span style={{ color: "#f87171", fontWeight: 700 }}>Not active</span>
-              </div>
+              <>
+                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
+                  Google sync: <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
+                </div>
+                <div
+                  style={{
+                    border: "1px solid rgba(148,163,184,0.18)",
+                    borderRadius: 12,
+                    padding: "10px 12px",
+                    background: "rgba(2,6,23,0.25)",
+                    fontSize: 12,
+                    opacity: 0.9,
+                    marginBottom: 10,
+                    textAlign: "left",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>{COPY.planLockedTitle}</div>
+                  <div style={{ lineHeight: 1.4 }}>{COPY.planLockedBody}</div>
+                </div>
+                <SubscribeButton />
+              </>
             )}
-
-            {/* Only show Subscribe CTA when not active */}
-            {subscriptionActive === false && <SubscribeButton />}
           </div>
         </div>
       )}
 
-      {/* summary cards */}
+      {/* Summary cards — keep informational, not “dashboardy” */}
       <div
         className="summary-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
           gap: 16,
-          marginTop: 20,
-          marginBottom: 24,
+          marginTop: 18,
+          marginBottom: 20,
         }}
       >
-        {/* Average Rating */}
         <div style={cardStyle}>
           <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
           <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>from Google</div>
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>
             {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
             <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
               {avgRating === null ? "" : stars(Math.round(avgRating))}
@@ -994,12 +1019,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Reviews */}
         <div style={cardStyle}>
           <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
-          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>total on Google</div>
+          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>on Google</div>
 
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>
             {totalReviews ?? data.count ?? reviews.length}
             <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
               • showing {filteredReviews.length}
@@ -1007,39 +1031,20 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Last Refresh */}
         <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refresh</div>
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Last fetched</div>
 
-          <div style={{ fontSize: 14, fontWeight: 600, marginTop: 6 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>
             {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
           </div>
 
           <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>
-            Latest review updated
+            Latest review
             {lastReviewDate ? ` • ${formatDate(lastReviewDate)}` : ""}
           </div>
         </div>
       </div>
 
-      {/* ✅ Short, non-repetitive demo disclosure (single source of truth) */}
-      {hasGoogleConnected ? (
-        <div
-          style={{
-            marginTop: -12,
-            marginBottom: 18,
-            fontSize: 12,
-            opacity: 0.72,
-            lineHeight: 1.4,
-          }}
-          title={COPY.demoLabelTooltip}
-        >
-          Demo note: showing a recent sample of reviews (totals are verified). Full history sync arrives in Phase 2 via
-          Google Business Profile.
-        </div>
-      ) : null}
-
-      {/* ✅ Mobile stacking (scoped only to summary cards) */}
       <style jsx>{`
         @media (max-width: 768px) {
           .summary-grid {
@@ -1048,12 +1053,21 @@ export default function DashboardPage() {
         }
       `}</style>
 
+      {/* Drafting panel (voice-first core) */}
       <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
 
-      {/* filters */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+      {/* Filters */}
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          flexWrap: "wrap",
+          alignItems: "center",
+          marginBottom: 16,
+        }}
+      >
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ opacity: 0.8, fontSize: 13 }}>Rating</span>
+          <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersRating}</span>
           <select
             value={ratingFilter}
             onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
@@ -1069,11 +1083,11 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
-          <span style={{ opacity: 0.8, fontSize: 13 }}>Search</span>
+          <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersSearch}</span>
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="author, text, language…"
+            placeholder="Author, text, language…"
             style={inputStyle}
           />
         </div>
@@ -1085,17 +1099,19 @@ export default function DashboardPage() {
           }}
           style={buttonStyle}
         >
-          Clear
+          {COPY.filtersClear}
         </button>
       </div>
 
       {hasGoogleConnected ? (
-        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }} title={COPY.demoLabelTooltip}>
-          Recent Google reviews (demo sample)
+        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }} title={COPY.syncTooltipEnabled}>
+          {COPY.listLabel} • <span style={{ opacity: 0.75 }}>{COPY.listLabelNote}</span>
         </div>
-      ) : null}
+      ) : (
+        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>{COPY.listLabel}</div>
+      )}
 
-      {/* list */}
+      {/* List */}
       {filteredReviews.length === 0 ? (
         <div
           style={{
@@ -1110,30 +1126,21 @@ export default function DashboardPage() {
         >
           {reviews.length === 0 ? (
             <>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>No reviews imported yet.</div>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>{COPY.emptyTitle}</div>
 
-              {!hasGoogleConnected ? (
-                <div style={{ opacity: 0.85 }}>
-                  Connect your business first, then click <strong>“Refresh from Google”</strong> to import a recent
-                  sample of reviews.
-                </div>
-              ) : (
-                <div style={{ opacity: 0.85 }}>
-                  Click <strong>“Refresh from Google”</strong> to import a recent sample of reviews for demo purposes.
-                </div>
-              )}
+              <div style={{ opacity: 0.88 }}>
+                {!hasGoogleConnected ? COPY.emptyBodyNoGoogle : COPY.emptyBodyHasGoogle}
+              </div>
 
-              {hasGoogleConnected ? (
-                <div style={{ marginTop: 10, opacity: 0.7 }}>
-                  Demo note: showing a recent sample. Full history sync arrives in Phase 2 (Google Business Profile).
-                </div>
-              ) : null}
+              <div style={{ marginTop: 10, opacity: 0.72 }}>
+                You’ll always choose what to post.
+              </div>
             </>
           ) : (
             <>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>No results for these filters.</div>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>No matches.</div>
               <div style={{ opacity: 0.85 }}>
-                Try clearing filters or searching a shorter keyword (author name, “service”, “wine”, etc.).
+                Try clearing filters or searching a shorter keyword (name, “service”, “room”, etc.).
               </div>
               <div style={{ marginTop: 10 }}>
                 <button
@@ -1155,20 +1162,24 @@ export default function DashboardPage() {
             <div key={r.id} style={cardStyle}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800 }}>
                     {stars(r.rating)}
-                    <span style={{ opacity: 0.7, marginLeft: 8, fontWeight: 600 }}>
+                    <span style={{ opacity: 0.7, marginLeft: 8, fontWeight: 700 }}>
                       {typeof r.rating === "number" ? r.rating.toFixed(0) : "—"}
                     </span>
                   </div>
 
-                  <div style={{ fontSize: 13, opacity: 0.9 }}>
+                  <div style={{ fontSize: 13, opacity: 0.92 }}>
                     {r.author_url ? (
                       <a
                         href={r.author_url}
                         target="_blank"
                         rel="noreferrer"
-                        style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}
+                        style={{
+                          color: "inherit",
+                          textDecoration: "underline",
+                          textUnderlineOffset: 3,
+                        }}
                       >
                         {r.author_name ?? "Anonymous"}
                       </a>
@@ -1197,11 +1208,12 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.5, opacity: 0.92 }}>
+              <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, opacity: 0.95 }}>
                 {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
               </div>
 
-              <div style={{ marginTop: 10, fontSize: 11, opacity: 0.6 }}>
+              {/* keep source metadata quiet */}
+              <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
                 Source: {r.source}
               </div>
             </div>

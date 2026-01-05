@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+
 type AppsScriptResponse =
   | { success: true }
   | { success: false; error?: string }
@@ -24,6 +26,11 @@ const MAX_FORM_ELAPSED_MS = 1000 * 60 * 60; // 1 hour sanity cap
 function cleanString(v: unknown, maxLen = 200) {
   if (typeof v !== "string") return "";
   return v.trim().slice(0, maxLen);
+}
+
+function isValidEmail(email: string) {
+  // MVP-friendly validation (better than includes("@"))
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function parseLocationsCount(v: unknown) {
@@ -51,9 +58,31 @@ function parseFormElapsedMs(v: unknown) {
   return Math.floor(n);
 }
 
+function jsonOk<T extends Record<string, unknown>>(payload: T, status = 200) {
+  return NextResponse.json({ ok: true, ...payload }, { status });
+}
+
+function jsonFail(error: string, status = 400) {
+  return NextResponse.json({ ok: false, error }, { status });
+}
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const webhookUrl = process.env.WAITLIST_WEBHOOK_URL;
+    if (!webhookUrl) {
+      return jsonFail(
+        "Server misconfigured: missing WAITLIST_WEBHOOK_URL.",
+        500
+      );
+    }
+
+    // Parse JSON body safely
+    let body: any = null;
+    try {
+      body = await req.json();
+    } catch {
+      return jsonFail("Invalid JSON body.", 400);
+    }
 
     // ============================
     // 1) BOT PROTECTION (server-side)
@@ -66,26 +95,17 @@ export async function POST(req: Request) {
       "";
 
     if (honeypot) {
-      return NextResponse.json(
-        { error: "Spam detected. Please try again." },
-        { status: 400 }
-      );
+      // Don’t be too descriptive to bots
+      return jsonFail("Spam detected. Please try again.", 400);
     }
 
     const formElapsedMs = parseFormElapsedMs(body?.formElapsedMs);
 
     if (formElapsedMs === null) {
-      return NextResponse.json(
-        { error: "Please refresh and try again." },
-        { status: 400 }
-      );
+      return jsonFail("Please refresh and try again.", 400);
     }
-
     if (formElapsedMs < MIN_FORM_ELAPSED_MS) {
-      return NextResponse.json(
-        { error: "Form submitted too quickly." },
-        { status: 400 }
-      );
+      return jsonFail("Form submitted too quickly.", 400);
     }
 
     // ============================
@@ -108,45 +128,28 @@ export async function POST(req: Request) {
     // 3) REQUIRED VALIDATIONS
     // ============================
     if (!businessName) {
-      return NextResponse.json(
-        { error: "Business name is required." },
-        { status: 400 }
-      );
+      return jsonFail("Business name is required.", 400);
     }
 
-    if (!email || !email.includes("@")) {
-      return NextResponse.json(
-        { error: "A valid work email is required." },
-        { status: 400 }
-      );
+    if (!email || !isValidEmail(email)) {
+      return jsonFail("A valid work email is required.", 400);
     }
 
     if (!businessType || !ALLOWED_BUSINESS_TYPES.has(businessType)) {
-      return NextResponse.json(
-        { error: "Please select a valid business type." },
-        { status: 400 }
-      );
+      return jsonFail("Please select a valid business type.", 400);
     }
 
-    // If Other, require text
     if (businessType === "Other" && !businessTypeOther) {
-      return NextResponse.json(
-        { error: "Please specify your business type (Other)." },
-        { status: 400 }
-      );
+      return jsonFail("Please specify your business type (Other).", 400);
     }
 
     if (locationsCount === null) {
-      return NextResponse.json(
-        { error: "Please enter a valid # of locations (1+)." },
-        { status: 400 }
-      );
+      return jsonFail("Please enter a valid # of locations (1+).", 400);
     }
 
     // ============================
     // 4) NORMALIZE BUSINESS TYPE FOR SHEET
     // ============================
-    // Option A (recommended): store a single readable value
     const normalizedBusinessType =
       businessType === "Other"
         ? `Other: ${businessTypeOther}`
@@ -155,32 +158,24 @@ export async function POST(req: Request) {
     // ============================
     // 5) BUILD RECORD FOR GOOGLE SHEET
     // ============================
+    // Add a deterministic dedupe key (best-effort idempotency)
+    const dedupeKey = `${email}|${businessName}`.toLowerCase();
+
     const record = {
       name: name || "",
       email,
       businessName,
-      businessType: normalizedBusinessType, // ✅ now includes the other value
-      businessTypeOther: businessType === "Other" ? businessTypeOther : "", // ✅ also keep separate (optional)
-      locationsCount, // number
+      businessType: normalizedBusinessType,
+      businessTypeOther: businessType === "Other" ? businessTypeOther : "",
+      locationsCount,
       role: role || "",
       city: city || "",
       website: website || "",
       source: "landing-page",
       timestamp: new Date().toISOString(),
       formElapsedMs,
+      dedupeKey,
     };
-
-    const webhookUrl = process.env.WAITLIST_WEBHOOK_URL;
-
-    if (!webhookUrl) {
-      return NextResponse.json(
-        {
-          error:
-            "Missing WAITLIST_WEBHOOK_URL env var (server not configured).",
-        },
-        { status: 500 }
-      );
-    }
 
     // ============================
     // 6) POST TO APPS SCRIPT
@@ -192,34 +187,31 @@ export async function POST(req: Request) {
       cache: "no-store",
     });
 
-    const text = await upstream.text();
+    const rawText = await upstream.text();
     let data: AppsScriptResponse = {};
     try {
-      data = JSON.parse(text);
+      data = JSON.parse(rawText);
     } catch {
-      data = { raw: text };
+      data = { raw: rawText };
     }
 
     if (!upstream.ok) {
-      return NextResponse.json(
-        { error: "Apps Script HTTP error", details: data },
-        { status: 502 }
-      );
+      // Log internally, return generic message externally
+      console.error("[waitlist] Apps Script HTTP error", {
+        status: upstream.status,
+        body: data,
+      });
+      return jsonFail("Upstream error submitting waitlist. Please try again.", 502);
     }
 
     if ((data as any)?.success !== true) {
-      return NextResponse.json(
-        { error: "Apps Script did not confirm success", details: data },
-        { status: 502 }
-      );
+      console.error("[waitlist] Apps Script did not confirm success", { body: data });
+      return jsonFail("Could not submit waitlist. Please try again.", 502);
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 });
-  } catch (err) {
-    console.error("WAITLIST ERROR:", err);
-    return NextResponse.json(
-      { error: "Something went wrong. Please try again." },
-      { status: 500 }
-    );
+    return jsonOk({}, 200);
+  } catch (err: any) {
+    console.error("[waitlist] WAITLIST ERROR:", err?.message || String(err));
+    return jsonFail("Something went wrong. Please try again.", 500);
   }
 }

@@ -4,28 +4,52 @@ import Stripe from "stripe";
 import { NextResponse } from "next/server";
 import { requireOrgContext } from "@/lib/orgServer";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+/**
+ * Doctrine audit notes (what this replacement fixes):
+ * - Keeps billing UX lightweight and “unlock drafting” oriented (no SaaS-y messaging here)
+ * - Maintains strict org mapping via Stripe metadata (customer, checkout session, subscription)
+ * - Avoids surfacing trial/billing language in app copy (trial can exist silently if you want it)
+ * - Hardens env checks + safer defaults for demo reliability
+ */
+
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID;
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.reviewconcierge.ai";
+
+// If you want a trial operationally, keep it here without marketing it in UI.
+// Set to 0 or undefined to disable trial.
+const TRIAL_DAYS = Number(process.env.STRIPE_TRIAL_DAYS ?? "14");
+
+const stripe = STRIPE_SECRET_KEY
+  ? new Stripe(STRIPE_SECRET_KEY, {
+      // Keeping default API version is fine; set explicitly if your project requires it.
+      // apiVersion: "2024-06-20",
+    })
+  : null;
 
 export async function POST(_req: Request) {
   try {
-    const { organizationId, supabase } = await requireOrgContext();
+    if (!stripe) {
+      return NextResponse.json(
+        { ok: false, error: "Missing STRIPE_SECRET_KEY" },
+        { status: 500 }
+      );
+    }
 
-    const priceId = process.env.STRIPE_PRICE_ID;
-    const siteUrl =
-      process.env.NEXT_PUBLIC_SITE_URL || "https://www.reviewconcierge.ai";
-
-    if (!priceId) {
+    if (!STRIPE_PRICE_ID) {
       return NextResponse.json(
         { ok: false, error: "Missing STRIPE_PRICE_ID" },
         { status: 500 }
       );
     }
 
-    // Optional: get user email (nice-to-have for Stripe customer)
+    const { organizationId, supabase } = await requireOrgContext();
+
+    // Nice-to-have for Stripe customer
     const { data: userData } = await supabase.auth.getUser();
     const email = userData?.user?.email ?? undefined;
 
-    // 1) Reuse existing Stripe customer if present
+    // Reuse existing Stripe customer if present
     const { data: existingSub } = await supabase
       .from("org_subscriptions")
       .select("stripe_customer_id")
@@ -34,7 +58,7 @@ export async function POST(_req: Request) {
 
     let customerId = existingSub?.stripe_customer_id ?? null;
 
-    // 2) Create customer if missing; ensure org metadata exists
+    // Create customer if missing; ensure org metadata exists
     if (!customerId) {
       const customer = await stripe.customers.create({
         email,
@@ -58,33 +82,38 @@ export async function POST(_req: Request) {
       });
     }
 
-    // 3) Create Checkout Session (subscription) + set org metadata everywhere
+    // Create Checkout Session (subscription) + set org metadata everywhere
     const session = await stripe.checkout.sessions.create({
-  mode: "subscription",
-  customer: customerId,
-  line_items: [{ price: priceId, quantity: 1 }],
+      mode: "subscription",
+      customer: customerId,
+      line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
 
-  success_url: `${siteUrl}/dashboard?billing=success`,
-  cancel_url: `${siteUrl}/dashboard?billing=cancel`,
+      success_url: `${SITE_URL}/dashboard?billing=success`,
+      cancel_url: `${SITE_URL}/dashboard?billing=cancel`,
 
-  // ✅ Keep org mapping for webhooks
-  metadata: { organization_id: organizationId },
+      // Keep org mapping for webhooks
+      metadata: { organization_id: organizationId },
 
-  // ✅ ADD TRIAL HERE (this is the fix)
-  subscription_data: {
-    metadata: { organization_id: organizationId },
-    trial_period_days: 14,
+      subscription_data: {
+        metadata: { organization_id: organizationId },
 
-    // Optional but recommended safety:
-    // trial_settings: {
-    //   end_behavior: { missing_payment_method: "cancel" },
-    // },
-  },
+        // Optional operational trial (doctrine-safe as long as UI doesn't market it)
+        ...(Number.isFinite(TRIAL_DAYS) && TRIAL_DAYS > 0
+          ? {
+              trial_period_days: Math.min(Math.max(TRIAL_DAYS, 1), 90),
+              // If you want stricter behavior later, you can enable:
+              // trial_settings: {
+              //   end_behavior: { missing_payment_method: "cancel" },
+              // },
+            }
+          : {}),
+      },
 
-  allow_promotion_codes: true,
-});
+      // Keep checkout friction low; can disable if you don't want codes during Mendoza.
+      allow_promotion_codes: true,
+    });
 
-    return NextResponse.json({ ok: true, url: session.url });
+    return NextResponse.json({ ok: true, url: session.url }, { status: 200 });
   } catch (err: any) {
     console.error("[stripe-checkout] error", err?.message || err);
     return NextResponse.json(

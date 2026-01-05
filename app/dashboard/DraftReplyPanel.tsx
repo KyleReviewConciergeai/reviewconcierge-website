@@ -42,7 +42,14 @@ function useIsNarrow(maxWidthPx = 720) {
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
   const [rating, setRating] = useState<number>(5);
-  const [language, setLanguage] = useState<string>("es");
+
+  /**
+   * Doctrine note:
+   * - The UI language selector should represent the reviewer’s language
+   *   (i.e., the reply will be drafted in that language).
+   * - Owner “mirror translation” is an optional add-on later; not included here.
+   */
+  const [replyLanguage, setReplyLanguage] = useState<string>("es");
 
   // Keep empty by default (faster paste UX)
   const [reviewText, setReviewText] = useState("");
@@ -54,9 +61,39 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
+  // Version count is okay if framed as "another option" (not automation)
   const [version, setVersion] = useState<number>(0);
 
   const isNarrow = useIsNarrow(720);
+
+  // Copy locked to doctrine (avoid SaaS-y / automation language)
+  const COPY = {
+    title: "Draft a reply in your voice",
+    subtitle:
+      "Paste a guest review. We’ll suggest a short reply that sounds like you. You can edit it before you post anywhere.",
+    businessLabel: "Business name",
+    ratingLabel: "Rating",
+    replyLanguageLabel: "Reply language",
+    reviewLabel: "Guest review",
+    reviewHelp: "Paste the review text exactly as the guest wrote it.",
+    reviewCountHint: "10+",
+    draftLabel: "Suggested reply",
+    draftPlaceholder: "A suggested reply will appear here…",
+    draftHelp:
+      "This is a starting point. Edit it freely so it feels like you.",
+    btnDraft: "Draft a reply",
+    btnDraftLoading: "Drafting…",
+    btnAnother: "Draft another option",
+    btnAnotherLoading: "Drafting…",
+    btnCopy: "Copy reply",
+    btnCopied: "Copied",
+    statusDrafting: "Drafting…",
+    statusReady: "Suggested",
+    statusError: "Couldn’t draft",
+    errorDefault: "Couldn’t draft a reply right now. Please try again.",
+    tip:
+      "Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.",
+  };
 
   useEffect(() => {
     const next = (businessName ?? "").trim();
@@ -64,10 +101,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessName]);
 
-  /**
-   * ✅ Optional polish #1: Cleanup timer on unmount
-   * Prevents edge-case setState after unmount if user navigates away quickly.
-   */
+  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (copiedTimer.current) {
@@ -81,7 +115,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return businessNameState.trim().length > 0 && reviewText.trim().length > 10;
   }, [businessNameState, reviewText]);
 
-  async function generateDraft() {
+  async function requestDraft() {
     setStatus("loading");
     setErrorMessage("");
 
@@ -92,7 +126,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         body: JSON.stringify({
           business_name: businessNameState.trim(),
           rating,
-          language,
+          language: replyLanguage,
           review_text: reviewText.trim(),
         }),
       });
@@ -101,12 +135,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (!res.ok || data.ok === false) {
         const msg =
-          typeof data.error === "string" && data.error.trim() ? data.error : "Failed to generate draft.";
+          typeof data.error === "string" && data.error.trim()
+            ? data.error
+            : COPY.errorDefault;
 
-        /**
-         * ✅ Optional polish #2: Clear draft on error
-         * Keeps UI consistent (no stale draft showing if a regenerate fails).
-         */
+        // Clear draft on error so we don't show stale content
         setDraft("");
         setStatus("error");
         setErrorMessage(msg);
@@ -116,7 +149,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       if (typeof data.reply !== "string" || !data.reply.trim()) {
         setDraft("");
         setStatus("error");
-        setErrorMessage("No draft returned from server.");
+        setErrorMessage("No reply was returned.");
         return { ok: false as const };
       }
 
@@ -126,20 +159,21 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     } catch (err: unknown) {
       setDraft("");
       setStatus("error");
-      setErrorMessage(err instanceof Error ? err.message : "Something went wrong.");
+      setErrorMessage(err instanceof Error ? err.message : COPY.errorDefault);
       return { ok: false as const };
     }
   }
 
-  async function onGenerate() {
+  async function onDraft() {
+    // New drafting attempt resets version and clears prior suggestion
     setDraft("");
     setVersion(0);
-    const result = await generateDraft();
+    const result = await requestDraft();
     if (result.ok) setVersion(1);
   }
 
-  async function onRegenerate() {
-    const result = await generateDraft();
+  async function onDraftAnother() {
+    const result = await requestDraft();
     if (result.ok) setVersion((v) => (v > 0 ? v + 1 : 1));
   }
 
@@ -165,18 +199,18 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const hasDraft = Boolean(draft.trim());
   const canCopy = hasDraft && !isLoading;
 
-  // ✅ Only show a pill when it adds value (no more null issues)
+  // Status pill that reinforces "suggestion" + "you’re in control"
   const statusPill = useMemo(() => {
-    if (status === "loading") return { label: "Generating…", tone: "neutral" as const };
-    if (status === "error") return { label: "Error", tone: "error" as const };
-    if (status === "success" && hasDraft) return { label: "Draft ready", tone: "success" as const };
+    if (status === "loading") return { label: COPY.statusDrafting, tone: "neutral" as const };
+    if (status === "error") return { label: COPY.statusError, tone: "error" as const };
+    if (status === "success" && hasDraft) return { label: COPY.statusReady, tone: "success" as const };
     return null;
-  }, [status, hasDraft]);
+  }, [status, hasDraft, COPY.statusDrafting, COPY.statusError, COPY.statusReady]);
 
   const controlsGridStyle: React.CSSProperties = useMemo(
     () => ({
       display: "grid",
-      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 120px",
+      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 160px",
       gap: 10,
       marginTop: 12,
     }),
@@ -197,23 +231,21 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       >
         <div style={{ minWidth: 240 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>Draft Reply</h2>
+            <h2 style={{ margin: 0, fontSize: 18 }}>{COPY.title}</h2>
 
-            <span style={badgeStyle}>READ-ONLY</span>
-
+            {/* REMOVE "READ-ONLY" (doctrine violation: implies locked system ownership) */}
             {version > 0 ? (
-              <span style={versionBadgeStyle} title="Draft version counter">
-                v{version}
+              <span style={versionBadgeStyle} title="Another option counter">
+                Option {version}
               </span>
             ) : null}
           </div>
 
-          <p style={{ marginTop: 8, marginBottom: 0, color: "rgba(226,232,240,0.78)", lineHeight: 1.4 }}>
-            Paste a review → generate a suggested reply (does not post anywhere yet).
+          <p style={{ marginTop: 8, marginBottom: 0, color: "rgba(226,232,240,0.78)", lineHeight: 1.45 }}>
+            {COPY.subtitle}
           </p>
         </div>
 
-        {/* ✅ Only render when statusPill exists */}
         {statusPill ? (
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <span style={statusPillStyle(statusPill.tone)}>{statusPill.label}</span>
@@ -224,17 +256,17 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       {/* Controls */}
       <div style={controlsGridStyle}>
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={labelStyle}>Business name</div>
+          <div style={labelStyle}>{COPY.businessLabel}</div>
           <input
             value={businessNameState}
             onChange={(e) => setBusinessNameState(e.target.value)}
-            placeholder="e.g. Andeluna Winery Lodge"
+            placeholder="e.g. Your business name"
             style={inputStyle}
           />
         </div>
 
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={labelStyle}>Rating</div>
+          <div style={labelStyle}>{COPY.ratingLabel}</div>
           <select value={String(rating)} onChange={(e) => setRating(Number(e.target.value))} style={selectStyle}>
             {[5, 4, 3, 2, 1].map((r) => (
               <option key={r} value={r}>
@@ -245,8 +277,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         </div>
 
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={labelStyle}>Language</div>
-          <select value={language} onChange={(e) => setLanguage(e.target.value)} style={selectStyle}>
+          <div style={labelStyle}>{COPY.replyLanguageLabel}</div>
+          <select value={replyLanguage} onChange={(e) => setReplyLanguage(e.target.value)} style={selectStyle}>
             <option value="en">EN</option>
             <option value="es">ES</option>
             <option value="pt">PT</option>
@@ -260,8 +292,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       {/* Review input */}
       <div style={{ marginTop: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-          <div style={labelStyle}>Review text</div>
-          <div style={{ fontSize: 12, color: "rgba(226,232,240,0.6)" }}>{reviewText.trim().length}/10+</div>
+          <div style={labelStyle}>{COPY.reviewLabel}</div>
+          <div style={{ fontSize: 12, color: "rgba(226,232,240,0.6)" }}>
+            {reviewText.trim().length}/{COPY.reviewCountHint}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.62)", lineHeight: 1.35 }}>
+          {COPY.reviewHelp}
         </div>
 
         <textarea
@@ -269,7 +307,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           onChange={(e) => setReviewText(e.target.value)}
           placeholder="Paste the review text here…"
           rows={5}
-          style={{ ...textareaStyle, marginTop: 6 }}
+          style={{ ...textareaStyle, marginTop: 8 }}
         />
       </div>
 
@@ -277,25 +315,26 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
         {!hasDraft ? (
           <button
-            onClick={onGenerate}
+            onClick={onDraft}
             disabled={!canSubmit || isLoading}
             style={primaryButtonStyle(!canSubmit || isLoading)}
+            title="Create a suggested reply you can edit"
           >
-            {isLoading ? "Generating…" : "Generate draft"}
+            {isLoading ? COPY.btnDraftLoading : COPY.btnDraft}
           </button>
         ) : (
           <>
             <button
-              onClick={onRegenerate}
+              onClick={onDraftAnother}
               disabled={!canSubmit || isLoading}
               style={primaryButtonStyle(!canSubmit || isLoading)}
-              title="Generate another version"
+              title="Create another suggested option"
             >
-              {isLoading ? "Regenerating…" : "Regenerate"}
+              {isLoading ? COPY.btnAnotherLoading : COPY.btnAnother}
             </button>
 
             <button onClick={onCopy} disabled={!canCopy} style={secondaryButtonStyle(!canCopy)}>
-              {copied ? "Copied!" : "Copy"}
+              {copied ? COPY.btnCopied : COPY.btnCopy}
             </button>
           </>
         )}
@@ -303,30 +342,40 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         {status === "error" ? <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span> : null}
 
         {isLoading && hasDraft ? (
-          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>Generating a fresh version…</span>
+          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>
+            Drafting another option…
+          </span>
         ) : null}
       </div>
 
       {/* Draft output */}
       <div style={{ marginTop: 14, position: "relative" }}>
-        <div style={labelStyle}>Draft reply</div>
+        <div style={labelStyle}>{COPY.draftLabel}</div>
 
+        {/* Doctrine: draft should feel editable / owned by human.
+            We keep the default textarea editable (NOT readOnly). */}
         <textarea
           value={draft}
-          readOnly
-          placeholder="Draft reply will appear here…"
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={COPY.draftPlaceholder}
           rows={7}
           style={{
             ...textareaStyle,
             marginTop: 6,
-            opacity: hasDraft ? 1 : 0.85,
+            opacity: hasDraft ? 1 : 0.9,
             filter: isLoading && hasDraft ? "blur(0.2px)" : undefined,
           }}
         />
 
+        {hasDraft ? (
+          <div style={{ marginTop: 8, fontSize: 12, color: "rgba(226,232,240,0.62)", lineHeight: 1.35 }}>
+            {COPY.draftHelp}
+          </div>
+        ) : null}
+
         {isLoading && hasDraft ? (
           <div
-            aria-label="Regenerating draft overlay"
+            aria-label="Drafting overlay"
             style={{
               position: "absolute",
               inset: 0,
@@ -349,15 +398,15 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
                 color: "#e2e8f0",
               }}
             >
-              Regenerating…
+              Drafting…
             </div>
           </div>
         ) : null}
       </div>
 
       {/* Footer note */}
-      <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.6)" }}>
-        Tip: after generating, click <strong>Copy</strong> and paste into Google Reviews.
+      <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.6)", lineHeight: 1.45 }}>
+        {COPY.tip}
       </div>
     </section>
   );
@@ -372,22 +421,12 @@ const panelStyle: React.CSSProperties = {
   background: "#0f172a",
   color: "#e2e8f0",
   width: "100%",
-  marginBottom: 16, // ✅ adds space below Draft Reply card (above filters)
+  marginBottom: 16,
 };
 
 const labelStyle: React.CSSProperties = {
   fontSize: 12,
   color: "rgba(226,232,240,0.72)",
-};
-
-const badgeStyle: React.CSSProperties = {
-  fontSize: 11,
-  letterSpacing: "0.06em",
-  padding: "4px 8px",
-  borderRadius: 999,
-  border: "1px solid rgba(148,163,184,0.28)",
-  background: "rgba(15,23,42,0.75)",
-  color: "rgba(226,232,240,0.85)",
 };
 
 const versionBadgeStyle: React.CSSProperties = {
@@ -431,8 +470,8 @@ function primaryButtonStyle(disabled: boolean): React.CSSProperties {
     background: disabled ? "rgba(15,23,42,0.75)" : "rgba(99,102,241,0.50)",
     cursor: disabled ? "not-allowed" : "pointer",
     color: "#e2e8f0",
-    fontWeight: 700,
-    minWidth: 160,
+    fontWeight: 800,
+    minWidth: 180,
     opacity: disabled ? 0.6 : 1,
   };
 }
@@ -445,8 +484,8 @@ function secondaryButtonStyle(disabled: boolean): React.CSSProperties {
     background: "rgba(15,23,42,0.85)",
     cursor: disabled ? "not-allowed" : "pointer",
     color: "#e2e8f0",
-    fontWeight: 700,
-    minWidth: 110,
+    fontWeight: 800,
+    minWidth: 130,
     opacity: disabled ? 0.6 : 1,
   };
 }

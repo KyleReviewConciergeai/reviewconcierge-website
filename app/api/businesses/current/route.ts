@@ -17,7 +17,6 @@ export async function GET() {
           "google_place_name",
           "google_rating",
           "google_user_ratings_total",
-          "organization_id",
           "created_at",
         ].join(", ")
       )
@@ -27,11 +26,35 @@ export async function GET() {
       .maybeSingle();
 
     if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+      console.error("[businesses/current] query error", error);
+      return NextResponse.json(
+        { ok: false, error: "Unable to load business information." },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({ ok: true, business: data ?? null });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Failed" }, { status: 500 });
+    // IMPORTANT:
+    // - business is either a single object or null
+    // - no implied onboarding or connection logic here
+    return NextResponse.json(
+      {
+        ok: true,
+        business: data ?? null,
+      },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      }
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unexpected server error";
+    console.error("[businesses/current] error", err);
+
+    return NextResponse.json(
+      { ok: false, error: message },
+      { status: 500 }
+    );
   }
 }

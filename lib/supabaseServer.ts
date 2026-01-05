@@ -1,5 +1,5 @@
 // lib/supabaseServer.ts
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type SupabaseServerEnv = {
   url: string;
@@ -7,37 +7,33 @@ type SupabaseServerEnv = {
 };
 
 function readSupabaseServerEnv(): SupabaseServerEnv {
-  const url =
-    process.env.SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    "";
-
-  const serviceRoleKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SECRET_KEY ||
-    "";
+  /**
+   * Canonical env vars:
+   * - NEXT_PUBLIC_SUPABASE_URL (safe to expose; still used server-side)
+   * - SUPABASE_SERVICE_ROLE_KEY (server-only, NEVER ship to client)
+   */
+  const url = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim();
+  const serviceRoleKey = (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
 
   const missing: string[] = [];
-  if (!url) missing.push("SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)");
-  if (!serviceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SECRET_KEY)");
+  if (!url) missing.push("NEXT_PUBLIC_SUPABASE_URL");
+  if (!serviceRoleKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
 
   if (missing.length) {
     // Helpful diagnostics without leaking secrets
-    const present = {
-      SUPABASE_URL: Boolean(process.env.SUPABASE_URL),
+    const presentFlags = {
       NEXT_PUBLIC_SUPABASE_URL: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
       SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-      SUPABASE_SECRET_KEY: Boolean(process.env.SUPABASE_SECRET_KEY),
       VERCEL_ENV: process.env.VERCEL_ENV || null,
       NODE_ENV: process.env.NODE_ENV || null,
     };
 
     throw new Error(
       [
-        "Error: Missing Supabase server environment variables.",
+        "Missing Supabase server environment variables.",
         `Missing: ${missing.join(", ")}`,
-        `Present flags: ${JSON.stringify(present)}`,
-        "Fix: Add the missing env vars in Vercel (Project → Settings → Environment Variables) and redeploy.",
+        `Present flags: ${JSON.stringify(presentFlags)}`,
+        "Fix: Add env vars in Vercel (Project → Settings → Environment Variables) and redeploy.",
       ].join("\n")
     );
   }
@@ -45,11 +41,32 @@ function readSupabaseServerEnv(): SupabaseServerEnv {
   return { url, serviceRoleKey };
 }
 
-export function supabaseServer() {
+/**
+ * Guardrail: Service role must never be used in a browser bundle.
+ * If this file is accidentally imported client-side, hard fail.
+ */
+function assertServerOnly() {
+  if (typeof window !== "undefined") {
+    throw new Error("supabaseServer() was imported client-side. This must be server-only.");
+  }
+}
+
+let _client: SupabaseClient | null = null;
+
+/**
+ * Supabase admin client (service role)
+ * Use ONLY in server routes / server actions / webhooks.
+ */
+export function supabaseServer(): SupabaseClient {
+  assertServerOnly();
+
+  if (_client) return _client;
+
   const { url, serviceRoleKey } = readSupabaseServerEnv();
 
-  // Service role must NEVER be used client-side. This file should only be imported in server contexts.
-  return createClient(url, serviceRoleKey, {
+  _client = createClient(url, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  return _client;
 }

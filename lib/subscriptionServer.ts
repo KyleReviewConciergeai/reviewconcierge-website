@@ -1,5 +1,13 @@
 import { requireOrgContext } from "@/lib/orgServer";
 
+/**
+ * Doctrine-aligned subscription helper
+ * - Treats subscription checks as *capability* checks (canDraft), not “upgrade” framing
+ * - Avoids leaking unnecessary PII by default (email is not required for core gating)
+ * - Fails CLOSED for gated endpoints if status is unknown (DB error / missing record)
+ * - Considers trialing as active (unlock drafting) while keeping status available
+ */
+
 export type SubscriptionStatus =
   | "active"
   | "trialing"
@@ -10,55 +18,108 @@ export type SubscriptionStatus =
   | "unpaid"
   | null;
 
-export async function getSubscriptionStatus() {
-  const { supabase, organizationId } = await requireOrgContext();
+type SubscriptionRow = {
+  status: SubscriptionStatus;
+  stripe_customer_id?: string | null;
+};
 
-  const { data: userData } = await supabase.auth.getUser();
-  const userEmail = userData?.user?.email ?? null;
+export type SubscriptionStatusResult =
+  | {
+      ok: true;
+      organizationId: string;
+      status: SubscriptionStatus;
+      isActive: boolean; // active OR trialing
+      canDraft: boolean; // alias for doctrine-friendly capability checks
+    }
+  | {
+      ok: false;
+      organizationId: string;
+      status: SubscriptionStatus; // null when unknown
+      isActive: boolean | null; // null when unknown
+      canDraft: boolean | null; // null when unknown
+      error: string;
+    };
+
+function computeIsActive(status: SubscriptionStatus) {
+  return status === "active" || status === "trialing";
+}
+
+/**
+ * Lightweight read: checks whether drafting is unlocked for the org.
+ * NOTE: do not use this to “market” billing states; it’s just capability.
+ */
+export async function getSubscriptionStatus(): Promise<SubscriptionStatusResult> {
+  const { supabase, organizationId } = await requireOrgContext();
 
   const { data, error } = await supabase
     .from("org_subscriptions")
     .select("status")
     .eq("organization_id", organizationId)
-    .maybeSingle();
+    .maybeSingle<SubscriptionRow>();
 
   if (error) {
     // Treat as unknown, not inactive
     console.error("[subscription] lookup error", error);
     return {
-      ok: false as const,
+      ok: false,
       organizationId,
-      userEmail,
-      status: null as SubscriptionStatus,
-      isActive: null as boolean | null,
+      status: null,
+      isActive: null,
+      canDraft: null,
       error: error.message,
     };
   }
 
   const status = (data?.status ?? null) as SubscriptionStatus;
-  const isActive = status === "active" || status === "trialing";
+  const isActive = computeIsActive(status);
 
   return {
-    ok: true as const,
+    ok: true,
     organizationId,
-    userEmail,
     status,
     isActive,
+    canDraft: isActive,
   };
 }
 
+/**
+ * Gated endpoints should use this.
+ * - If status is unknown (DB error), fail CLOSED.
+ * - If inactive, return ok:false with status details (no “upgrade” language here).
+ */
 export async function requireActiveSubscription() {
   const s = await getSubscriptionStatus();
 
-  // Remove `ok` from the spread so we don't define it twice
-  const { ok: _ignoredOk, ...rest } = s;
+  if (!s.ok) {
+    return {
+      ok: false as const,
+      organizationId: s.organizationId,
+      status: s.status,
+      isActive: s.isActive,
+      canDraft: s.canDraft,
+      error: s.error,
+    };
+  }
 
-  // If we can’t determine status because DB errored, fail CLOSED for gated endpoints
-  if (!s.ok || s.isActive !== true) {
-    return { ok: false as const, ...rest };
+  if (!s.isActive) {
+    return {
+      ok: false as const,
+      organizationId: s.organizationId,
+      status: s.status,
+      isActive: s.isActive,
+      canDraft: s.canDraft,
+    };
   }
 
   // If you want to return supabase for downstream use, grab it again
   const { supabase } = await requireOrgContext();
-  return { ok: true as const, ...rest, supabase };
+
+  return {
+    ok: true as const,
+    organizationId: s.organizationId,
+    status: s.status,
+    isActive: s.isActive,
+    canDraft: s.canDraft,
+    supabase,
+  };
 }

@@ -1,49 +1,85 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+
+type Mode = "request" | "update";
+
+function getBaseUrl() {
+  // Prefer explicit site URL if you set it in Vercel
+  const envUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (envUrl) return envUrl.replace(/\/$/, "");
+  if (typeof window !== "undefined") return window.location.origin;
+  return "https://www.reviewconcierge.ai";
+}
 
 export default function ResetPasswordPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [mode, setMode] = useState<"request" | "update">("request");
+  const [mode, setMode] = useState<Mode>("request");
   const [email, setEmail] = useState("");
 
   const [newPassword, setNewPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
 
+  const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string>("");
   const [error, setError] = useState<string>("");
 
+  const baseUrl = useMemo(() => getBaseUrl(), []);
+
+  // Detect recovery/update mode more reliably
   useEffect(() => {
-    // If the user arrived here from a Supabase recovery link,
-    // Supabase will set a session in the browser and we can update password.
     const supabase = supabaseBrowser();
 
+    const type = (searchParams.get("type") || "").toLowerCase();
+    const hasRecoverySignals =
+      type === "recovery" ||
+      !!searchParams.get("code") || // some Supabase flows
+      !!searchParams.get("token") || // older flows
+      !!searchParams.get("access_token"); // hash-based, but sometimes appears
+
+    // 1) If URL suggests recovery, attempt session check -> update mode
+    if (hasRecoverySignals) {
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) setMode("update");
+      });
+    }
+
+    // 2) Always check session on load (handles cases without query params)
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) setMode("update");
     });
 
-    // Also listen for auth state changes (some flows set session after load)
+    // 3) Also listen for auth state changes (some flows set session after load)
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) setMode("update");
     });
 
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      sub.subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function onRequestReset(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
+
     setError("");
     setMsg("");
     setLoading(true);
 
     try {
       const supabase = supabaseBrowser();
+      const redirectTo = `${baseUrl}/reset-password`;
+
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo,
       });
+
       if (error) throw error;
 
       setMsg("Password reset email sent. Please check your inbox.");
@@ -56,17 +92,39 @@ export default function ResetPasswordPage() {
 
   async function onUpdatePassword(e: React.FormEvent) {
     e.preventDefault();
+    if (loading) return;
+
     setError("");
     setMsg("");
+
+    const pw = newPassword.trim();
+    const pw2 = confirmPassword.trim();
+
+    if (pw.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (pw !== pw2) {
+      setError("Passwords do not match.");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const supabase = supabaseBrowser();
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+      const { error } = await supabase.auth.updateUser({ password: pw });
       if (error) throw error;
 
-      setMsg("Password updated. Redirecting to dashboard…");
-      setTimeout(() => router.push("/dashboard"), 800);
+      // Recommended: end recovery session and go through normal auth flow
+      await supabase.auth.signOut();
+
+      setMsg("Password updated. Redirecting…");
+      setTimeout(() => {
+        router.push("/login?next=/dashboard");
+        router.refresh();
+      }, 700);
     } catch (err: any) {
       setError(err?.message || "Could not update password.");
     } finally {
@@ -93,8 +151,11 @@ export default function ResetPasswordPage() {
               placeholder="Email"
               type="email"
               required
+              autoComplete="email"
+              disabled={loading}
               style={inputStyle}
             />
+
             <button disabled={loading} style={buttonStyle}>
               {loading ? "Sending…" : "Send reset link"}
             </button>
@@ -117,9 +178,22 @@ export default function ResetPasswordPage() {
             <input
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="New password"
+              placeholder="New password (min 8 chars)"
               type="password"
+              autoComplete="new-password"
               required
+              disabled={loading}
+              style={inputStyle}
+            />
+
+            <input
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Confirm new password"
+              type="password"
+              autoComplete="new-password"
+              required
+              disabled={loading}
               style={inputStyle}
             />
 
