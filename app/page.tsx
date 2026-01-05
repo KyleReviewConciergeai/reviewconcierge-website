@@ -140,7 +140,8 @@ export default function Home() {
         {/* Hero */}
         <section className="hero">
           <div className="hero-text">
-            <div className="badge">Mendoza-ready demo • Google reviews + AI reply drafts</div>
+            {/* ✅ Removed Mendoza-specific positioning */}
+            <div className="badge">Google reviews • reply drafts • clean workflow</div>
 
             <h1>
               Respond to Google reviews
@@ -149,8 +150,9 @@ export default function Home() {
             </h1>
 
             <p className="hero-subtitle">
-              Review Concierge helps hospitality operators generate on-brand reply drafts and keep a clean
-              review workflow — so your reputation stays strong while you focus on guests.
+              Review Concierge helps hospitality operators generate on-brand reply
+              drafts and keep a clean review workflow — so your reputation stays
+              strong while you focus on guests.
             </p>
 
             <div className="hero-ctas">
@@ -169,13 +171,15 @@ export default function Home() {
               <div className="micro-item">
                 <div className="micro-title">Today</div>
                 <div className="micro-text">
-                  Connect a Google Place ID • sync a recent sample of reviews • generate reply drafts you can copy.
+                  Connect a Google Place ID • sync a recent sample of reviews •
+                  generate reply drafts you can copy.
                 </div>
               </div>
               <div className="micro-item">
                 <div className="micro-title">Next</div>
                 <div className="micro-text">
-                  Full Google Business Profile sync + posting replies directly (Phase 2).
+                  Full Google Business Profile sync + posting replies directly
+                  (Phase 2).
                 </div>
               </div>
             </div>
@@ -184,9 +188,7 @@ export default function Home() {
           {/* Right-side card */}
           <div className="hero-card">
             <h2>What you can do right now</h2>
-            <p>
-              A lightweight review workflow built for demos and early customers.
-            </p>
+            <p>A lightweight workflow built for early customers.</p>
             <ul>
               <li>Connect Google Place ID in minutes</li>
               <li>Sync a recent review sample (totals verified)</li>
@@ -199,18 +201,23 @@ export default function Home() {
             <div className="card-foot">
               <div className="card-foot-title">Coming soon</div>
               <div className="card-foot-text">
-                Full history sync, multi-location management, and direct posting via Google Business Profile.
+                Full history sync, multi-location management, and direct posting
+                via Google Business Profile.
               </div>
             </div>
           </div>
         </section>
+
+        {/* ✅ Small separation so waitlist is clearly secondary */}
+        <div className="section-divider" />
 
         {/* Waitlist (kept as secondary CTA) */}
         <section id="waitlist" className="waitlist-section">
           <div className="waitlist-head">
             <h2>Join the beta waitlist</h2>
             <p className="section-intro" style={{ marginBottom: 0 }}>
-              Not ready to create an account yet? Join the waitlist and we’ll reach out when slots open.
+              Not ready to create an account yet? Join the waitlist and we’ll
+              reach out when slots open.
             </p>
           </div>
 
@@ -263,6 +270,7 @@ export default function Home() {
                   <option value="Cafe">Cafe</option>
                   <option value="Nightclub">Nightclub</option>
                   <option value="Tour Operator">Tour Operator</option>
+                  <option value="Hotel">Hotel</option>
                   <option value="Other">Other</option>
                 </select>
 
@@ -373,13 +381,15 @@ export default function Home() {
             <div className="card">
               <h3>2. Connect Google</h3>
               <p>
-                Add your Google Place ID and confirm your business. Subscription enables Google sync.
+                Add your Google Place ID and confirm your business. Subscription
+                enables Google sync.
               </p>
             </div>
             <div className="card">
               <h3>3. Draft responses</h3>
               <p>
-                Generate replies you can copy/paste. Full direct posting comes in Phase 2.
+                Generate replies you can copy/paste. Full direct posting comes in
+                Phase 2.
               </p>
             </div>
           </div>
@@ -390,15 +400,24 @@ export default function Home() {
           <div className="grid-3">
             <div className="card">
               <h3>Fast reply drafts</h3>
-              <p>Professional drafts in seconds — tuned for hospitality, not generic templates.</p>
+              <p>
+                Professional drafts in seconds — tuned for hospitality, not
+                generic templates.
+              </p>
             </div>
             <div className="card">
               <h3>Clean review workflow</h3>
-              <p>Keep everything in one dashboard. Reload, filter, and work through reviews quickly.</p>
+              <p>
+                Keep everything in one dashboard. Reload, filter, and work through
+                reviews quickly.
+              </p>
             </div>
             <div className="card">
               <h3>Phase 2 roadmap</h3>
-              <p>Full history sync + direct posting via Google Business Profile is next on the roadmap.</p>
+              <p>
+                Full history sync + direct posting via Google Business Profile is
+                next on the roadmap.
+              </p>
             </div>
           </div>
         </section>
@@ -406,7 +425,8 @@ export default function Home() {
         <section className="section" id="pricing">
           <h2>Early-access pricing</h2>
           <p className="section-intro">
-            Simple subscription to enable Google sync. Waitlist remains available if you’re not ready yet.
+            Simple subscription to enable Google sync. Waitlist remains available
+            if you’re not ready yet.
           </p>
 
           <div className="pricing-card">
@@ -431,13 +451,25 @@ export default function Home() {
             </div>
 
             <p className="pricing-note">
-              Demo note: today uses Google Places “recent sample”. Full history + direct posting comes in Phase 2.
+              Demo note: today uses Google Places “recent sample”. Full history +
+              direct posting comes in Phase 2.
             </p>
           </div>
         </section>
 
         <footer className="footer">
           <p>© {new Date().getFullYear()} Review Concierge.ai</p>
+
+          {/* ✅ Legal / trust links */}
+          <div className="footer-links">
+            <a href="/privacy">Privacy</a>
+            <a href="/terms">Terms</a>
+            <a href="/refunds">Refunds</a>
+            <a href="/cookies">Cookies</a>
+            <a href="/security">Security</a>
+            <a href="/contact">Contact</a>
+          </div>
+
           <div className="footer-links">
             <a href="/login">Log in</a>
             <a href="/signup">Get started</a>
@@ -447,6 +479,10 @@ export default function Home() {
       </main>
 
       <style jsx global>{`
+        :global(html) {
+          scroll-behavior: smooth;
+        }
+
         :global(body) {
           margin: 0;
           font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro",
@@ -546,7 +582,7 @@ export default function Home() {
           grid-template-columns: minmax(0, 1.9fr) minmax(360px, 1.1fr);
           gap: 48px;
           align-items: start;
-          margin-bottom: 48px;
+          margin-bottom: 32px;
         }
 
         .hero-text {
@@ -713,6 +749,12 @@ export default function Home() {
           cursor: not-allowed;
         }
 
+        .section-divider {
+          height: 1px;
+          background: rgba(148, 163, 184, 0.16);
+          margin: 18px 0 40px;
+        }
+
         .waitlist-section {
           margin-bottom: 56px;
         }
@@ -873,7 +915,7 @@ export default function Home() {
           margin-top: 24px;
           display: flex;
           flex-wrap: wrap;
-          gap: 8px;
+          gap: 10px;
           justify-content: space-between;
           font-size: 12px;
           color: #9ca3af;

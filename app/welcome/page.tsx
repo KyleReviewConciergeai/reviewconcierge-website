@@ -12,8 +12,8 @@ export default function WelcomePage() {
           </h1>
 
           <p className="text-base text-gray-700">
-            You’re officially in. Let’s pull your Google reviews and draft your first
-            AI-written reply in under <span className="font-medium">2 minutes</span>.
+            Your account is ready. Let’s connect Google and draft your first on-brand
+            reply in under <span className="font-medium">2 minutes</span>.
           </p>
 
           {/* Primary CTA */}
@@ -41,7 +41,7 @@ export default function WelcomePage() {
 
               <p className="text-sm text-gray-600">
                 Demo note: this pulls a recent sample via Google Places today. Full review
-                history sync comes in Phase 2 via Google Business Profile.
+                history sync + direct posting comes in Phase 2 via Google Business Profile.
               </p>
             </div>
           </div>
@@ -56,32 +56,37 @@ export default function WelcomePage() {
               <li>
                 <div className="text-gray-900 font-medium">1) 🔗 Connect Google</div>
                 <div className="text-sm text-gray-600">
-                  We’ll pull in your recent reviews instantly.
+                  Pull in a recent sample of your Google reviews instantly.
                 </div>
               </li>
 
               <li>
-                <div className="text-gray-900 font-medium">2) ✨ Review AI replies</div>
+                <div className="text-gray-900 font-medium">
+                  2) ✨ Google reviews, reply faster + stay on-brand
+                </div>
                 <div className="text-sm text-gray-600">
-                  Drafts match your brand voice and tone.
+                  Generate reply drafts that match your voice and tone.
                 </div>
               </li>
 
               <li>
-                <div className="text-gray-900 font-medium">3) 📋 Copy &amp; paste into Google</div>
+                <div className="text-gray-900 font-medium">
+                  3) 📋 Copy &amp; paste into Google
+                </div>
                 <div className="text-sm text-gray-600">
-                  (Auto-posting can come later.)
+                  (Direct posting can come later.)
                 </div>
               </li>
             </ol>
           </div>
 
-          {/* Trial reassurance */}
+          {/* Honest reassurance (no card yet) */}
           <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
             <p className="text-sm text-gray-700">
-              ⏳ You’re on a{" "}
-              <span className="font-medium text-emerald-700">14-day free trial</span>. We’ll
-              email you before billing starts. Cancel anytime.
+              🧭 <span className="font-medium text-gray-900">No billing yet.</span> You can
+              explore Review Concierge and generate reply drafts without entering a credit
+              card. When you’re ready to enable Google sync, you’ll be prompted to start a
+              subscription.
             </p>
           </div>
 
@@ -89,10 +94,32 @@ export default function WelcomePage() {
           <div className="text-sm text-gray-700">
             <p className="font-medium text-gray-900">Founder note</p>
             <p className="text-gray-600">
-              I’m personally onboarding our first group of founders. If you want help,
-              reply to the welcome email.
+              I’m personally onboarding our first customers. If you want help, reply to the
+              welcome email.
               <br />— Kyle
             </p>
+          </div>
+
+          {/* Footer links */}
+          <div className="pt-6 border-t border-gray-200 text-xs text-gray-500 flex flex-wrap gap-x-4 gap-y-2">
+            <Link className="hover:underline" href="/privacy">
+              Privacy Policy
+            </Link>
+            <Link className="hover:underline" href="/terms">
+              Terms of Service
+            </Link>
+            <Link className="hover:underline" href="/refunds">
+              Refund / Cancellation
+            </Link>
+            <Link className="hover:underline" href="/cookies">
+              Cookie Policy
+            </Link>
+            <Link className="hover:underline" href="/security">
+              Security
+            </Link>
+            <Link className="hover:underline" href="/contact">
+              Contact
+            </Link>
           </div>
         </div>
       </div>
