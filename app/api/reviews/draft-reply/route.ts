@@ -8,10 +8,10 @@ import { requireOrgContext } from "@/lib/orgServer";
  * Doctrine-aligned draft API (Owner Voice First)
  * - Suggests a reply written in the owner's voice (human stays in control)
  * - Strict precedence:
- *   1) Owner voice inputs
+ *   1) Owner voice inputs (org settings + optional profile inputs)
  *   2) Review text itself
  *   3) Hospitality context (minimal, only to avoid wrong assumptions)
- *   4) Language translation layer
+ *   4) Language translation layer (later step)
  *   5) Platform norms
  */
 
@@ -62,11 +62,17 @@ function removeQuotations(text: string) {
   return text.replace(/["“”‘’]/g, "");
 }
 
+/**
+ * Drafting language should be the OWNER language (MVP step 3a).
+ * (Reviewer language translation is Step 3b / Step 4 via translate endpoint.)
+ */
 function languageInstruction(languageTag: string) {
   const tag = (languageTag || "en").toLowerCase();
 
-  // Keep simple. If you want richer mapping later, expand this.
+  // Keep simple. Expand later if you want richer mapping.
   switch (tag) {
+    case "en":
+      return "Write in English (natural, human, not corporate).";
     case "es":
       return "Write in Spanish (natural Spanish, not a literal translation).";
     case "pt":
@@ -79,7 +85,7 @@ function languageInstruction(languageTag: string) {
     case "de":
       return "Write in German (natural German, not a literal translation).";
     default:
-      return `Write in the reviewer's language (${languageTag}).`;
+      return `Write in the owner's preferred language (${languageTag}).`;
   }
 }
 
@@ -94,10 +100,9 @@ type VoiceProfile = {
   allow_exclamation?: boolean | null;
 };
 
-const DEFAULT_VOICE: Required<Pick<
-  VoiceProfile,
-  "reply_as" | "tone" | "brevity" | "formality" | "signoff_style"
->> & {
+const DEFAULT_VOICE: Required<
+  Pick<VoiceProfile, "reply_as" | "tone" | "brevity" | "formality" | "signoff_style">
+> & {
   preferred_name: string | null;
   things_to_avoid: string[];
   allow_exclamation: boolean;
@@ -122,7 +127,44 @@ const DEFAULT_VOICE: Required<Pick<
   allow_exclamation: false,
 };
 
-// Optional: load from Supabase if the table exists.
+/**
+ * NEW: Org settings (MVP Step 3)
+ * Stored on organizations:
+ * - owner_language
+ * - reply_tone
+ * - reply_signature
+ */
+type OrgReplySettings = {
+  owner_language: string; // e.g. "en"
+  reply_tone: "warm" | "professional" | "playful" | "direct" | string;
+  reply_signature: string | null; // e.g. "Kyle"
+};
+
+async function loadOrgReplySettings(): Promise<OrgReplySettings> {
+  try {
+    const { supabase, organizationId } = await requireOrgContext();
+
+    const { data, error } = await supabase
+      .from("organizations")
+      .select("owner_language, reply_tone, reply_signature")
+      .eq("id", organizationId)
+      .maybeSingle();
+
+    if (error || !data) {
+      return { owner_language: "en", reply_tone: "warm", reply_signature: null };
+    }
+
+    return {
+      owner_language: cleanLanguage(data.owner_language),
+      reply_tone: cleanString(data.reply_tone, 40) || "warm",
+      reply_signature: cleanString(data.reply_signature, 80) || null,
+    };
+  } catch {
+    return { owner_language: "en", reply_tone: "warm", reply_signature: null };
+  }
+}
+
+// Optional legacy: load from Supabase if the table exists.
 // If it doesn't exist yet, we silently fall back to defaults (MVP-friendly).
 async function loadVoiceProfile(): Promise<VoiceProfile> {
   try {
@@ -196,14 +238,36 @@ function ratingGuidance(rating: number) {
   ].join("\n");
 }
 
+/**
+ * Map org "reply_tone" to the prompt voice tone lines.
+ * We keep the VoiceProfile types but allow "professional" in org settings.
+ */
+function normalizeToneFromOrg(tone: string): VoiceProfile["tone"] {
+  const t = (tone || "").toLowerCase().trim();
+
+  if (t === "playful") return "playful";
+  if (t === "direct") return "direct";
+  if (t === "neutral") return "neutral";
+
+  // Settings UI uses "professional" — map it to "neutral" for the prompt
+  // (professional is handled via formality below).
+  if (t === "professional") return "neutral";
+
+  // Default
+  return "warm";
+}
+
 function buildPrompt(params: {
   business_name: string;
   rating: number;
-  language: string;
+  owner_language: string;
   review_text: string;
   voice: ReturnType<typeof normalizeVoice>;
+  reply_signature: string | null;
+  org_reply_tone_raw: string;
 }) {
-  const { business_name, rating, language, review_text, voice } = params;
+  const { business_name, rating, owner_language, review_text, voice, reply_signature, org_reply_tone_raw } =
+    params;
 
   const who =
     voice.reply_as === "owner"
@@ -212,20 +276,26 @@ function buildPrompt(params: {
         ? "Write as the manager using “I”."
         : "Write as the business using “we”.";
 
+  // Tone: combine org tone + voice profile interpretation
   const toneLine =
     voice.tone === "warm"
       ? "Tone: warm, real, and calm."
       : voice.tone === "neutral"
-        ? "Tone: neutral, steady, and human."
+        ? "Tone: steady, human, and not overly emotional."
         : voice.tone === "direct"
           ? "Tone: direct, respectful, and concise."
           : "Tone: lightly playful but still respectful.";
+
+  // Professional vs casual: if org tone is "professional", enforce professional styling
+  const orgTone = (org_reply_tone_raw || "").toLowerCase().trim();
+  const effectiveFormality =
+    orgTone === "professional" ? "professional" : voice.formality;
 
   const brevityLine =
     voice.brevity === "short" ? "Length: keep it SHORT." : "Length: medium-short, still concise.";
 
   const formalityLine =
-    voice.formality === "casual"
+    effectiveFormality === "casual"
       ? "Style: casual human phrasing (not overly polite)."
       : "Style: professional but not stiff.";
 
@@ -238,12 +308,9 @@ function buildPrompt(params: {
       ? `Avoid these phrases/words (do not use them): ${voice.things_to_avoid.join(", ")}`
       : "";
 
-  const signoff =
-    voice.signoff_style === "first_name" && voice.preferred_name
-      ? `Signoff: end with “— ${voice.preferred_name}”.`
-      : voice.signoff_style === "team_name" && voice.preferred_name
-        ? `Signoff: end with “— ${voice.preferred_name}”.`
-        : "Signoff: none.";
+  const signatureLine = reply_signature
+    ? `Signature: end with “— ${reply_signature}”.`
+    : "Signature: none.";
 
   // Strict hierarchy sections
   return `
@@ -261,7 +328,7 @@ OWNER VOICE INPUTS (highest priority):
 - Do not quote the review.
 - 2–3 sentences max (use 3 only if needed for negative reviews).
 - ${avoidList}
-- ${signoff}
+- ${signatureLine}
 
 REVIEW TEXT (use ONLY what they wrote; do not invent details):
 Business: ${business_name}
@@ -275,8 +342,9 @@ ${review_text}
 HOSPITALITY CONTEXT (minimal):
 - Only use general hospitality language. Do not assume specifics not in the review.
 
-LANGUAGE LAYER:
-- ${languageInstruction(language)}
+LANGUAGE LAYER (MVP Step 3a):
+- ${languageInstruction(owner_language)}
+- Draft in the OWNER language (not the reviewer language).
 
 PLATFORM NORMS:
 - This is a public Google-style reply: short, calm, specific when possible.
@@ -308,7 +376,7 @@ export async function POST(req: Request) {
 
     const review_text = cleanString(body?.review_text, 5000);
     const business_name = cleanString(body?.business_name, 200);
-    const language = cleanLanguage(body?.language);
+    const reviewer_language = cleanLanguage(body?.language); // keep for later (translation step)
     const rating = parseRating(body?.rating);
 
     if (!review_text) {
@@ -329,14 +397,38 @@ export async function POST(req: Request) {
       );
     }
 
+    // ✅ MVP Step 3a: pull org settings (language, tone, signature)
+    const orgSettings = await loadOrgReplySettings();
+    const owner_language = orgSettings.owner_language || "en";
+    const org_reply_tone_raw = orgSettings.reply_tone || "warm";
+    const reply_signature = orgSettings.reply_signature ?? null;
+
     // Voice profile precedence:
     // 1) body.voice (if provided by UI later)
     // 2) org voice profile from Supabase (if table exists)
     // 3) defaults
+    //
+    // BUT: org settings tone should apply by default unless UI overrides.
     const orgVoice = await loadVoiceProfile();
-    const voice = normalizeVoice({ ...orgVoice, ...(body?.voice ?? {}) });
+    const merged = { ...orgVoice, ...(body?.voice ?? {}) };
 
-    const prompt = buildPrompt({ business_name, rating, language, review_text, voice });
+    // Apply org tone if voice tone not explicitly provided by UI/profile
+    const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
+    const normalizedVoice = normalizeVoice({
+      ...merged,
+      tone: merged?.tone ? merged.tone : toneFromOrg,
+      // If org tone is "professional", we'll enforce professional style in prompt
+    });
+
+    const prompt = buildPrompt({
+      business_name,
+      rating,
+      owner_language,
+      review_text,
+      voice: normalizedVoice,
+      reply_signature,
+      org_reply_tone_raw,
+    });
 
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -355,7 +447,7 @@ export async function POST(req: Request) {
           },
           { role: "user", content: prompt },
         ],
-        max_tokens: 220,
+        max_tokens: 240,
       }),
       cache: "no-store",
     });
@@ -393,7 +485,7 @@ export async function POST(req: Request) {
     content = limitSentences(content, maxSentences);
 
     // Optional: enforce no exclamation if voice disallows it
-    if (!voice.allow_exclamation) {
+    if (!normalizedVoice.allow_exclamation) {
       content = content.replace(/!/g, ".");
       content = content.replace(/\.\.+/g, ".").trim();
     }
@@ -405,7 +497,20 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({ ok: true, reply: content }, { status: 200 });
+    // For the next step (translate endpoint), it helps to return metadata.
+    return NextResponse.json(
+      {
+        ok: true,
+        reply: content,
+        meta: {
+          owner_language,
+          reviewer_language,
+          reply_tone: org_reply_tone_raw,
+          has_signature: !!reply_signature,
+        },
+      },
+      { status: 200 }
+    );
   } catch (err: any) {
     console.error("DRAFT-REPLY ERROR:", err);
     const message = err instanceof Error ? err.message : "Server error drafting reply";
