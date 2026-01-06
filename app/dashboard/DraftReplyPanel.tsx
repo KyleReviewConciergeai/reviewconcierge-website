@@ -6,6 +6,18 @@ type DraftReplyResponse = {
   ok: boolean;
   reply?: string;
   error?: string;
+  meta?: {
+    owner_language?: string;
+    reviewer_language?: string;
+    reply_tone?: string;
+    reply_signature?: string | null;
+  };
+};
+
+type TranslateReplyResponse = {
+  ok: boolean;
+  translated?: string;
+  error?: string;
 };
 
 type Status = "idle" | "loading" | "success" | "error";
@@ -26,7 +38,6 @@ function useIsNarrow(maxWidthPx = 720) {
     const apply = () => setIsNarrow(mq.matches);
     apply();
 
-    // Support older Safari
     if (mq.addEventListener) mq.addEventListener("change", apply);
     else mq.addListener(apply);
 
@@ -44,17 +55,23 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const [rating, setRating] = useState<number>(5);
 
   /**
-   * Doctrine note:
-   * - The UI language selector should represent the reviewer’s language
-   *   (i.e., the reply will be drafted in that language).
-   * - Owner “mirror translation” is an optional add-on later; not included here.
+   * ✅ This dropdown should represent the REVIEWER language (copy-ready output).
+   * Default to English (better UX for your Mendoza winery demo + your current tests).
    */
-  const [replyLanguage, setReplyLanguage] = useState<string>("es");
+  const [replyLanguage, setReplyLanguage] = useState<string>("en");
 
   // Keep empty by default (faster paste UX)
   const [reviewText, setReviewText] = useState("");
 
+  // Owner-language draft (editable)
   const [draft, setDraft] = useState("");
+
+  // Copy-ready reply (reviewer language)
+  const [finalReply, setFinalReply] = useState("");
+
+  // Helpful meta from server (owner language, etc.)
+  const [ownerLanguage, setOwnerLanguage] = useState<string>("en");
+
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState<string>("");
 
@@ -66,21 +83,23 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
   const isNarrow = useIsNarrow(720);
 
-  // Copy locked to doctrine (avoid SaaS-y / automation language)
   const COPY = {
     title: "Draft a reply in your voice",
     subtitle:
       "Paste a guest review. We’ll suggest a short reply that sounds like you. You can edit it before you post anywhere.",
     businessLabel: "Business name",
     ratingLabel: "Rating",
-    replyLanguageLabel: "Reply language",
+    replyLanguageLabel: "Reviewer language (copy-ready)",
     reviewLabel: "Guest review",
     reviewHelp: "Paste the review text exactly as the guest wrote it.",
     reviewCountHint: "10+",
-    draftLabel: "Suggested reply",
+    draftLabel: "Owner draft (editable)",
     draftPlaceholder: "A suggested reply will appear here…",
-    draftHelp:
-      "This is a starting point. Edit it freely so it feels like you.",
+    draftHelp: "This is a starting point. Edit it freely so it feels like you.",
+    finalLabel: "Copy-ready reply",
+    finalPlaceholder: "Copy-ready reply will appear here…",
+    finalHelp:
+      "This is what you’ll paste into Google Reviews. It matches the reviewer’s language.",
     btnDraft: "Draft a reply",
     btnDraftLoading: "Drafting…",
     btnAnother: "Draft another option",
@@ -115,6 +134,33 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return businessNameState.trim().length > 0 && reviewText.trim().length > 10;
   }, [businessNameState, reviewText]);
 
+  async function requestTranslate(text: string, targetLanguage: string) {
+    const res = await fetch("/api/reviews/translate-reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        target_language: targetLanguage,
+      }),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as Partial<TranslateReplyResponse>;
+
+    if (!res.ok || data.ok === false) {
+      const msg =
+        typeof data.error === "string" && data.error.trim()
+          ? data.error
+          : "Could not translate the reply.";
+      throw new Error(msg);
+    }
+
+    if (typeof data.translated !== "string" || !data.translated.trim()) {
+      throw new Error("No translated reply was returned.");
+    }
+
+    return data.translated;
+  }
+
   async function requestDraft() {
     setStatus("loading");
     setErrorMessage("");
@@ -124,30 +170,17 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-  business_name: businessNameState.trim(),
-  rating,
-  language: replyLanguage,
-  review_text: reviewText.trim(),
-
-  // ✅ Owner Voice (Phase 1 — hardcoded on purpose)
-  voice: {
-    reply_as: "owner",          // owner | manager | "we"
-    tone: "warm",               // warm | neutral | direct
-    brevity: "short",           // short | medium
-    formality: "casual",        // casual | professional
-    signoff_style: "first_name",
-    preferred_name: "Alex",
-    allow_exclamation: false,
-    things_to_avoid: [
-      "Thank you for your feedback",
-      "We appreciate",
-      "We strive",
-      "delighted",
-      "thrilled"
-    ]
-  }
-}),
-
+          business_name: businessNameState.trim(),
+          rating,
+          /**
+           * IMPORTANT:
+           * We send the *reviewer language* as "language" so the server can return it in meta.
+           * The server will draft in OWNER language (from org settings).
+           */
+          language: replyLanguage,
+          review_text: reviewText.trim(),
+          // ✅ Do NOT send hardcoded voice — let org settings control voice for MVP
+        }),
       });
 
       const data = (await res.json().catch(() => ({}))) as Partial<DraftReplyResponse>;
@@ -158,8 +191,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             ? data.error
             : COPY.errorDefault;
 
-        // Clear draft on error so we don't show stale content
         setDraft("");
+        setFinalReply("");
         setStatus("error");
         setErrorMessage(msg);
         return { ok: false as const };
@@ -167,16 +200,35 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (typeof data.reply !== "string" || !data.reply.trim()) {
         setDraft("");
+        setFinalReply("");
         setStatus("error");
         setErrorMessage("No reply was returned.");
         return { ok: false as const };
       }
 
-      setDraft(data.reply);
+      // Owner-language draft
+      const ownerDraft = data.reply.trim();
+      setDraft(ownerDraft);
+
+      const ownerLang = data.meta?.owner_language || "en";
+      setOwnerLanguage(ownerLang);
+
+      const reviewerLang = replyLanguage || data.meta?.reviewer_language || "en";
+
+      // If owner lang differs from reviewer lang, translate into reviewer lang for copy-ready
+      if (ownerLang.toLowerCase() !== reviewerLang.toLowerCase()) {
+        const translated = await requestTranslate(ownerDraft, reviewerLang);
+        setFinalReply(translated);
+      } else {
+        // Same language — copy-ready is just the draft
+        setFinalReply(ownerDraft);
+      }
+
       setStatus("success");
       return { ok: true as const };
     } catch (err: unknown) {
       setDraft("");
+      setFinalReply("");
       setStatus("error");
       setErrorMessage(err instanceof Error ? err.message : COPY.errorDefault);
       return { ok: false as const };
@@ -184,8 +236,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   }
 
   async function onDraft() {
-    // New drafting attempt resets version and clears prior suggestion
     setDraft("");
+    setFinalReply("");
     setVersion(0);
     const result = await requestDraft();
     if (result.ok) setVersion(1);
@@ -197,9 +249,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   }
 
   async function onCopy() {
-    if (!draft) return;
+    const toCopy = (finalReply || draft || "").trim();
+    if (!toCopy) return;
+
     try {
-      await navigator.clipboard.writeText(draft);
+      await navigator.clipboard.writeText(toCopy);
 
       setCopied(true);
       if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
@@ -216,25 +270,27 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
   const isLoading = status === "loading";
   const hasDraft = Boolean(draft.trim());
-  const canCopy = hasDraft && !isLoading;
+  const hasFinal = Boolean(finalReply.trim());
+  const canCopy = (hasFinal || hasDraft) && !isLoading;
 
-  // Status pill that reinforces "suggestion" + "you’re in control"
   const statusPill = useMemo(() => {
     if (status === "loading") return { label: COPY.statusDrafting, tone: "neutral" as const };
     if (status === "error") return { label: COPY.statusError, tone: "error" as const };
-    if (status === "success" && hasDraft) return { label: COPY.statusReady, tone: "success" as const };
+    if (status === "success" && (hasDraft || hasFinal)) return { label: COPY.statusReady, tone: "success" as const };
     return null;
-  }, [status, hasDraft, COPY.statusDrafting, COPY.statusError, COPY.statusReady]);
+  }, [status, hasDraft, hasFinal, COPY.statusDrafting, COPY.statusError, COPY.statusReady]);
 
   const controlsGridStyle: React.CSSProperties = useMemo(
     () => ({
       display: "grid",
-      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 160px",
+      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 220px",
       gap: 10,
       marginTop: 12,
     }),
     [isNarrow]
   );
+
+  const showFinalBox = hasFinal || (hasDraft && ownerLanguage.toLowerCase() !== replyLanguage.toLowerCase());
 
   return (
     <section style={panelStyle}>
@@ -252,7 +308,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, fontSize: 18 }}>{COPY.title}</h2>
 
-            {/* REMOVE "READ-ONLY" (doctrine violation: implies locked system ownership) */}
             {version > 0 ? (
               <span style={versionBadgeStyle} title="Another option counter">
                 Option {version}
@@ -263,6 +318,13 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           <p style={{ marginTop: 8, marginBottom: 0, color: "rgba(226,232,240,0.78)", lineHeight: 1.45 }}>
             {COPY.subtitle}
           </p>
+
+          {/* Tiny meta hint (optional, useful during testing) */}
+          {hasDraft ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "rgba(226,232,240,0.55)" }}>
+              Draft language (owner): <b>{ownerLanguage.toUpperCase()}</b> • Copy-ready: <b>{replyLanguage.toUpperCase()}</b>
+            </div>
+          ) : null}
         </div>
 
         {statusPill ? (
@@ -367,15 +429,23 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         ) : null}
       </div>
 
-      {/* Draft output */}
+      {/* Owner Draft output */}
       <div style={{ marginTop: 14, position: "relative" }}>
         <div style={labelStyle}>{COPY.draftLabel}</div>
 
-        {/* Doctrine: draft should feel editable / owned by human.
-            We keep the default textarea editable (NOT readOnly). */}
         <textarea
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setDraft(next);
+
+            // If owner and reviewer languages are same, keep final in sync.
+            // If they differ, user edits owner draft → they can click "Draft another option"
+            // for now (Step 3b can add live re-translate later).
+            if (ownerLanguage.toLowerCase() === replyLanguage.toLowerCase()) {
+              setFinalReply(next);
+            }
+          }}
           placeholder={COPY.draftPlaceholder}
           rows={7}
           style={{
@@ -422,6 +492,29 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </div>
         ) : null}
       </div>
+
+      {/* Copy-ready output */}
+      {showFinalBox ? (
+        <div style={{ marginTop: 14 }}>
+          <div style={labelStyle}>{COPY.finalLabel}</div>
+
+          <textarea
+            value={finalReply}
+            onChange={(e) => setFinalReply(e.target.value)}
+            placeholder={COPY.finalPlaceholder}
+            rows={7}
+            style={{
+              ...textareaStyle,
+              marginTop: 6,
+              opacity: hasFinal ? 1 : 0.9,
+            }}
+          />
+
+          <div style={{ marginTop: 8, fontSize: 12, color: "rgba(226,232,240,0.62)", lineHeight: 1.35 }}>
+            {COPY.finalHelp}
+          </div>
+        </div>
+      ) : null}
 
       {/* Footer note */}
       <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.6)", lineHeight: 1.45 }}>
