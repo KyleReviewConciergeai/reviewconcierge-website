@@ -51,13 +51,9 @@ async function reserveEvent(
 /**
  * If handler fails AFTER reservation, delete the reservation so Stripe retry can re-process.
  */
-async function unreserveEvent(
-  sb: ReturnType<typeof supabaseAdmin>,
-  eventId: string
-) {
+async function unreserveEvent(sb: ReturnType<typeof supabaseAdmin>, eventId: string) {
   const { error } = await sb.from("stripe_events").delete().eq("event_id", eventId);
   if (error) {
-    // Not fatal, but important: this may cause retry to dedupe/skip.
     console.error("[stripe-webhook] unreserveEvent failed", {
       eventId,
       error: (error as any)?.message || String(error),
@@ -76,8 +72,7 @@ async function resolveOrganizationIdFromStripe(
   customerId?: string | null,
   subscription?: Stripe.Subscription | null
 ): Promise<string | null> {
-  const orgFromSub =
-    (subscription?.metadata?.organization_id as string | undefined) ?? null;
+  const orgFromSub = (subscription?.metadata?.organization_id as string | undefined) ?? null;
   if (orgFromSub) return orgFromSub;
 
   if (!customerId) return null;
@@ -101,7 +96,10 @@ async function resolveOrganizationIdFromStripe(
 
 /**
  * Upsert subscription state for org
- * TS-SAFE: some Stripe type configs don't include current_period_end/cancel_at/canceled_at
+ *
+ * IMPORTANT FIX:
+ * - Only write columns we KNOW exist (you hit schema-cache errors for cancel_at etc).
+ * - This is enough for gating: status + stripe_subscription_id + stripe_price_id.
  */
 async function upsertOrgSubscriptionFromSub(
   sb: ReturnType<typeof supabaseAdmin>,
@@ -109,14 +107,10 @@ async function upsertOrgSubscriptionFromSub(
   sub: Stripe.Subscription
 ) {
   const customerId = typeof sub.customer === "string" ? sub.customer : null;
-  const priceId = sub.items?.data?.[0]?.price?.id ?? null;
 
-  // TS-safe timestamp reads
-  const anySub = sub as any;
-  const currentPeriodEnd =
-    typeof anySub.current_period_end === "number" ? anySub.current_period_end : null;
-  const cancelAt = typeof anySub.cancel_at === "number" ? anySub.cancel_at : null;
-  const canceledAt = typeof anySub.canceled_at === "number" ? anySub.canceled_at : null;
+  // Ensure price id is present reliably by expanding price when retrieving subscription
+  const price0 = sub.items?.data?.[0]?.price as any;
+  const priceId = typeof price0?.id === "string" ? price0.id : null;
 
   const payload = {
     organization_id: organizationId,
@@ -124,12 +118,6 @@ async function upsertOrgSubscriptionFromSub(
     stripe_subscription_id: sub.id,
     stripe_price_id: priceId,
     status: sub.status,
-    current_period_end: currentPeriodEnd
-      ? new Date(currentPeriodEnd * 1000).toISOString()
-      : null,
-    cancel_at_period_end: !!sub.cancel_at_period_end,
-    cancel_at: cancelAt ? new Date(cancelAt * 1000).toISOString() : null,
-    canceled_at: canceledAt ? new Date(canceledAt * 1000).toISOString() : null,
   };
 
   const { error } = await sb.from("org_subscriptions").upsert(payload, {
@@ -172,11 +160,13 @@ async function handleCheckoutSession(
     return;
   }
 
-  const sub = await stripe.subscriptions.retrieve(subscriptionId);
+  // IMPORTANT FIX: expand items.price so stripe_price_id can be set.
+  const sub = await stripe.subscriptions.retrieve(subscriptionId, {
+    expand: ["items.data.price"],
+  });
 
   // Prefer org from subscription/customer metadata if session metadata missing
-  const resolvedOrg =
-    orgId || (await resolveOrganizationIdFromStripe(stripe, customerId, sub));
+  const resolvedOrg = orgId || (await resolveOrganizationIdFromStripe(stripe, customerId, sub));
 
   if (!resolvedOrg) {
     console.warn("[stripe-webhook] checkout session could not resolve org id", {
@@ -201,7 +191,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Missing STRIPE_WEBHOOK_SECRET" }, { status: 500 });
   }
 
-  // Create Stripe client only after env checks (no empty-string client)
+  // Create Stripe client only after env checks
   const stripe = new Stripe(STRIPE_SECRET_KEY);
 
   let event: Stripe.Event;
@@ -238,7 +228,7 @@ export async function POST(req: Request) {
   try {
     const reserved = await reserveEvent(sb, event.id, event.type);
     if (reserved.deduped) {
-      return NextResponse.json({ ok: true, deduped: true });
+      return NextResponse.json({ ok: true, deduped: true }, { status: 200 });
     }
   } catch {
     return NextResponse.json(
@@ -249,7 +239,7 @@ export async function POST(req: Request) {
 
   try {
     switch (event.type) {
-      // Checkout completion variants
+      // Checkout completion variants (AUTHORITATIVE for org mapping)
       case "checkout.session.completed":
       case "checkout.session.async_payment_succeeded": {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -257,7 +247,7 @@ export async function POST(req: Request) {
         break;
       }
 
-      // Subscription lifecycle
+      // Subscription lifecycle (nice to have; safe now that upsert only writes known columns)
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
@@ -274,6 +264,7 @@ export async function POST(req: Request) {
           break;
         }
 
+        // Might not have price expanded in these event payloads; still OK.
         await upsertOrgSubscriptionFromSub(sb, orgId, sub);
         break;
       }
@@ -285,17 +276,20 @@ export async function POST(req: Request) {
       }
 
       default: {
-        // ignore other events
         break;
       }
     }
 
-    return NextResponse.json({ ok: true });
-} catch (err: any) {
-  console.error("[stripe-webhook] handler error:", err?.message || err);
-  return NextResponse.json(
-    { ok: false, error: err?.message ?? String(err) ?? "Webhook handler failed" },
-    { status: 500 }
-  );
-}
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (err: any) {
+    console.error("[stripe-webhook] handler error:", err?.message || err);
+
+    // IMPORTANT: unreserve so Stripe retries can re-process (per your design)
+    await unreserveEvent(sb, event.id);
+
+    return NextResponse.json(
+      { ok: false, error: err?.message ?? String(err) ?? "Webhook handler failed" },
+      { status: 500 }
+    );
+  }
 }
