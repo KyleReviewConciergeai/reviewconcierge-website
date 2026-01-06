@@ -21,11 +21,8 @@ function supabaseAdmin() {
 }
 
 /**
- * Idempotency: reserve event id (race-safe)
- * Insert the event row first; if duplicate, we consider it already processed OR in-flight.
- *
- * Doctrine tweak:
- * - If handler fails, we DELETE the reserved row so Stripe retries will process again.
+ * Idempotency: reserve event id (race-safe).
+ * Insert event row first; if duplicate, we consider already processed/in-flight.
  */
 async function reserveEvent(
   sb: ReturnType<typeof supabaseAdmin>,
@@ -49,7 +46,7 @@ async function reserveEvent(
 }
 
 /**
- * If handler fails AFTER reservation, delete the reservation so Stripe retry can re-process.
+ * If handler fails AFTER reservation, delete reservation so Stripe retry can re-process.
  */
 async function unreserveEvent(sb: ReturnType<typeof supabaseAdmin>, eventId: string) {
   const { error } = await sb.from("stripe_events").delete().eq("event_id", eventId);
@@ -66,13 +63,15 @@ async function unreserveEvent(sb: ReturnType<typeof supabaseAdmin>, eventId: str
  * Priority:
  * 1) subscription.metadata.organization_id
  * 2) customer.metadata.organization_id (fallback)
+ * 3) checkout.session.metadata.organization_id (handled in checkout handler)
  */
 async function resolveOrganizationIdFromStripe(
   stripe: Stripe,
   customerId?: string | null,
   subscription?: Stripe.Subscription | null
 ): Promise<string | null> {
-  const orgFromSub = (subscription?.metadata?.organization_id as string | undefined) ?? null;
+  const orgFromSub =
+    (subscription?.metadata?.organization_id as string | undefined) ?? null;
   if (orgFromSub) return orgFromSub;
 
   if (!customerId) return null;
@@ -96,10 +95,9 @@ async function resolveOrganizationIdFromStripe(
 
 /**
  * Upsert subscription state for org
- *
- * IMPORTANT FIX:
- * - Only write columns we KNOW exist (you hit schema-cache errors for cancel_at etc).
- * - This is enough for gating: status + stripe_subscription_id + stripe_price_id.
+ * NOTE: This payload MUST match your actual org_subscriptions schema.
+ * Your table has: current_period_end, cancel_at_period_end, cancel_at
+ * Your table DOES NOT have: canceled_at
  */
 async function upsertOrgSubscriptionFromSub(
   sb: ReturnType<typeof supabaseAdmin>,
@@ -107,17 +105,27 @@ async function upsertOrgSubscriptionFromSub(
   sub: Stripe.Subscription
 ) {
   const customerId = typeof sub.customer === "string" ? sub.customer : null;
+  const priceId = sub.items?.data?.[0]?.price?.id ?? null;
 
-  // Ensure price id is present reliably by expanding price when retrieving subscription
-  const price0 = sub.items?.data?.[0]?.price as any;
-  const priceId = typeof price0?.id === "string" ? price0.id : null;
+  const anySub = sub as any;
+
+  const currentPeriodEnd =
+    typeof anySub.current_period_end === "number" ? anySub.current_period_end : null;
+
+  const cancelAt =
+    typeof anySub.cancel_at === "number" ? anySub.cancel_at : null;
 
   const payload = {
     organization_id: organizationId,
     stripe_customer_id: customerId,
     stripe_subscription_id: sub.id,
     stripe_price_id: priceId,
-    status: sub.status,
+    status: sub.status, // "trialing" should show up here for your 14-day trial
+    current_period_end: currentPeriodEnd
+      ? new Date(currentPeriodEnd * 1000).toISOString()
+      : null,
+    cancel_at_period_end: !!sub.cancel_at_period_end,
+    cancel_at: cancelAt ? new Date(cancelAt * 1000).toISOString() : null,
   };
 
   const { error } = await sb.from("org_subscriptions").upsert(payload, {
@@ -137,7 +145,6 @@ async function upsertOrgSubscriptionFromSub(
 
 /**
  * Handle checkout session -> retrieve subscription -> upsert
- * Note: Checkout Session should include metadata.organization_id (you already do)
  */
 async function handleCheckoutSession(
   stripe: Stripe,
@@ -160,13 +167,10 @@ async function handleCheckoutSession(
     return;
   }
 
-  // IMPORTANT FIX: expand items.price so stripe_price_id can be set.
-  const sub = await stripe.subscriptions.retrieve(subscriptionId, {
-    expand: ["items.data.price"],
-  });
+  const sub = await stripe.subscriptions.retrieve(subscriptionId);
 
-  // Prefer org from subscription/customer metadata if session metadata missing
-  const resolvedOrg = orgId || (await resolveOrganizationIdFromStripe(stripe, customerId, sub));
+  const resolvedOrg =
+    orgId || (await resolveOrganizationIdFromStripe(stripe, customerId, sub));
 
   if (!resolvedOrg) {
     console.warn("[stripe-webhook] checkout session could not resolve org id", {
@@ -191,12 +195,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Missing STRIPE_WEBHOOK_SECRET" }, { status: 500 });
   }
 
-  // Create Stripe client only after env checks
   const stripe = new Stripe(STRIPE_SECRET_KEY);
 
   let event: Stripe.Event;
 
-  // Stripe requires verifying signature against RAW request body
   try {
     const rawBody = await req.text();
     const sig = req.headers.get("stripe-signature");
@@ -206,7 +208,6 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-
     event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
   } catch (err: any) {
     console.error("[stripe-webhook] signature verification failed", err?.message || String(err));
@@ -224,11 +225,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Server misconfigured" }, { status: 500 });
   }
 
-  // Idempotency (race-safe): reserve event row first
+  // Idempotency reserve
   try {
     const reserved = await reserveEvent(sb, event.id, event.type);
     if (reserved.deduped) {
-      return NextResponse.json({ ok: true, deduped: true }, { status: 200 });
+      return NextResponse.json({ ok: true, deduped: true });
     }
   } catch {
     return NextResponse.json(
@@ -239,7 +240,6 @@ export async function POST(req: Request) {
 
   try {
     switch (event.type) {
-      // Checkout completion variants (AUTHORITATIVE for org mapping)
       case "checkout.session.completed":
       case "checkout.session.async_payment_succeeded": {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -247,7 +247,6 @@ export async function POST(req: Request) {
         break;
       }
 
-      // Subscription lifecycle (nice to have; safe now that upsert only writes known columns)
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
@@ -264,31 +263,23 @@ export async function POST(req: Request) {
           break;
         }
 
-        // Might not have price expanded in these event payloads; still OK.
         await upsertOrgSubscriptionFromSub(sb, orgId, sub);
         break;
       }
 
-      // Optional invoice events (no-op for MVP)
-      case "invoice.paid":
-      case "invoice.payment_failed": {
+      default:
         break;
-      }
-
-      default: {
-        break;
-      }
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return NextResponse.json({ ok: true });
   } catch (err: any) {
     console.error("[stripe-webhook] handler error:", err?.message || err);
 
-    // IMPORTANT: unreserve so Stripe retries can re-process (per your design)
+    // IMPORTANT: undo reservation so Stripe retry can reprocess
     await unreserveEvent(sb, event.id);
 
     return NextResponse.json(
-      { ok: false, error: err?.message ?? String(err) ?? "Webhook handler failed" },
+      { ok: false, error: err?.message ?? "Webhook handler failed" },
       { status: 500 }
     );
   }
