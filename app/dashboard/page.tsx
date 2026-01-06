@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import DraftReplyPanel from "./DraftReplyPanel";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import SubscribeButton from "./SubscribeButton";
+import { startCheckout } from "@/lib/startCheckout";
 
 type Review = {
   id: string;
@@ -49,16 +50,6 @@ type PlaceCandidate = {
   formatted_address?: string;
 };
 
-type SubscriptionStatus =
-  | "active"
-  | "trialing"
-  | "past_due"
-  | "canceled"
-  | "incomplete"
-  | "incomplete_expired"
-  | "unpaid"
-  | null;
-
 function formatDate(iso: string | null) {
   if (!iso) return "";
   try {
@@ -69,7 +60,8 @@ function formatDate(iso: string | null) {
 }
 
 function stars(rating: number | null) {
-  const r = typeof rating === "number" ? Math.max(0, Math.min(5, rating)) : 0;
+  const r0 = typeof rating === "number" ? rating : 0;
+  const r = Math.round(Math.max(0, Math.min(5, r0)));
   return "★★★★★☆☆☆☆☆".slice(5 - r, 10 - r);
 }
 
@@ -184,6 +176,26 @@ export default function DashboardPage() {
     window.setTimeout(() => setToast(null), ms);
   }
 
+  async function redirectToCheckout() {
+    // keep UI consistent immediately
+    setUpgradeRequired(true);
+    setSubscriptionActive(false);
+
+    try {
+      await startCheckout("/dashboard");
+    } catch (e: any) {
+      console.error("startCheckout failed:", e);
+      showToast(
+        {
+          message:
+            "Couldn’t start checkout right now. Please try again in a moment.",
+          type: "error",
+        },
+        4500
+      );
+    }
+  }
+
   async function loadReviews() {
     const res = await fetch("/api/reviews", { cache: "no-store" });
     const json = (await res.json()) as ReviewsApiResponse;
@@ -236,6 +248,7 @@ export default function DashboardPage() {
       if (res.ok && json?.ok) {
         const isActive = !!json?.isActive;
         setSubscriptionActive(isActive);
+        // upgradeRequired is a UI hint — keep it aligned with the status endpoint
         setUpgradeRequired(!isActive);
         return;
       }
@@ -270,20 +283,21 @@ export default function DashboardPage() {
       return;
     }
 
+    // If we already know they're locked, don't bother calling Google sync.
+    if (subscriptionActive === false || upgradeRequired === true) {
+      await redirectToCheckout();
+      return;
+    }
+
     try {
       setActionLoading("google");
 
       const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
       const googleJson = await googleRes.json();
 
-      // If gated, show subscribe CTA (and stop here)
-      if (googleRes.status === 402 && googleJson?.upgradeRequired) {
-        setUpgradeRequired(true);
-        setSubscriptionActive(false);
-        showToast(
-          { message: "Google sync is locked until your plan is active.", type: "error" },
-          4500
-        );
+      // ✅ Mendoza requirement: paywall routes to checkout (no “Search failed”)
+      if (googleRes.status === 402 || googleJson?.upgradeRequired) {
+        await redirectToCheckout();
         return;
       }
 
@@ -296,9 +310,6 @@ export default function DashboardPage() {
         );
         return;
       }
-
-      // If refresh succeeds, clear upgrade flag (status endpoint remains authoritative)
-      setUpgradeRequired(false);
 
       const fetched = Number(googleJson?.fetched ?? 0);
       const inserted = Number(googleJson?.inserted ?? 0);
@@ -392,35 +403,57 @@ export default function DashboardPage() {
   }
 
   // server-side Places search (iPhone-friendly)
-  async function searchPlaces() {
-    const q = placeSearchQuery.trim();
-    if (!q || actionLoading) return;
+async function searchPlaces() {
+  const q = placeSearchQuery.trim();
+  if (!q || actionLoading) return;
 
-    setPlaceSearchLoading(true);
-    setPlaceSearchError(null);
-    setPlaceSearchResults([]);
+  setPlaceSearchLoading(true);
+  setPlaceSearchError(null);
+  setPlaceSearchResults([]);
 
+  try {
+    const res = await fetch(`/api/google/places-search?q=${encodeURIComponent(q)}`, {
+      cache: "no-store",
+    });
+
+    // IMPORTANT: read JSON safely (some error responses may not be JSON)
+    let json: any = null;
     try {
-      const res = await fetch(`/api/google/places-search?q=${encodeURIComponent(q)}`, {
-        cache: "no-store",
-      });
-      const json = await res.json();
-
-      if (!res.ok || !json?.ok) {
-        setPlaceSearchError(json?.error ?? "Search failed");
-        return;
-      }
-
-      const candidates = Array.isArray(json?.candidates)
-        ? (json.candidates as PlaceCandidate[])
-        : [];
-      setPlaceSearchResults(candidates);
-    } catch (e: any) {
-      setPlaceSearchError(e?.message ?? "Search failed");
-    } finally {
-      setPlaceSearchLoading(false);
+      json = await res.json();
+    } catch {
+      json = null;
     }
+
+    // ✅ PAYWALL: immediately route to Stripe and STOP.
+    if (res.status === 402 || json?.upgradeRequired) {
+      // clear the misleading UI error and stop loading state before redirect
+      setPlaceSearchLoading(false);
+      setPlaceSearchError(null);
+      setPlaceSearchResults([]);
+
+      // kick to Stripe checkout (14-day trial)
+      await startCheckout("/dashboard");
+      return; // HARD STOP — do not continue or set any other state
+    }
+
+    if (!res.ok || !json?.ok) {
+      setPlaceSearchError(json?.error ?? "Search failed");
+      return;
+    }
+
+    const candidates = Array.isArray(json?.candidates)
+      ? (json.candidates as PlaceCandidate[])
+      : [];
+
+    setPlaceSearchResults(candidates);
+  } catch (e: any) {
+    // If redirect is in-flight, avoid overwriting UI with "Search failed"
+    console.error("[dashboard] places search error:", e);
+    setPlaceSearchError(e?.message ?? "Search failed");
+  } finally {
+    setPlaceSearchLoading(false);
   }
+}
 
   async function onLogout() {
     if (actionLoading) return;
@@ -562,16 +595,8 @@ export default function DashboardPage() {
 
             <button
               onClick={refreshFromGoogleThenReload}
-              disabled={
-                actionLoading !== null || !business?.google_place_id || subscriptionActive === false
-              }
-              title={
-                !business?.google_place_id
-                  ? COPY.syncTooltipDisabled
-                  : subscriptionActive === false
-                  ? "Activate a plan to enable Google sync"
-                  : COPY.syncTooltipEnabled
-              }
+              disabled={actionLoading !== null || !business?.google_place_id}
+              title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
               style={buttonStyle}
             >
               {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
@@ -653,24 +678,14 @@ export default function DashboardPage() {
 
           <button
             onClick={refreshFromGoogleThenReload}
-            disabled={
-              actionLoading !== null || !business?.google_place_id || subscriptionActive === false
-            }
+            disabled={actionLoading !== null || !business?.google_place_id}
             style={{
               ...buttonStyle,
               minWidth: 230,
-              opacity: !business?.google_place_id || subscriptionActive === false ? 0.6 : 1,
+              opacity: !business?.google_place_id ? 0.6 : 1,
             }}
-            title={
-              !business?.google_place_id
-                ? COPY.syncTooltipDisabled
-                : subscriptionActive === false
-                ? "Activate a plan to enable Google sync"
-                : COPY.syncTooltipEnabled
-            }
-            aria-disabled={
-              actionLoading !== null || !business?.google_place_id || subscriptionActive === false
-            }
+            title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
+            aria-disabled={actionLoading !== null || !business?.google_place_id}
           >
             {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
           </button>
@@ -719,7 +734,13 @@ export default function DashboardPage() {
           {/* iPhone-friendly business search */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button
-              onClick={() => {
+              onClick={async () => {
+                // If locked, route to checkout instead of showing a misleading search error
+                if (subscriptionActive === false || upgradeRequired === true) {
+                  await redirectToCheckout();
+                  return;
+                }
+
                 setShowPlaceSearch((v) => !v);
                 setPlaceSearchError(null);
                 setPlaceSearchResults([]);
@@ -884,7 +905,8 @@ export default function DashboardPage() {
 
             {placeIdStatus === "error" && (
               <div style={{ fontSize: 13, color: "#f87171" }}>
-                {placeIdError ?? "We couldn’t verify this Place ID. Please double-check and try again."}
+                {placeIdError ??
+                  "We couldn’t verify this Place ID. Please double-check and try again."}
               </div>
             )}
 
@@ -968,12 +990,14 @@ export default function DashboardPage() {
               </div>
             ) : subscriptionActive ? (
               <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                Google sync: <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
+                Google sync:{" "}
+                <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
               </div>
             ) : (
               <>
                 <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                  Google sync: <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
+                  Google sync:{" "}
+                  <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
                 </div>
                 <div
                   style={{
@@ -1014,7 +1038,7 @@ export default function DashboardPage() {
           <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>
             {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
             <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
-              {avgRating === null ? "" : stars(Math.round(avgRating))}
+              {avgRating === null ? "" : stars(avgRating)}
             </span>
           </div>
         </div>
@@ -1070,7 +1094,9 @@ export default function DashboardPage() {
           <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersRating}</span>
           <select
             value={ratingFilter}
-            onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+            onChange={(e) =>
+              setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+            }
             style={selectStyle}
           >
             <option value="all">All</option>
