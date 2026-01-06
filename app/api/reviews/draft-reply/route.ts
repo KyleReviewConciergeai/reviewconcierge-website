@@ -2,13 +2,17 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { requireActiveSubscription } from "@/lib/subscriptionServer";
+import { requireOrgContext } from "@/lib/orgServer";
 
 /**
- * Doctrine-aligned draft API
- * - Output is a *suggested* reply, meant to be edited by the owner
- * - No automation language, no “brand concierge”, no “premium winery” specificity
- * - Voice-first: natural, human, believable
- * - Safety: calm + respectful, but not legalistic / corporate
+ * Doctrine-aligned draft API (Owner Voice First)
+ * - Suggests a reply written in the owner's voice (human stays in control)
+ * - Strict precedence:
+ *   1) Owner voice inputs
+ *   2) Review text itself
+ *   3) Hospitality context (minimal, only to avoid wrong assumptions)
+ *   4) Language translation layer
+ *   5) Platform norms
  */
 
 function cleanString(v: unknown, maxLen = 4000) {
@@ -17,9 +21,7 @@ function cleanString(v: unknown, maxLen = 4000) {
 }
 
 function cleanLanguage(v: unknown) {
-  // Expected: reviewer language (reply should be drafted in this language)
   const raw = cleanString(v, 20) || "en";
-  // Keep it simple: allow short tags like "en", "es", "pt", "fr", etc.
   return raw.slice(0, 12);
 }
 
@@ -30,94 +32,259 @@ function parseRating(v: unknown) {
 }
 
 function safeTrimReply(s: string, maxLen = 800) {
-  // Keep it short and clean for a public reply
   const t = (s ?? "").trim();
   if (!t) return "";
-  // Avoid giant responses if the model goes off
   return t.slice(0, maxLen);
 }
 
-const SYSTEM_PROMPT = `
-You write short, human-sounding public replies to online guest reviews for a hospitality business.
+function stripEmojis(text: string) {
+  // broad emoji unicode ranges; good enough for MVP
+  return text.replace(
+    /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/gu,
+    ""
+  );
+}
 
-Core doctrine:
-- The reply is a *suggestion* written in the owner/manager’s voice.
-- The human stays in control: the output should be easy to edit and post manually.
-- Authenticity > efficiency. Believability > polish.
-- Do not sound like corporate PR or automated templates.
+function limitSentences(text: string, maxSentences: number) {
+  const t = text.trim();
+  if (!t) return t;
+  const parts = t
+    .split(/(?<=[.!?])\s+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
 
-Hard rules:
-- Write in the reviewer’s language.
-- 2–4 short sentences.
-- No emojis.
-- Do not quote the review verbatim.
-- Do not mention policies, investigations, “our team will look into it”, or anything internal.
-- Do not admit legal fault or responsibility.
-- Do not offer refunds/discounts/compensation.
-- Do not mention AI, prompts, or that this is a draft.
-- Avoid generic, repeated openings like “Thank you for your feedback.” Vary the opening naturally.
-- Keep it warm, calm, and specific to the review when possible.
-`.trim();
+  if (parts.length <= maxSentences) return t;
+  return parts.slice(0, maxSentences).join(" ");
+}
 
-function buildUserPrompt(params: {
+function removeQuotations(text: string) {
+  // Avoid quoting the review verbatim; remove obvious quote marks.
+  return text.replace(/["“”‘’]/g, "");
+}
+
+function languageInstruction(languageTag: string) {
+  const tag = (languageTag || "en").toLowerCase();
+
+  // Keep simple. If you want richer mapping later, expand this.
+  switch (tag) {
+    case "es":
+      return "Write in Spanish (natural Spanish, not a literal translation).";
+    case "pt":
+    case "pt-br":
+      return "Write in Portuguese (natural Portuguese, not a literal translation).";
+    case "fr":
+      return "Write in French (natural French, not a literal translation).";
+    case "it":
+      return "Write in Italian (natural Italian, not a literal translation).";
+    case "de":
+      return "Write in German (natural German, not a literal translation).";
+    default:
+      return `Write in the reviewer's language (${languageTag}).`;
+  }
+}
+
+type VoiceProfile = {
+  reply_as?: "owner" | "manager" | "we";
+  tone?: "warm" | "neutral" | "direct" | "playful";
+  brevity?: "short" | "medium";
+  formality?: "casual" | "professional";
+  signoff_style?: "none" | "first_name" | "team_name";
+  preferred_name?: string | null;
+  things_to_avoid?: string[] | null;
+  allow_exclamation?: boolean | null;
+};
+
+const DEFAULT_VOICE: Required<Pick<
+  VoiceProfile,
+  "reply_as" | "tone" | "brevity" | "formality" | "signoff_style"
+>> & {
+  preferred_name: string | null;
+  things_to_avoid: string[];
+  allow_exclamation: boolean;
+} = {
+  reply_as: "we",
+  tone: "warm",
+  brevity: "short",
+  formality: "professional",
+  signoff_style: "none",
+  preferred_name: null,
+  things_to_avoid: [
+    "Thank you for your feedback",
+    "We appreciate your feedback",
+    "We strive",
+    "We will look into this",
+    "We take this seriously",
+    "Please accept our apologies",
+    "delighted",
+    "thrilled",
+    "valued customer",
+  ],
+  allow_exclamation: false,
+};
+
+// Optional: load from Supabase if the table exists.
+// If it doesn't exist yet, we silently fall back to defaults (MVP-friendly).
+async function loadVoiceProfile(): Promise<VoiceProfile> {
+  try {
+    const { supabase, organizationId } = await requireOrgContext();
+
+    const { data, error } = await supabase
+      .from("org_voice_profile")
+      .select(
+        "reply_as,tone,brevity,formality,signoff_style,preferred_name,things_to_avoid,allow_exclamation"
+      )
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+
+    if (error) {
+      // If table/column missing, just fall back silently.
+      return {};
+    }
+    return (data ?? {}) as VoiceProfile;
+  } catch {
+    return {};
+  }
+}
+
+function normalizeVoice(v?: VoiceProfile | null) {
+  const voice: typeof DEFAULT_VOICE = {
+    ...DEFAULT_VOICE,
+    ...(v ?? {}),
+    things_to_avoid: Array.isArray(v?.things_to_avoid)
+      ? (v!.things_to_avoid!.filter(Boolean) as string[])
+      : DEFAULT_VOICE.things_to_avoid,
+    allow_exclamation:
+      typeof v?.allow_exclamation === "boolean"
+        ? v.allow_exclamation
+        : DEFAULT_VOICE.allow_exclamation,
+    preferred_name:
+      typeof v?.preferred_name === "string" ? v.preferred_name : DEFAULT_VOICE.preferred_name,
+  };
+  return voice;
+}
+
+function ratingGuidance(rating: number) {
+  if (rating >= 5) {
+    return [
+      "For 5-star reviews:",
+      "- Sound genuinely appreciative, not polished.",
+      "- If they mention a detail, echo ONE detail in a natural way.",
+      "- End with a simple, non-salesy welcome back.",
+    ].join("\n");
+  }
+  if (rating === 4) {
+    return [
+      "For 4-star reviews:",
+      "- Appreciate the visit; keep it light.",
+      "- If a minor issue is hinted, acknowledge briefly without corporate language.",
+      "- Welcome them back naturally.",
+    ].join("\n");
+  }
+  if (rating === 3) {
+    return [
+      "For 3-star reviews:",
+      "- Acknowledge the mixed experience calmly.",
+      "- Show you heard them, without ‘we’ll investigate’ language.",
+      "- Optional: one simple offline follow-up line (not legalistic).",
+    ].join("\n");
+  }
+  return [
+    "For 1–2 star reviews:",
+    "- Lead with calm empathy. No defensiveness.",
+    "- Brief apology is OK, but do not over-apologize.",
+    "- Offer one simple offline follow-up line (email/phone), not corporate/legal.",
+  ].join("\n");
+}
+
+function buildPrompt(params: {
   business_name: string;
   rating: number;
   language: string;
   review_text: string;
+  voice: ReturnType<typeof normalizeVoice>;
 }) {
-  const { business_name, rating, language, review_text } = params;
+  const { business_name, rating, language, review_text, voice } = params;
 
-  const ratingGuidance =
-    rating >= 5
-      ? `
-For 5-star reviews:
-- Be genuinely warm and appreciative.
-- Mention 1 specific detail or theme (service, atmosphere, food, etc.) if present.
-- Invite them back in a natural way (not salesy).
-`.trim()
-      : rating === 4
-        ? `
-For 4-star reviews:
-- Thank them, acknowledge what went well.
-- If there's a minor issue hinted, acknowledge lightly and appreciate the note.
-- Invite them back.
-`.trim()
-        : rating === 3
-          ? `
-For 3-star reviews:
-- Thank them and acknowledge the mixed experience.
-- Show you care and you’re listening (without sounding corporate).
-- Invite them to return and, if appropriate, offer a simple offline follow-up line.
-`.trim()
-          : `
-For 1–2 star reviews:
-- Lead with empathy and calm.
-- Acknowledge their experience without arguing or being defensive.
-- Offer a brief offline follow-up line (email/phone) without sounding legalistic.
-- Do not over-apologize; keep it steady and respectful.
-`.trim();
+  const who =
+    voice.reply_as === "owner"
+      ? "Write as the owner using “I”."
+      : voice.reply_as === "manager"
+        ? "Write as the manager using “I”."
+        : "Write as the business using “we”.";
 
+  const toneLine =
+    voice.tone === "warm"
+      ? "Tone: warm, real, and calm."
+      : voice.tone === "neutral"
+        ? "Tone: neutral, steady, and human."
+        : voice.tone === "direct"
+          ? "Tone: direct, respectful, and concise."
+          : "Tone: lightly playful but still respectful.";
+
+  const brevityLine =
+    voice.brevity === "short" ? "Length: keep it SHORT." : "Length: medium-short, still concise.";
+
+  const formalityLine =
+    voice.formality === "casual"
+      ? "Style: casual human phrasing (not overly polite)."
+      : "Style: professional but not stiff.";
+
+  const exclamationRule = voice.allow_exclamation
+    ? "Exclamation points allowed, but only if it feels natural."
+    : "Do NOT use exclamation points.";
+
+  const avoidList =
+    voice.things_to_avoid && voice.things_to_avoid.length
+      ? `Avoid these phrases/words (do not use them): ${voice.things_to_avoid.join(", ")}`
+      : "";
+
+  const signoff =
+    voice.signoff_style === "first_name" && voice.preferred_name
+      ? `Signoff: end with “— ${voice.preferred_name}”.`
+      : voice.signoff_style === "team_name" && voice.preferred_name
+        ? `Signoff: end with “— ${voice.preferred_name}”.`
+        : "Signoff: none.";
+
+  // Strict hierarchy sections
   return `
-Context:
-Business name: ${business_name}
-Star rating: ${rating} out of 5
-Reviewer language: ${language}
+OWNER VOICE INPUTS (highest priority):
+- ${who}
+- ${toneLine}
+- ${brevityLine}
+- ${formalityLine}
+- ${exclamationRule}
+- No emojis.
+- Do not sound like PR, templates, or policy language.
+- Do not mention AI, automation, internal processes, investigations, or policies.
+- Do not offer refunds/discounts/compensation.
+- Do not admit legal fault.
+- Do not quote the review.
+- 2–3 sentences max (use 3 only if needed for negative reviews).
+- ${avoidList}
+- ${signoff}
 
-Review text:
+REVIEW TEXT (use ONLY what they wrote; do not invent details):
+Business: ${business_name}
+Rating: ${rating}/5
+
+Review:
 """
 ${review_text}
 """
 
-Guidance:
-${ratingGuidance}
+HOSPITALITY CONTEXT (minimal):
+- Only use general hospitality language. Do not assume specifics not in the review.
 
-Output requirements:
-- 2–4 short sentences
-- Write in ${language}
-- Natural, human, owner/manager voice
-- No emojis
-- Do not quote the review
-- Do not be generic or overly formal
+LANGUAGE LAYER:
+- ${languageInstruction(language)}
+
+PLATFORM NORMS:
+- This is a public Google-style reply: short, calm, specific when possible.
+
+RATING GUIDANCE:
+${ratingGuidance(rating)}
+
+Return ONLY the reply text. No bullet points. No labels.
 `.trim();
 }
 
@@ -162,7 +329,14 @@ export async function POST(req: Request) {
       );
     }
 
-    const userPrompt = buildUserPrompt({ business_name, rating, language, review_text });
+    // Voice profile precedence:
+    // 1) body.voice (if provided by UI later)
+    // 2) org voice profile from Supabase (if table exists)
+    // 3) defaults
+    const orgVoice = await loadVoiceProfile();
+    const voice = normalizeVoice({ ...orgVoice, ...(body?.voice ?? {}) });
+
+    const prompt = buildPrompt({ business_name, rating, language, review_text, voice });
 
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -172,10 +346,14 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0.4,
+        temperature: 0.25, // lower = less “creative template-y”
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPrompt },
+          {
+            role: "system",
+            content:
+              "You write short, human-sounding public review replies. Follow instructions exactly. Output only the reply.",
+          },
+          { role: "user", content: prompt },
         ],
         max_tokens: 220,
       }),
@@ -203,7 +381,22 @@ export async function POST(req: Request) {
     }
 
     const contentRaw = upstreamJson?.choices?.[0]?.message?.content ?? "";
-    const content = safeTrimReply(String(contentRaw));
+    let content = safeTrimReply(String(contentRaw));
+
+    // Post-guards (keep it believable and compliant)
+    content = removeQuotations(content);
+    content = stripEmojis(content);
+    content = content.replace(/\s+/g, " ").trim();
+
+    // Enforce sentence limit (2–3)
+    const maxSentences = rating <= 2 ? 3 : 2;
+    content = limitSentences(content, maxSentences);
+
+    // Optional: enforce no exclamation if voice disallows it
+    if (!voice.allow_exclamation) {
+      content = content.replace(/!/g, ".");
+      content = content.replace(/\.\.+/g, ".").trim();
+    }
 
     if (!content) {
       return NextResponse.json(

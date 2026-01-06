@@ -124,11 +124,30 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          business_name: businessNameState.trim(),
-          rating,
-          language: replyLanguage,
-          review_text: reviewText.trim(),
-        }),
+  business_name: businessNameState.trim(),
+  rating,
+  language: replyLanguage,
+  review_text: reviewText.trim(),
+
+  // ✅ Owner Voice (Phase 1 — hardcoded on purpose)
+  voice: {
+    reply_as: "owner",          // owner | manager | "we"
+    tone: "warm",               // warm | neutral | direct
+    brevity: "short",           // short | medium
+    formality: "casual",        // casual | professional
+    signoff_style: "first_name",
+    preferred_name: "Kyle",
+    allow_exclamation: false,
+    things_to_avoid: [
+      "Thank you for your feedback",
+      "We appreciate",
+      "We strive",
+      "delighted",
+      "thrilled"
+    ]
+  }
+}),
+
       });
 
       const data = (await res.json().catch(() => ({}))) as Partial<DraftReplyResponse>;
