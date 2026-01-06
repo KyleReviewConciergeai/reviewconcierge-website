@@ -273,14 +273,14 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (err: any) {
-    console.error("[stripe-webhook] handler error:", err?.message || err);
+  console.error("[stripe-webhook] handler error:", err?.message || err);
 
-    // IMPORTANT: undo reservation so Stripe retry can reprocess
-    await unreserveEvent(sb, event.id);
+  // ✅ IMPORTANT: allow Stripe retries to re-process this event
+  await unreserveEvent(sb, event.id);
 
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? "Webhook handler failed" },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    { ok: false, error: err?.message ?? String(err) ?? "Webhook handler failed" },
+    { status: 500 }
+  );
+}
 }
