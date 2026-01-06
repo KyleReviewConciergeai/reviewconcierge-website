@@ -50,13 +50,18 @@ function useIsNarrow(maxWidthPx = 720) {
   return isNarrow;
 }
 
+/** Normalize language tags so ES / es / es-ES all compare the same */
+function normLang(tag: string) {
+  return (tag || "").trim().toLowerCase().split("-")[0]; // "EN", "en-US" -> "en"
+}
+
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
   const [rating, setRating] = useState<number>(5);
 
   /**
-   * ✅ This dropdown should represent the REVIEWER language (copy-ready output).
-   * Default to English (better UX for your Mendoza winery demo + your current tests).
+   * ✅ This dropdown represents the REVIEWER language (copy-ready output).
+   * Default to English (better UX for your Mendoza demo + typical testing).
    */
   const [replyLanguage, setReplyLanguage] = useState<string>("en");
 
@@ -98,8 +103,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     draftHelp: "This is a starting point. Edit it freely so it feels like you.",
     finalLabel: "Copy-ready reply",
     finalPlaceholder: "Copy-ready reply will appear here…",
-    finalHelp:
-      "This is what you’ll paste into Google Reviews. It matches the reviewer’s language.",
+    finalHelp: "This is what you’ll paste into Google Reviews. It matches the reviewer’s language.",
     btnDraft: "Draft a reply",
     btnDraftLoading: "Drafting…",
     btnAnother: "Draft another option",
@@ -110,8 +114,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     statusReady: "Suggested",
     statusError: "Couldn’t draft",
     errorDefault: "Couldn’t draft a reply right now. Please try again.",
-    tip:
-      "Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.",
+    tip: "Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.",
   };
 
   useEffect(() => {
@@ -133,6 +136,10 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const canSubmit = useMemo(() => {
     return businessNameState.trim().length > 0 && reviewText.trim().length > 10;
   }, [businessNameState, reviewText]);
+
+  const sameLang = useMemo(() => {
+    return normLang(ownerLanguage) === normLang(replyLanguage);
+  }, [ownerLanguage, replyLanguage]);
 
   async function requestTranslate(text: string, targetLanguage: string) {
     const res = await fetch("/api/reviews/translate-reply", {
@@ -173,9 +180,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           business_name: businessNameState.trim(),
           rating,
           /**
-           * IMPORTANT:
-           * We send the *reviewer language* as "language" so the server can return it in meta.
-           * The server will draft in OWNER language (from org settings).
+           * We send the *reviewer language* as "language" so the server can echo/track it.
+           * Server drafts in OWNER language (from org settings).
            */
           language: replyLanguage,
           review_text: reviewText.trim(),
@@ -187,9 +193,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (!res.ok || data.ok === false) {
         const msg =
-          typeof data.error === "string" && data.error.trim()
-            ? data.error
-            : COPY.errorDefault;
+          typeof data.error === "string" && data.error.trim() ? data.error : COPY.errorDefault;
 
         setDraft("");
         setFinalReply("");
@@ -210,18 +214,20 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       const ownerDraft = data.reply.trim();
       setDraft(ownerDraft);
 
-      const ownerLang = data.meta?.owner_language || "en";
-      setOwnerLanguage(ownerLang);
+      // Use meta owner language if provided (may be "es-ES", etc.)
+      const ownerLangRaw = data.meta?.owner_language || "en";
+      setOwnerLanguage(ownerLangRaw);
 
-      const reviewerLang = replyLanguage || data.meta?.reviewer_language || "en";
+      // Reviewer language is the dropdown selection (copy-ready)
+      const reviewerLangRaw = replyLanguage || data.meta?.reviewer_language || "en";
 
-      // If owner lang differs from reviewer lang, translate into reviewer lang for copy-ready
-      if (ownerLang.toLowerCase() !== reviewerLang.toLowerCase()) {
-        const translated = await requestTranslate(ownerDraft, reviewerLang);
+      // ✅ Translate ONLY if different language (using normalized compare)
+      if (normLang(ownerLangRaw) !== normLang(reviewerLangRaw)) {
+        const translated = await requestTranslate(ownerDraft, reviewerLangRaw);
         setFinalReply(translated);
       } else {
-        // Same language — copy-ready is just the draft
-        setFinalReply(ownerDraft);
+        // Same language — no translation and no separate copy-ready UI needed
+        setFinalReply("");
       }
 
       setStatus("success");
@@ -249,11 +255,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   }
 
   async function onCopy() {
-    const toCopy = (finalReply || draft || "").trim();
-    if (!toCopy) return;
+    // ✅ Copy the right thing:
+    // - If same language: copy the owner draft
+    // - If different: copy the translated (copy-ready) reply
+    const textToCopy = (sameLang ? draft : finalReply || draft).trim();
+    if (!textToCopy) return;
 
     try {
-      await navigator.clipboard.writeText(toCopy);
+      await navigator.clipboard.writeText(textToCopy);
 
       setCopied(true);
       if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
@@ -271,12 +280,13 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const isLoading = status === "loading";
   const hasDraft = Boolean(draft.trim());
   const hasFinal = Boolean(finalReply.trim());
-  const canCopy = (hasFinal || hasDraft) && !isLoading;
+  const canCopy = (hasDraft && (sameLang || hasFinal)) && !isLoading;
 
   const statusPill = useMemo(() => {
     if (status === "loading") return { label: COPY.statusDrafting, tone: "neutral" as const };
     if (status === "error") return { label: COPY.statusError, tone: "error" as const };
-    if (status === "success" && (hasDraft || hasFinal)) return { label: COPY.statusReady, tone: "success" as const };
+    if (status === "success" && (hasDraft || hasFinal))
+      return { label: COPY.statusReady, tone: "success" as const };
     return null;
   }, [status, hasDraft, hasFinal, COPY.statusDrafting, COPY.statusError, COPY.statusReady]);
 
@@ -290,7 +300,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     [isNarrow]
   );
 
-  const showFinalBox = hasFinal || (hasDraft && ownerLanguage.toLowerCase() !== replyLanguage.toLowerCase());
+  // ✅ Hide the copy-ready block when languages are the same
+  const showFinalBox = !sameLang;
 
   return (
     <section style={panelStyle}>
@@ -315,14 +326,21 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             ) : null}
           </div>
 
-          <p style={{ marginTop: 8, marginBottom: 0, color: "rgba(226,232,240,0.78)", lineHeight: 1.45 }}>
+          <p
+            style={{
+              marginTop: 8,
+              marginBottom: 0,
+              color: "rgba(226,232,240,0.78)",
+              lineHeight: 1.45,
+            }}
+          >
             {COPY.subtitle}
           </p>
 
-          {/* Tiny meta hint (optional, useful during testing) */}
           {hasDraft ? (
             <div style={{ marginTop: 8, fontSize: 12, color: "rgba(226,232,240,0.55)" }}>
-              Draft language (owner): <b>{ownerLanguage.toUpperCase()}</b> • Copy-ready: <b>{replyLanguage.toUpperCase()}</b>
+              Draft language (owner): <b>{normLang(ownerLanguage).toUpperCase()}</b> • Copy-ready:{" "}
+              <b>{normLang(replyLanguage).toUpperCase()}</b>
             </div>
           ) : null}
         </div>
@@ -423,9 +441,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         {status === "error" ? <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span> : null}
 
         {isLoading && hasDraft ? (
-          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>
-            Drafting another option…
-          </span>
+          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>Drafting another option…</span>
         ) : null}
       </div>
 
@@ -439,12 +455,10 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             const next = e.target.value;
             setDraft(next);
 
-            // If owner and reviewer languages are same, keep final in sync.
-            // If they differ, user edits owner draft → they can click "Draft another option"
-            // for now (Step 3b can add live re-translate later).
-            if (ownerLanguage.toLowerCase() === replyLanguage.toLowerCase()) {
-              setFinalReply(next);
-            }
+            // If same language, copy-ready == draft (no final box),
+            // so copying should reflect the edited draft.
+            // (If different languages, we keep the previous translated finalReply.
+            // Live re-translate can be added later.)
           }}
           placeholder={COPY.draftPlaceholder}
           rows={7}
@@ -493,7 +507,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         ) : null}
       </div>
 
-      {/* Copy-ready output */}
+      {/* Copy-ready output (ONLY when different language) */}
       {showFinalBox ? (
         <div style={{ marginTop: 14 }}>
           <div style={labelStyle}>{COPY.finalLabel}</div>
