@@ -132,11 +132,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   // ✅ Owner Voice (Phase 1 — hardcoded on purpose)
   voice: {
     reply_as: "owner",          // owner | manager | "we"
-    tone: "warm",               // warm | neutral | direct
+    tone: "direct",               // warm | neutral | direct
     brevity: "short",           // short | medium
     formality: "casual",        // casual | professional
     signoff_style: "first_name",
-    preferred_name: "Kyle",
+    preferred_name: "Alex",
     allow_exclamation: false,
     things_to_avoid: [
       "Thank you for your feedback",
