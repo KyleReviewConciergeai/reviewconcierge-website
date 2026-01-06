@@ -31,6 +31,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
 
+  const [organizationId, setOrganizationId] = useState<string>("");
+
   const [settings, setSettings] = useState<Settings>({
     owner_language: "en",
     reply_tone: "warm",
@@ -50,8 +52,11 @@ export default function SettingsPage() {
 
       if (!res.ok || !json?.ok) {
         showToast({ message: json?.error ?? "Couldn’t load settings.", type: "error" }, 4500);
+        if (json?.organizationId) setOrganizationId(String(json.organizationId));
         return;
       }
+
+      if (json?.organizationId) setOrganizationId(String(json.organizationId));
 
       const s = json.settings as Settings;
       setSettings({
@@ -69,20 +74,37 @@ export default function SettingsPage() {
   async function save() {
     if (saving) return;
     setSaving(true);
+
+    // optimistic: keep what user selected visible immediately
+    const optimistic = { ...settings };
+
     try {
       const res = await fetch("/api/organizations/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
+        body: JSON.stringify(optimistic),
       });
+
       const json = await res.json();
 
       if (!res.ok || !json?.ok) {
         showToast({ message: json?.error ?? "Couldn’t save settings.", type: "error" }, 4500);
+        if (json?.organizationId) setOrganizationId(String(json.organizationId));
         return;
       }
 
-      setSettings(json.settings as Settings);
+      if (json?.organizationId) setOrganizationId(String(json.organizationId));
+
+      // Use server-saved values if present
+      const saved = (json.settings ?? optimistic) as Settings;
+
+      setSettings({
+        owner_language: saved.owner_language ?? optimistic.owner_language,
+        reply_tone: saved.reply_tone ?? optimistic.reply_tone,
+        reply_signature:
+          typeof saved.reply_signature === "string" ? saved.reply_signature : optimistic.reply_signature,
+      });
+
       showToast({ message: "Saved settings.", type: "success" }, 2200);
     } catch (e: any) {
       showToast({ message: e?.message ?? "Couldn’t save settings.", type: "error" }, 4500);
@@ -102,7 +124,6 @@ export default function SettingsPage() {
       <>
         <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 10 }}>Settings</h1>
         <p style={{ opacity: 0.75, marginTop: 0 }}>Loading…</p>
-
         {toast && (
           <div style={toastStyle(toast.type)} aria-live="polite">
             {toast.message}
@@ -121,6 +142,12 @@ export default function SettingsPage() {
             Set your default reply language and tone. Drafts will be written in your language and you’ll
             always edit before posting anywhere.
           </p>
+
+          {organizationId && (
+            <div style={{ fontSize: 12, opacity: 0.6, marginTop: 8, fontFamily: "monospace" }}>
+              Org ID: {organizationId}
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -171,11 +198,7 @@ export default function SettingsPage() {
             ))}
           </select>
 
-          {toneHelp && (
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-              {toneHelp}
-            </div>
-          )}
+          {toneHelp && <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>{toneHelp}</div>}
         </div>
 
         <div style={cardStyle}>
@@ -186,9 +209,7 @@ export default function SettingsPage() {
 
           <input
             value={settings.reply_signature ?? ""}
-            onChange={(e) =>
-              setSettings((s) => ({ ...s, reply_signature: e.target.value }))
-            }
+            onChange={(e) => setSettings((s) => ({ ...s, reply_signature: e.target.value }))}
             placeholder="— Your name"
             style={inputStyle}
           />

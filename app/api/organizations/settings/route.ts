@@ -34,7 +34,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from("organizations")
-      .select("owner_language, reply_tone, reply_signature")
+      .select("id, owner_language, reply_tone, reply_signature")
       .eq("id", organizationId)
       .maybeSingle();
 
@@ -43,24 +43,26 @@ export async function GET() {
     }
 
     if (!data) {
-      // Usually means RLS is blocking read, or org row missing
       return NextResponse.json(
         {
           ok: false,
           error:
-            "Could not load organization settings (no row returned). This is usually an RLS/policy issue.",
+            "Could not load organization settings (no row returned). This usually means org id mismatch or RLS/policy issue.",
+          organizationId,
         },
-        { status: 403 }
+        { status: 404 }
       );
     }
 
-    const settings: Settings = {
-      owner_language: data.owner_language ?? "en",
-      reply_tone: data.reply_tone ?? "warm",
-      reply_signature: data.reply_signature ?? null,
-    };
-
-    return NextResponse.json({ ok: true, settings });
+    return NextResponse.json({
+      ok: true,
+      organizationId,
+      settings: {
+        owner_language: data.owner_language ?? "en",
+        reply_tone: data.reply_tone ?? "warm",
+        reply_signature: data.reply_signature ?? null,
+      } satisfies Settings,
+    });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message ?? "Unauthorized" },
@@ -82,24 +84,37 @@ export async function POST(req: Request) {
 
     const next = normalizeSettings(body);
 
-    // 1) Update WITHOUT .select().single() to avoid PostgREST "coerce" errors
-    const { error: updateError } = await supabase
+    // IMPORTANT: select("id") ensures we know whether a row was actually updated.
+    const { data: updatedRows, error: updateError } = await supabase
       .from("organizations")
       .update({
         owner_language: next.owner_language,
         reply_tone: next.reply_tone,
         reply_signature: next.reply_signature,
       })
-      .eq("id", organizationId);
+      .eq("id", organizationId)
+      .select("id");
 
     if (updateError) {
       return NextResponse.json({ ok: false, error: updateError.message }, { status: 500 });
     }
 
-    // 2) Read back with maybeSingle (returns null instead of throwing)
+    if (!updatedRows || updatedRows.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Save failed because no organization row was updated. This usually means the org id did not match a row you can update (wrong org, wrong Supabase env, or RLS policy).",
+          organizationId,
+        },
+        { status: 404 }
+      );
+    }
+
+    // Read back the updated values
     const { data, error: readError } = await supabase
       .from("organizations")
-      .select("owner_language, reply_tone, reply_signature")
+      .select("id, owner_language, reply_tone, reply_signature")
       .eq("id", organizationId)
       .maybeSingle();
 
@@ -112,19 +127,22 @@ export async function POST(req: Request) {
         {
           ok: false,
           error:
-            "Saved, but could not read back settings (no row returned). This is usually an RLS/policy issue.",
+            "Saved, but could not read back settings (no row returned). This usually means RLS/policy issue.",
+          organizationId,
         },
         { status: 403 }
       );
     }
 
-    const settings: Settings = {
-      owner_language: data.owner_language ?? next.owner_language,
-      reply_tone: data.reply_tone ?? next.reply_tone,
-      reply_signature: data.reply_signature ?? next.reply_signature,
-    };
-
-    return NextResponse.json({ ok: true, settings });
+    return NextResponse.json({
+      ok: true,
+      organizationId,
+      settings: {
+        owner_language: data.owner_language ?? next.owner_language,
+        reply_tone: data.reply_tone ?? next.reply_tone,
+        reply_signature: data.reply_signature ?? next.reply_signature,
+      } satisfies Settings,
+    });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message ?? "Unauthorized" },
