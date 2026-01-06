@@ -187,12 +187,38 @@ export default function DashboardPage() {
       console.error("startCheckout failed:", e);
       showToast(
         {
-          message:
-            "Couldn’t start checkout right now. Please try again in a moment.",
+          message: "Couldn’t start checkout right now. Please try again in a moment.",
           type: "error",
         },
         4500
       );
+    }
+  }
+
+  /**
+   * NEW (Step C): After Stripe success redirect back to /dashboard?session_id=...
+   * - sync the Stripe session server-side
+   * - then clean the URL so refresh doesn't re-sync
+   */
+  async function syncStripeIfNeeded() {
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("session_id");
+    if (!sessionId) return;
+
+    try {
+      await fetch("/api/stripe/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+    } catch (e) {
+      console.error("[dashboard] stripe sync failed", e);
+    } finally {
+      params.delete("session_id");
+      const clean = `${window.location.pathname}${
+        params.toString() ? `?${params.toString()}` : ""
+      }`;
+      window.history.replaceState({}, "", clean);
     }
   }
 
@@ -403,57 +429,55 @@ export default function DashboardPage() {
   }
 
   // server-side Places search (iPhone-friendly)
-async function searchPlaces() {
-  const q = placeSearchQuery.trim();
-  if (!q || actionLoading) return;
+  async function searchPlaces() {
+    const q = placeSearchQuery.trim();
+    if (!q || actionLoading) return;
 
-  setPlaceSearchLoading(true);
-  setPlaceSearchError(null);
-  setPlaceSearchResults([]);
+    setPlaceSearchLoading(true);
+    setPlaceSearchError(null);
+    setPlaceSearchResults([]);
 
-  try {
-    const res = await fetch(`/api/google/places-search?q=${encodeURIComponent(q)}`, {
-      cache: "no-store",
-    });
-
-    // IMPORTANT: read JSON safely (some error responses may not be JSON)
-    let json: any = null;
     try {
-      json = await res.json();
-    } catch {
-      json = null;
-    }
+      const res = await fetch(`/api/google/places-search?q=${encodeURIComponent(q)}`, {
+        cache: "no-store",
+      });
 
-    // ✅ PAYWALL: immediately route to Stripe and STOP.
-    if (res.status === 402 || json?.upgradeRequired) {
-      // clear the misleading UI error and stop loading state before redirect
+      // IMPORTANT: read JSON safely (some error responses may not be JSON)
+      let json: any = null;
+      try {
+        json = await res.json();
+      } catch {
+        json = null;
+      }
+
+      // ✅ PAYWALL: immediately route to Stripe and STOP.
+      if (res.status === 402 || json?.upgradeRequired) {
+        // clear the misleading UI error and stop loading state before redirect
+        setPlaceSearchLoading(false);
+        setPlaceSearchError(null);
+        setPlaceSearchResults([]);
+
+        await redirectToCheckout();
+        return;
+      }
+
+      if (!res.ok || !json?.ok) {
+        setPlaceSearchError(json?.error ?? "Search failed");
+        return;
+      }
+
+      const candidates = Array.isArray(json?.candidates)
+        ? (json.candidates as PlaceCandidate[])
+        : [];
+
+      setPlaceSearchResults(candidates);
+    } catch (e: any) {
+      console.error("[dashboard] places search error:", e);
+      setPlaceSearchError(e?.message ?? "Search failed");
+    } finally {
       setPlaceSearchLoading(false);
-      setPlaceSearchError(null);
-      setPlaceSearchResults([]);
-
-      // kick to Stripe checkout (14-day trial)
-      await startCheckout("/dashboard");
-      return; // HARD STOP — do not continue or set any other state
     }
-
-    if (!res.ok || !json?.ok) {
-      setPlaceSearchError(json?.error ?? "Search failed");
-      return;
-    }
-
-    const candidates = Array.isArray(json?.candidates)
-      ? (json.candidates as PlaceCandidate[])
-      : [];
-
-    setPlaceSearchResults(candidates);
-  } catch (e: any) {
-    // If redirect is in-flight, avoid overwriting UI with "Search failed"
-    console.error("[dashboard] places search error:", e);
-    setPlaceSearchError(e?.message ?? "Search failed");
-  } finally {
-    setPlaceSearchLoading(false);
   }
-}
 
   async function onLogout() {
     if (actionLoading) return;
@@ -473,6 +497,9 @@ async function searchPlaces() {
 
         const { data: userData } = await sb.auth.getUser();
         setUserEmail(userData?.user?.email ?? "");
+
+        // ✅ Step C: if we just returned from Stripe, sync first so status is correct
+        await syncStripeIfNeeded();
 
         // subscription status first so the UI is correct immediately
         await loadSubscriptionStatus();

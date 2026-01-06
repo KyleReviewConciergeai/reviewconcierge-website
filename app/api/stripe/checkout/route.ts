@@ -88,8 +88,9 @@ export async function POST(_req: Request) {
       customer: customerId,
       line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
 
-      success_url: `${SITE_URL}/dashboard?billing=success`,
+      success_url: `${SITE_URL}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${SITE_URL}/dashboard?billing=cancel`,
+
 
       // Keep org mapping for webhooks
       metadata: { organization_id: organizationId },
