@@ -580,7 +580,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
+      <>
         <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
         <p style={{ opacity: 0.8 }}>{COPY.subtitle}</p>
 
@@ -589,14 +589,14 @@ export default function DashboardPage() {
             {toast.message}
           </div>
         )}
-      </main>
+      </>
     );
   }
 
   // Error view
   if (!data?.ok) {
     return (
-      <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
+      <>
         <div
           style={{
             display: "flex",
@@ -660,12 +660,12 @@ export default function DashboardPage() {
             {toast.message}
           </div>
         )}
-      </main>
+      </>
     );
   }
 
   return (
-    <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
+    <>
       {/* Header */}
       <div
         style={{
@@ -1279,7 +1279,7 @@ export default function DashboardPage() {
           {toast.message}
         </div>
       )}
-    </main>
+    </>
   );
 }
 
