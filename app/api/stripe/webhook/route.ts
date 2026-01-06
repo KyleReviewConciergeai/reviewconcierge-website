@@ -291,16 +291,11 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    console.error("[stripe-webhook] handler error", {
-      type: event.type,
-      eventId: event.id,
-      error: err?.message || String(err),
-    });
-
-    // ✅ Doctrine: allow Stripe retry to re-process by removing reservation
-    await unreserveEvent(sb, event.id);
-
-    return NextResponse.json({ ok: false, error: "Webhook handler failed" }, { status: 500 });
-  }
+} catch (err: any) {
+  console.error("[stripe-webhook] handler error:", err?.message || err);
+  return NextResponse.json(
+    { ok: false, error: err?.message ?? String(err) ?? "Webhook handler failed" },
+    { status: 500 }
+  );
+}
 }
