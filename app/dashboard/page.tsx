@@ -693,32 +693,46 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
-          <button
-            onClick={reloadList}
-            disabled={actionLoading !== null}
-            style={{ ...buttonStyle, minWidth: 120, width: "100%", maxWidth: 240 }}
-            title="Reload the list"
-          >
-            {actionLoading === "reload" ? COPY.reloadBtnLoading : COPY.reloadBtn}
-          </button>
+        <div
+  style={{
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 10,
+    width: 260,
+    maxWidth: "100%",
+  }}
+>
+  <button
+    onClick={reloadList}
+    disabled={actionLoading !== null}
+    style={{ ...buttonStyle, width: "100%", minWidth: 0 }}
+    title="Reload the list"
+  >
+    {actionLoading === "reload" ? COPY.reloadBtnLoading : COPY.reloadBtn}
+  </button>
 
-          <button
-            onClick={refreshFromGoogleThenReload}
-            disabled={actionLoading !== null || !business?.google_place_id}
-            style={{
-              ...buttonStyle,
-              minWidth: 230,
-              opacity: !business?.google_place_id ? 0.6 : 1,
-            }}
-            title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
-            aria-disabled={actionLoading !== null || !business?.google_place_id}
-          >
-            {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
-          </button>
+  <button
+    onClick={refreshFromGoogleThenReload}
+    disabled={actionLoading !== null || !business?.google_place_id}
+    style={{
+      ...buttonStyle,
+      width: "100%",
+      minWidth: 0,
+      opacity: !business?.google_place_id ? 0.6 : 1,
+    }}
+    title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
+    aria-disabled={actionLoading !== null || !business?.google_place_id}
+  >
+    {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
+  </button>
 
-          {showSubscribe && <SubscribeButton />}
-        </div>
+  {showSubscribe && (
+    <div style={{ width: "100%" }}>
+      <SubscribeButton />
+    </div>
+  )}
+</div>
       </div>
 
       {/* “Last fetched” is helpful, but keep it soft (no operations vibe) */}

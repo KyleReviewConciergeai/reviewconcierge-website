@@ -8,7 +8,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: "flex-start",
           gap: 12,
           marginBottom: 18,
           flexWrap: "wrap",
@@ -23,7 +23,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </Link>
         </div>
 
-        <SignOutButton />
+        {/* Right side: keep Sign out aligned to the right edge */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: 10,
+          }}
+        >
+          <SignOutButton />
+        </div>
       </div>
 
       {children}
