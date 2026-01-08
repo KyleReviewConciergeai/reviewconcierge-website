@@ -79,7 +79,7 @@ export default function DashboardPage() {
    * - No automation language. No “Phase 2” promises. No “workflow” framing.
    */
   const COPY = {
-    title: "Your guest feedback",
+    title: "Your reviews",
     subtitle:
       "Read what guests wrote, then draft a short reply that sounds like you. You’ll edit it before you post anywhere.",
     reloadBtn: "Reload",
