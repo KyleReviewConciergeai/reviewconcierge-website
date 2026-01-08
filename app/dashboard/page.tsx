@@ -718,15 +718,6 @@ export default function DashboardPage() {
           </button>
 
           {showSubscribe && <SubscribeButton />}
-
-          <button
-            onClick={onLogout}
-            disabled={actionLoading !== null}
-            style={{ ...buttonStyle, minWidth: 110 }}
-            title="Sign out"
-          >
-            {actionLoading === "logout" ? "Signing out…" : "Sign out"}
-          </button>
         </div>
       </div>
 
