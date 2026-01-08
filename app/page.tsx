@@ -149,9 +149,14 @@ export default function Home() {
             </h1>
 
             <p className="hero-subtitle">
-              Review Concierge drafts short, human replies that sound like you — so you can
-              respond fast without giving up control.
-            </p>
+  Review Concierge drafts short, human replies that sound like you — so you can
+  respond fast without giving up control.
+  <br />
+  <span style={{ opacity: 0.85 }}>
+    Draft thoughtful replies to reviews in English, Spanish, Portuguese, French,
+    Italian, and German.
+  </span>
+</p>
 
             <div className="hero-ctas">
               <a className="primary-btn" href="/signup">
@@ -176,8 +181,7 @@ export default function Home() {
               <div className="micro-item">
                 <div className="micro-title">Next</div>
                 <div className="micro-text">
-                  Stronger voice training, multilingual replies, and better support for
-                  multi-location operators.
+                  Deeper voice training, multilingual replies, and direct integration with Google Business Profile — so all your reviews appear in one place, ready for thoughtful replies.
                 </div>
               </div>
             </div>
@@ -395,8 +399,24 @@ export default function Home() {
             </div>
             <div className="card">
               <h3>Human control</h3>
-              <p>RC drafts. You decide. No auto-posting, no automation that risks your reputation.</p>
+              <p>Review Concierge drafts. You decide. No auto-posting, no automation that risks your reputation.</p>
             </div>
+            <div className="card">
+  <h3>Multilingual replies</h3>
+  <p>
+    Reviews come in many languages. Review Concierge drafts replies in your
+    preferred language first — then translates them for the guest when needed.
+  </p>
+  <p>
+    This preserves your voice across languages while helping you respond to
+    global customers.
+  </p>
+  <p>
+    Supported languages: English, Spanish, Portuguese, French, Italian, and
+    German.
+  </p>
+</div>
+
             <div className="card">
               <h3>Lightweight workflow</h3>
               <p>See reviews, draft replies, copy/paste. Everything else stays out of your way.</p>
