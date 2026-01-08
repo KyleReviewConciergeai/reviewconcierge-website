@@ -182,7 +182,8 @@ export default function DashboardPage() {
     setSubscriptionActive(false);
 
     try {
-      await startCheckout("/dashboard");
+      // ✅ Step 3: after Stripe, route them to connect Google (not back to dashboard)
+      await startCheckout("/connect/google");
     } catch (e: any) {
       console.error("startCheckout failed:", e);
       showToast(
@@ -629,7 +630,12 @@ export default function DashboardPage() {
               {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
             </button>
 
-            {showSubscribe && <SubscribeButton />}
+            {/* ✅ Step 3: trial CTA first */}
+            {showSubscribe && (
+              <div style={{ width: "100%" }}>
+                <SubscribeButton />
+              </div>
+            )}
 
             <button onClick={onLogout} disabled={actionLoading !== null} style={buttonStyle}>
               {actionLoading === "logout" ? "Signing out…" : "Sign out"}
@@ -694,45 +700,46 @@ export default function DashboardPage() {
         </div>
 
         <div
-  style={{
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-end",
-    gap: 10,
-    width: 260,
-    maxWidth: "100%",
-  }}
->
-  <button
-    onClick={reloadList}
-    disabled={actionLoading !== null}
-    style={{ ...buttonStyle, width: "100%", minWidth: 0 }}
-    title="Reload the list"
-  >
-    {actionLoading === "reload" ? COPY.reloadBtnLoading : COPY.reloadBtn}
-  </button>
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: 10,
+            width: 260,
+            maxWidth: "100%",
+          }}
+        >
+          {/* ✅ Step 3: trial CTA first */}
+          {showSubscribe && (
+            <div style={{ width: "100%" }}>
+              <SubscribeButton />
+            </div>
+          )}
 
-  <button
-    onClick={refreshFromGoogleThenReload}
-    disabled={actionLoading !== null || !business?.google_place_id}
-    style={{
-      ...buttonStyle,
-      width: "100%",
-      minWidth: 0,
-      opacity: !business?.google_place_id ? 0.6 : 1,
-    }}
-    title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
-    aria-disabled={actionLoading !== null || !business?.google_place_id}
-  >
-    {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
-  </button>
+          <button
+            onClick={reloadList}
+            disabled={actionLoading !== null}
+            style={{ ...buttonStyle, width: "100%", minWidth: 0 }}
+            title="Reload the list"
+          >
+            {actionLoading === "reload" ? COPY.reloadBtnLoading : COPY.reloadBtn}
+          </button>
 
-  {showSubscribe && (
-    <div style={{ width: "100%" }}>
-      <SubscribeButton />
-    </div>
-  )}
-</div>
+          <button
+            onClick={refreshFromGoogleThenReload}
+            disabled={actionLoading !== null || !business?.google_place_id}
+            style={{
+              ...buttonStyle,
+              width: "100%",
+              minWidth: 0,
+              opacity: !business?.google_place_id ? 0.6 : 1,
+            }}
+            title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
+            aria-disabled={actionLoading !== null || !business?.google_place_id}
+          >
+            {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
+          </button>
+        </div>
       </div>
 
       {/* “Last fetched” is helpful, but keep it soft (no operations vibe) */}
@@ -1267,7 +1274,9 @@ export default function DashboardPage() {
               </div>
 
               <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, opacity: 0.95 }}>
-                {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
+                {r.review_text ? r.review_text : (
+                  <span style={{ opacity: 0.6 }}>No review text.</span>
+                )}
               </div>
 
               {/* keep source metadata quiet */}
