@@ -104,6 +104,12 @@ const DEFAULT_VOICE = {
     "take your comments",
     "we understand that",
     "it's disappointing to hear",
+    "we hear your",
+    "we recognize that",
+    "it's concerning to hear",
+    "we'll keep that in mind",
+    "did not meet expectations",
+
 
     // Anti-AI / anti-corporate (NEW)
     "we're sorry to hear",
@@ -234,55 +240,60 @@ function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoicePr
  */
 function ratingGuidance(rating: number) {
   if (rating >= 5) {
-  return [
-    "For 5-star reviews:",
-    "- Open by referencing ONE specific thing they loved (dish, atmosphere, service moment).",
-    "- Sound appreciative but grounded - no hype, no marketing language.",
-    "- Mirror their enthusiasm lightly, without repeating phrases or overpraising.",
-    "- If the review is detailed, you may acknowledge TWO details (but keep it natural).",
-    "- End with a simple, genuine welcome back - not salesy, not scripted.",
-  ].join("\n");
-}
-  if (rating === 4) {
-  return [
-    "For 4-star reviews:",
-    "- Start by acknowledging ONE specific positive detail they mentioned.",
-    "- Keep the tone relaxed and conversational, like chatting with a regular.",
-    "- If they hinted at an issue, acknowledge it briefly without apology language.",
-    "- Avoid phrases like 'we appreciate your feedback' or 'we will keep improving'.",
-    "- Close with a natural, low-pressure welcome back.",
-  ].join("\n");
-}
-  if (rating === 3) {
-  return [
-    "For 3-star reviews:",
-    "- Reflect the mixed experience in your own words (not generic empathy).",
-    "- Mention ONE specific detail they brought up (dish, wait time, noise, service).",
-    "- Acknowledge that the experience wasn’t fully there, calmly and matter-of-fact.",
-    "- Avoid 'we’ll investigate' or process language.",
-    "- Optional: include ONE simple, human follow-up line only if it feels appropriate.",
-   ].join("\n");
-}
-  if (rating === 2) {
-  return [
-  "For 2-star reviews:",
-  "- Open by referencing ONE specific detail from the review (service moment, timing, dish, staff interaction).",
-  "- Acknowledge the disappointment calmly, without sounding apologetic or defensive.",
-  "- Avoid generic empathy phrases (no 'sorry to hear', 'we understand', or 'it sounds like').",
-  "- Use plain, conversational language — how a real owner would speak, not a brand.",
-  "- If inviting follow-up, keep it simple and human (one short line, no corporate framing).",
-  "- Do NOT promise fixes, investigations, or improvements.",
-].join("\n");
+    return [
+      "For 5-star reviews:",
+      "- FIRST sentence must reference ONE concrete detail they mentioned (dish, dessert, coffee, vibe, staff moment).",
+      "- Sound appreciative but grounded (no hype, no marketing language).",
+      "- If the review is detailed, you may acknowledge TWO details total, but keep it natural.",
+      "- No generic openers like 'we're glad you' or 'it's great to hear'.",
+      "- Close with a simple, low-pressure welcome back (not salesy).",
+    ].join("\n");
   }
+
+  if (rating === 4) {
+    return [
+      "For 4-star reviews:",
+      "- FIRST sentence must reference ONE specific positive detail they mentioned.",
+      "- Keep it relaxed and conversational (like a real owner replying).",
+      "- If they hinted at an issue, acknowledge it briefly in plain language (no corporate phrasing).",
+      "- Avoid phrases like 'we appreciate your feedback' or 'we'll keep that in mind' or 'refine our menu'.",
+      "- Close with a simple welcome back.",
+    ].join("\n");
+  }
+
+  if (rating === 3) {
+    return [
+      "For 3-star reviews:",
+      "- FIRST sentence must reference ONE concrete detail from the review (dish, wait time, noise, service moment).",
+      "- Reflect the mixed experience plainly (not PR language).",
+      "- Acknowledge the miss without over-apologizing or promising fixes.",
+      "- Optional: include ONE short, human offline follow-up line only if it feels appropriate (no 'we'll investigate').",
+      "- Avoid generic empathy openers like 'sorry to hear' or 'we understand'.",
+    ].join("\n");
+  }
+
+  if (rating === 2) {
+    return [
+      "For 2-star reviews:",
+      "- FIRST sentence must reference ONE specific detail from the review (service moment, timing, dish, staff interaction).",
+      "- Acknowledge the disappointment calmly, without sounding apologetic/defensive or corporate.",
+      "- Avoid generic empathy phrases ('sorry to hear', 'we understand', 'it sounds like').",
+      "- Use plain, conversational language — how a real owner would speak, not a brand.",
+      "- If inviting follow-up, keep it one short, human line (no corporate framing).",
+      "- Do NOT promise fixes, investigations, or improvements.",
+    ].join("\n");
+  }
+
+  // rating === 1
   return [
-  "For 1-star reviews:",
-  "- Open by referencing ONE concrete issue they experienced (service delay, interaction, timing).",
-  "- Acknowledge the frustration without emotional language or corporate apologies.",
-  "- Do NOT defend, explain, or justify.",
-  "- Avoid phrases like 'sorry to hear', 'we understand', or 'it sounds like.'",
-  "- If inviting follow-up, keep it to one short, plain sentence (email or phone).",
-  "- Do NOT promise fixes, investigations, or changes.",
-].join("\n");
+    "For 1-star reviews:",
+    "- FIRST sentence must reference ONE specific detail from the review (what went wrong).",
+    "- Be calm and direct. No defensiveness, no long apology, no PR phrasing.",
+    "- Avoid 'did not meet expectations', 'we recognize', 'it's concerning', 'we take this seriously'.",
+    "- Use plain language; acknowledge impact without admitting legal fault or offering compensation.",
+    "- If inviting follow-up, keep it one short line (email/phone), not legalistic.",
+    "- Do NOT promise fixes, investigations, or improvements.",
+  ].join("\n");
 }
 
 function buildPrompt(params: {
@@ -388,6 +399,7 @@ OWNER VOICE INPUTS (highest priority):
 - Do not admit legal fault.
 - Do not quote the review.
 - The FIRST sentence must reference a specific detail from the review (food, service moment, vibe, timing, or staff), not a generic emotion.
+- The FIRST sentence must reference a concrete detail from the review (dish, service moment, timing, vibe, or staff) — never a generic emotion.
 - ${sentencePolicy}
 - ${avoidList}
 - ${signatureLine}
@@ -509,7 +521,7 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0.25,
+        temperature: rating <= 2 ? 0.15 : 0.25,
         messages: [
           {
             role: "system",
