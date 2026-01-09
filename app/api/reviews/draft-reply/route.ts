@@ -171,6 +171,40 @@ function normalizeToneFromOrg(tone: string): VoiceProfile["tone"] {
   return "warm";
 }
 
+/**
+ * NEW: tone coming from client UI
+ * Accepts: "warm" | "neutral" | "direct" | "playful"
+ */
+function parseClientTone(v: unknown): VoiceProfile["tone"] | null {
+  const t = cleanString(v, 24).toLowerCase().trim();
+  if (!t) return null;
+  if (t === "warm" || t === "neutral" || t === "direct" || t === "playful") return t;
+  return null;
+}
+
+/**
+ * NEW: rules coming from client UI
+ * Safely accept small list of strings.
+ */
+function parseClientRules(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const cleaned = v
+    .map((x) => cleanString(x, 180))
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  return cleaned;
+}
+
+/**
+ * NEW: prevent weird tone choices for negative reviews
+ */
+function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoiceProfile["tone"] {
+  if (!tone) return tone;
+  if (rating <= 2 && tone === "playful") return "neutral";
+  return tone;
+}
+
 function ratingGuidance(rating: number) {
   if (rating >= 5) {
     return [
@@ -212,9 +246,20 @@ function buildPrompt(params: {
   voice: ReturnType<typeof normalizeVoice>;
   org_reply_tone_raw: string;
   reply_signature: string | null;
+  client_tone?: VoiceProfile["tone"] | null;
+  client_rules?: string[];
 }) {
-  const { business_name, rating, owner_language, review_text, voice, org_reply_tone_raw, reply_signature } =
-    params;
+  const {
+    business_name,
+    rating,
+    owner_language,
+    review_text,
+    voice,
+    org_reply_tone_raw,
+    reply_signature,
+    client_tone,
+    client_rules,
+  } = params;
 
   const who =
     voice.reply_as === "owner"
@@ -255,6 +300,25 @@ function buildPrompt(params: {
     ? `Signature: end with “— ${reply_signature}”.`
     : "Signature: none.";
 
+  const clientToneLine =
+    client_tone === "warm"
+      ? "User-selected tone override: warm, human, not salesy."
+      : client_tone === "neutral"
+        ? "User-selected tone override: neutral, calm, straightforward."
+        : client_tone === "direct"
+          ? "User-selected tone override: direct, concise, respectful."
+          : client_tone === "playful"
+            ? "User-selected tone override: lightly playful (only if appropriate)."
+            : "";
+
+  const clientRulesBlock =
+    client_rules && client_rules.length
+      ? [
+          "User-selected rules (HIGHEST priority):",
+          ...client_rules.map((r) => `- ${r}`),
+        ].join("\n")
+      : "";
+
   return `
 OWNER VOICE INPUTS (highest priority):
 - ${who}
@@ -271,6 +335,8 @@ OWNER VOICE INPUTS (highest priority):
 - 2–3 sentences max (use 3 only if needed for negative reviews).
 - ${avoidList}
 - ${signatureLine}
+${clientToneLine ? `\n${clientToneLine}\n` : ""}
+${clientRulesBlock ? `\n${clientRulesBlock}\n` : ""}
 
 REVIEW TEXT (use ONLY what they wrote; do not invent details):
 Business: ${business_name}
@@ -327,6 +393,11 @@ export async function POST(req: Request) {
     const reviewer_language = cleanLanguage(body?.language); // keep for Step 3b
     const rating = parseRating(body?.rating);
 
+    // NEW: client overrides
+    const clientToneRaw = parseClientTone(body?.tone);
+    const clientTone = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
+    const clientRules = parseClientRules(body?.rules);
+
     if (!review_text) {
       return NextResponse.json({ ok: false, error: "review_text is required" }, { status: 400 });
     }
@@ -354,6 +425,11 @@ export async function POST(req: Request) {
     const merged = { ...orgVoice, ...(body?.voice ?? {}) };
 
     const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
+
+    // IMPORTANT:
+    // - org settings still define default voice tone
+    // - clientTone is handled separately as a "highest priority" override instruction
+    //   (we do NOT blindly overwrite voice.tone, because org voice + tone interplay matters)
     const voice = normalizeVoice({
       ...merged,
       tone: merged?.tone ? merged.tone : toneFromOrg,
@@ -367,6 +443,8 @@ export async function POST(req: Request) {
       voice,
       org_reply_tone_raw,
       reply_signature,
+      client_tone: clientTone,
+      client_rules: clientRules,
     });
 
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {

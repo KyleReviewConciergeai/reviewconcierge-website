@@ -55,6 +55,27 @@ function normLang(tag: string) {
   return (tag || "").trim().toLowerCase().split("-")[0]; // "EN", "en-US" -> "en"
 }
 
+/** Step 8: rating → tone */
+function toneFromRating(r: number) {
+  if (r >= 5) return "warm, upbeat, grateful";
+  if (r === 4) return "warm, concise, appreciative";
+  if (r === 3) return "balanced, appreciative, lightly apologetic";
+  if (r === 2) return "apologetic, accountable, helpful";
+  return "very apologetic, calm, accountable, invite offline resolution";
+}
+
+/** Step 8: anti-robot rules (sent to server; server can use or ignore) */
+const DRAFT_RULES = [
+  "Keep it 2–4 sentences.",
+  "Sound like a real owner, not a brand.",
+  "Avoid corporate phrases like: 'we’re thrilled', 'we appreciate your feedback', 'valued guest'.",
+  "If possible, reference one specific detail from the review (food, staff, vibe, timing).",
+  "No emojis.",
+  "Use at most one exclamation mark, and only for 5★ reviews.",
+  "If rating is 1–2★: apologize, take accountability, and invite them to continue the conversation offline.",
+  "Do not promise refunds, policy changes, or future guarantees.",
+];
+
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
   const [rating, setRating] = useState<number>(5);
@@ -93,7 +114,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     subtitle:
       "Paste a guest review. We’ll suggest a short reply that sounds like you. You can edit it before you post anywhere.",
     businessLabel: "Business name",
-    ratingLabel: "Rating",
+    ratingLabel: "Review rating",
     replyLanguageLabel: "Reviewer language (copy-ready)",
     reviewLabel: "Guest review",
     reviewHelp: "Paste the review text exactly as the guest wrote it.",
@@ -172,6 +193,9 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     setStatus("loading");
     setErrorMessage("");
 
+    // Step 8: compute tone right before request
+    const tone = toneFromRating(rating);
+
     try {
       const res = await fetch("/api/reviews/draft-reply", {
         method: "POST",
@@ -185,6 +209,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
            */
           language: replyLanguage,
           review_text: reviewText.trim(),
+
+          // Step 8 payload additions (server can use these to improve human-ness)
+          tone,
+          rules: DRAFT_RULES,
+
           // ✅ Do NOT send hardcoded voice — let org settings control voice for MVP
         }),
       });
@@ -366,18 +395,31 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
         <div style={{ display: "grid", gap: 6 }}>
           <div style={labelStyle}>{COPY.ratingLabel}</div>
-          <select value={String(rating)} onChange={(e) => setRating(Number(e.target.value))} style={selectStyle}>
+          <select
+            value={String(rating)}
+            onChange={(e) => setRating(Number(e.target.value))}
+            style={selectStyle}
+          >
             {[5, 4, 3, 2, 1].map((r) => (
               <option key={r} value={r}>
                 {r}★
               </option>
             ))}
           </select>
+
+          {/* Step 6 helper text (already in your file, kept as-is) */}
+          <div style={{ fontSize: 12, color: "rgba(226,232,240,0.62)", marginTop: 6 }}>
+            Helps tailor the reply tone to a 1★ vs 5★ experience.
+          </div>
         </div>
 
         <div style={{ display: "grid", gap: 6 }}>
           <div style={labelStyle}>{COPY.replyLanguageLabel}</div>
-          <select value={replyLanguage} onChange={(e) => setReplyLanguage(e.target.value)} style={selectStyle}>
+          <select
+            value={replyLanguage}
+            onChange={(e) => setReplyLanguage(e.target.value)}
+            style={selectStyle}
+          >
             <option value="en">EN</option>
             <option value="es">ES</option>
             <option value="pt">PT</option>
@@ -390,14 +432,28 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       {/* Review input */}
       <div style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+            alignItems: "baseline",
+          }}
+        >
           <div style={labelStyle}>{COPY.reviewLabel}</div>
           <div style={{ fontSize: 12, color: "rgba(226,232,240,0.6)" }}>
             {reviewText.trim().length}/{COPY.reviewCountHint}
           </div>
         </div>
 
-        <div style={{ marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.62)", lineHeight: 1.35 }}>
+        <div
+          style={{
+            marginTop: 6,
+            fontSize: 12,
+            color: "rgba(226,232,240,0.62)",
+            lineHeight: 1.35,
+          }}
+        >
           {COPY.reviewHelp}
         </div>
 
@@ -411,7 +467,15 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       </div>
 
       {/* Actions */}
-      <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          marginTop: 12,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
         {!hasDraft ? (
           <button
             onClick={onDraft}
@@ -438,10 +502,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </>
         )}
 
-        {status === "error" ? <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span> : null}
+        {status === "error" ? (
+          <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span>
+        ) : null}
 
         {isLoading && hasDraft ? (
-          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>Drafting another option…</span>
+          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>
+            Drafting another option…
+          </span>
         ) : null}
       </div>
 
@@ -471,7 +539,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         />
 
         {hasDraft ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "rgba(226,232,240,0.62)", lineHeight: 1.35 }}>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              color: "rgba(226,232,240,0.62)",
+              lineHeight: 1.35,
+            }}
+          >
             {COPY.draftHelp}
           </div>
         ) : null}
@@ -524,14 +599,28 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             }}
           />
 
-          <div style={{ marginTop: 8, fontSize: 12, color: "rgba(226,232,240,0.62)", lineHeight: 1.35 }}>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              color: "rgba(226,232,240,0.62)",
+              lineHeight: 1.35,
+            }}
+          >
             {COPY.finalHelp}
           </div>
         </div>
       ) : null}
 
       {/* Footer note */}
-      <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.6)", lineHeight: 1.45 }}>
+      <div
+        style={{
+          marginTop: 10,
+          fontSize: 12,
+          color: "rgba(226,232,240,0.6)",
+          lineHeight: 1.45,
+        }}
+      >
         {COPY.tip}
       </div>
     </section>
