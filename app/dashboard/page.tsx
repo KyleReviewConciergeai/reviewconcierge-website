@@ -579,6 +579,37 @@ export default function DashboardPage() {
     return `${s.slice(0, 6)}…${s.slice(-4)}`;
   }
 
+async function copyReviewToClipboard(review: Review) {
+  const text = (review.review_text ?? "").trim();
+  if (!text) {
+    showToast({ message: "No review text to copy.", type: "error" }, 2500);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(text);
+
+    // Optional: lets DraftReplyPanel hook into this later (no-op today)
+    window.dispatchEvent(
+      new CustomEvent("rc:copy-review", {
+        detail: {
+          reviewText: text,
+          rating: review.rating ?? null,
+          authorName: review.author_name ?? null,
+        },
+      })
+    );
+
+    showToast({ message: "Copied review to clipboard.", type: "success" }, 2200);
+  } catch (e) {
+    console.error("clipboard copy failed:", e);
+    showToast(
+      { message: "Couldn’t copy automatically — please copy manually.", type: "error" },
+      3500
+    );
+  }
+}
+
   if (loading) {
     return (
       <>
@@ -1268,9 +1299,35 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
-                  {formatDate(r.review_date ?? r.created_at)}
-                </div>
+                <div
+  style={{
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 8,
+    minWidth: 140,
+  }}
+>
+  <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
+    {formatDate(r.review_date ?? r.created_at)}
+  </div>
+
+  <button
+    onClick={() => copyReviewToClipboard(r)}
+    disabled={!r.review_text}
+    style={{
+      ...buttonStyle,
+      padding: "6px 10px",
+      borderRadius: 999,
+      fontSize: 12,
+      opacity: r.review_text ? 0.95 : 0.5,
+    }}
+    title={r.review_text ? "Copy review text" : "No review text to copy"}
+  >
+    Copy review
+  </button>
+</div>
+
               </div>
 
               <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, opacity: 0.95 }}>
