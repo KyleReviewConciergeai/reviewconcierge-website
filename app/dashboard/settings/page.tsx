@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Settings = {
   owner_language: string;
@@ -19,14 +20,43 @@ const LANGUAGES: Array<{ code: string; label: string }> = [
   { code: "de", label: "German" },
 ];
 
-const TONES: Array<{ value: string; label: string; help: string }> = [
-  { value: "warm", label: "Warm", help: "Friendly, grateful, human." },
-  { value: "professional", label: "Professional", help: "Polished, calm, succinct." },
-  { value: "playful", label: "Playful", help: "Light humor when appropriate." },
-  { value: "direct", label: "Direct", help: "Short and to the point." },
+// Mendoza MVP: keep tones tight and easy to explain.
+// (No "Playful" to avoid edge cases / decision fatigue)
+const TONES: Array<{ value: string; label: string; help: string; example: string }> = [
+  {
+    value: "warm",
+    label: "Warm",
+    help: "Friendly, grateful, human.",
+    example: "“Loved the cozy vibe and the kebabs — really appreciate you coming in.”",
+  },
+  {
+    value: "neutral",
+    label: "Neutral",
+    help: "Calm, straightforward, not overly emotional.",
+    example: "“Thanks for stopping by — glad you enjoyed it, and we appreciate the note.”",
+  },
+  {
+    value: "direct",
+    label: "Direct",
+    help: "Short and to the point.",
+    example: "“Thanks for the visit — we’ll keep that feedback in mind.”",
+  },
 ];
 
+function normalizeTone(v: string) {
+  const t = (v || "").toLowerCase().trim();
+
+  // Map legacy values to current set (so existing DB values don’t break)
+  if (t === "professional") return "neutral";
+  if (t === "playful") return "warm";
+
+  if (t === "warm" || t === "neutral" || t === "direct") return t;
+  return "warm";
+}
+
 export default function SettingsPage() {
+  const router = useRouter();
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -61,7 +91,7 @@ export default function SettingsPage() {
       const s = json.settings as Settings;
       setSettings({
         owner_language: s?.owner_language ?? "en",
-        reply_tone: s?.reply_tone ?? "warm",
+        reply_tone: normalizeTone(s?.reply_tone ?? "warm"),
         reply_signature: s?.reply_signature ?? null,
       });
     } catch (e: any) {
@@ -76,7 +106,11 @@ export default function SettingsPage() {
     setSaving(true);
 
     // optimistic: keep what user selected visible immediately
-    const optimistic = { ...settings };
+    const optimistic: Settings = {
+      ...settings,
+      reply_tone: normalizeTone(settings.reply_tone),
+      reply_signature: (settings.reply_signature ?? "").trim() || null,
+    };
 
     try {
       const res = await fetch("/api/organizations/settings", {
@@ -100,12 +134,18 @@ export default function SettingsPage() {
 
       setSettings({
         owner_language: saved.owner_language ?? optimistic.owner_language,
-        reply_tone: saved.reply_tone ?? optimistic.reply_tone,
+        reply_tone: normalizeTone(saved.reply_tone ?? optimistic.reply_tone),
         reply_signature:
-          typeof saved.reply_signature === "string" ? saved.reply_signature : optimistic.reply_signature,
+          typeof saved.reply_signature === "string"
+            ? saved.reply_signature
+            : optimistic.reply_signature,
       });
 
-      showToast({ message: "Saved settings.", type: "success" }, 2200);
+      // ✅ “Saved” then route back to dashboard
+      showToast({ message: "Saved settings.", type: "success" }, 900);
+      window.setTimeout(() => {
+        router.push("/dashboard");
+      }, 750);
     } catch (e: any) {
       showToast({ message: e?.message ?? "Couldn’t save settings.", type: "error" }, 4500);
     } finally {
@@ -117,7 +157,10 @@ export default function SettingsPage() {
     load();
   }, []);
 
-  const toneHelp = TONES.find((t) => t.value === settings.reply_tone)?.help ?? "";
+  const selectedTone = useMemo(() => {
+    const t = normalizeTone(settings.reply_tone);
+    return TONES.find((x) => x.value === t) ?? TONES[0];
+  }, [settings.reply_tone]);
 
   if (loading) {
     return (
@@ -139,8 +182,8 @@ export default function SettingsPage() {
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>Settings</h1>
           <p style={{ opacity: 0.78, marginTop: 0, maxWidth: 720, lineHeight: 1.5 }}>
-            Set your default reply language and tone. Drafts will be written in your language and you’ll
-            always edit before posting anywhere.
+            Set your default language and tone. We’ll draft replies for you to edit — nothing is ever
+            posted automatically.
           </p>
 
           {organizationId && (
@@ -187,7 +230,7 @@ export default function SettingsPage() {
           </div>
 
           <select
-            value={settings.reply_tone}
+            value={normalizeTone(settings.reply_tone)}
             onChange={(e) => setSettings((s) => ({ ...s, reply_tone: e.target.value }))}
             style={selectStyle}
           >
@@ -198,7 +241,10 @@ export default function SettingsPage() {
             ))}
           </select>
 
-          {toneHelp && <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>{toneHelp}</div>}
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>{selectedTone.help}</div>
+          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.62, lineHeight: 1.35 }}>
+            Example: <span style={{ fontStyle: "italic" }}>{selectedTone.example}</span>
+          </div>
         </div>
 
         <div style={cardStyle}>
