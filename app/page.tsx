@@ -150,7 +150,7 @@ export default function Home() {
 
             <p className="hero-subtitle">
   Review Concierge drafts short, human replies that sound like you — so you can
-  respond fast without giving up control.
+  respond fast without giving up control or sounding generic.
   <br />
   <span style={{ opacity: 0.85 }}>
     Draft thoughtful replies to reviews in English, Spanish, Portuguese, French,
@@ -181,7 +181,7 @@ export default function Home() {
               <div className="micro-item">
                 <div className="micro-title">Next</div>
                 <div className="micro-text">
-                  Deeper voice training, multilingual replies, and direct integration with Google Business Profile — so all your reviews appear in one place, ready for thoughtful replies.
+                  Deeper voice training, multilingual replies, and direct integration with Google Business Profile for importing reviews — so all your reviews appear in one place, ready for thoughtful replies.
                 </div>
               </div>
             </div>
@@ -191,7 +191,7 @@ export default function Home() {
           <div className="hero-card">
             <h2>Draft replies that sound like you</h2>
             <p>
-              Pull recent Google reviews and generate owner-voice drafts you can post in minutes.
+              Pull recent Google reviews into one place and generate owner-voice drafts you can post in minutes.
             </p>
             <ul>
               <li>Connect your Google Place ID</li>
