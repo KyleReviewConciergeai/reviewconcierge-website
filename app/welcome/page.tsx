@@ -16,6 +16,10 @@ export default function WelcomePage() {
             <span className="font-medium">you</span>. You stay in control — every time.
           </p>
 
+          <p className="text-sm text-gray-600">
+            Review Concierge never posts replies on your behalf. You always review and publish them yourself.
+          </p>
+
           {/* Primary CTA */}
           <div className="rounded-2xl border border-gray-200 p-6 shadow-sm">
             <div className="space-y-3">
