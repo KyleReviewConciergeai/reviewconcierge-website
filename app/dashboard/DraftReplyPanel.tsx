@@ -406,11 +406,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               </option>
             ))}
           </select>
-
-          {/* Step 6 helper text (already in your file, kept as-is) */}
-          <div style={{ fontSize: 12, color: "rgba(226,232,240,0.62)", marginTop: 6 }}>
-            Helps tailor the reply tone to a 1★ vs 5★ experience.
-          </div>
         </div>
 
         <div style={{ display: "grid", gap: 6 }}>
@@ -428,6 +423,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             <option value="de">DE</option>
           </select>
         </div>
+      </div>
+
+      {/* Step 6 helper text moved BELOW the entire row so inputs align */}
+      <div style={{ fontSize: 12, color: "rgba(226,232,240,0.62)", marginTop: 6 }}>
+        Helps tailor the reply tone to a 1★ vs 5★ experience.
       </div>
 
       {/* Review input */}
@@ -522,11 +522,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           onChange={(e) => {
             const next = e.target.value;
             setDraft(next);
-
-            // If same language, copy-ready == draft (no final box),
-            // so copying should reflect the edited draft.
-            // (If different languages, we keep the previous translated finalReply.
-            // Live re-translate can be added later.)
           }}
           placeholder={COPY.draftPlaceholder}
           rows={7}
