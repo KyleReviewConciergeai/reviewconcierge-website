@@ -1,27 +1,12 @@
 import Link from "next/link";
 import SignOutButton from "./SignOutButton";
+import ManageSubscriptionButton from "./ManageSubscriptionButton";
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  async function openBillingPortal() {
-    try {
-      const res = await fetch("/api/stripe/portal", { method: "POST" });
-      const json = await res.json();
-
-      if (!res.ok || !json?.ok || !json?.url) {
-        alert(json?.error || "Unable to open billing portal.");
-        return;
-      }
-
-      window.location.href = json.url;
-    } catch (e) {
-      alert("Unable to open billing portal.");
-    }
-  }
-
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: "0 auto" }}>
       <div
@@ -50,14 +35,7 @@ export default function DashboardLayout({
             Settings
           </Link>
 
-          <button
-            type="button"
-            onClick={openBillingPortal}
-            style={buttonStyle}
-            aria-label="Manage subscription"
-          >
-            Manage subscription
-          </button>
+          <ManageSubscriptionButton style={buttonStyle} />
         </div>
 
         {/* Right side: keep Sign out aligned to the right edge */}
