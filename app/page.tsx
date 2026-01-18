@@ -140,7 +140,9 @@ export default function Home() {
         {/* Hero */}
         <section className="hero">
           <div className="hero-text">
-            <div className="badge">Owner-voice replies • AI drafts • You stay in control</div>
+            <div className="badge">
+              Owner-voice replies • AI drafts • You stay in control
+            </div>
 
             <h1>
               Reply to reviews in your voice
@@ -149,14 +151,14 @@ export default function Home() {
             </h1>
 
             <p className="hero-subtitle">
-  Review Concierge drafts short, human replies that sound like you — so you can
-  respond fast without giving up control or sounding generic.
-  <br />
-  <span style={{ opacity: 0.85 }}>
-    Draft thoughtful replies to reviews in English, Spanish, Portuguese, French,
-    Italian, and German.
-  </span>
-</p>
+              Review Concierge drafts short, human replies that sound like you — so you can
+              respond fast without giving up control or sounding generic.
+              <br />
+              <span style={{ opacity: 0.85 }}>
+                Draft thoughtful replies to reviews in English, Spanish, Portuguese, French,
+                Italian, and German.
+              </span>
+            </p>
 
             <div className="hero-ctas">
               <a className="primary-btn" href="/signup">
@@ -260,22 +262,34 @@ export default function Home() {
                   required
                 />
 
-                <select
-                  value={businessType}
-                  onChange={(e) => setBusinessType(e.target.value)}
-                  className="waitlist-input"
-                  required
-                >
-                  <option value="">Business type *</option>
-                  <option value="Winery">Winery</option>
-                  <option value="Restaurant">Restaurant</option>
-                  <option value="Bar">Bar</option>
-                  <option value="Cafe">Cafe</option>
-                  <option value="Nightclub">Nightclub</option>
-                  <option value="Tour Operator">Tour Operator</option>
-                  <option value="Hotel">Hotel</option>
-                  <option value="Other">Other</option>
-                </select>
+                {/* ✅ Styled select wrapper + custom caret */}
+                <div className="waitlist-select-wrap">
+                  <select
+                    value={businessType}
+                    onChange={(e) => setBusinessType(e.target.value)}
+                    className="waitlist-input waitlist-select"
+                    required
+                    style={{
+                      color: businessType ? "#f9fafb" : "rgba(209, 213, 219, 0.55)",
+                    }}
+                  >
+                    <option value="" disabled>
+                      Business type *
+                    </option>
+                    <option value="Winery">Winery</option>
+                    <option value="Restaurant">Restaurant</option>
+                    <option value="Bar">Bar</option>
+                    <option value="Cafe">Cafe</option>
+                    <option value="Nightclub">Nightclub</option>
+                    <option value="Tour Operator">Tour Operator</option>
+                    <option value="Hotel">Hotel</option>
+                    <option value="Other">Other</option>
+                  </select>
+
+                  <span className="waitlist-select-caret" aria-hidden="true">
+                    ▼
+                  </span>
+                </div>
 
                 {isOther && (
                   <input
@@ -402,20 +416,20 @@ export default function Home() {
               <p>Review Concierge drafts. You decide. No auto-posting, no automation that risks your reputation.</p>
             </div>
             <div className="card">
-  <h3>Multilingual replies</h3>
-  <p>
-    Reviews come in many languages. Review Concierge drafts replies in your
-    preferred language first — then translates them for the guest when needed.
-  </p>
-  <p>
-    This preserves your voice across languages while helping you respond to
-    global customers.
-  </p>
-  <p>
-    Supported languages: English, Spanish, Portuguese, French, Italian, and
-    German.
-  </p>
-</div>
+              <h3>Multilingual replies</h3>
+              <p>
+                Reviews come in many languages. Review Concierge drafts replies in your
+                preferred language first — then translates them for the guest when needed.
+              </p>
+              <p>
+                This preserves your voice across languages while helping you respond to
+                global customers.
+              </p>
+              <p>
+                Supported languages: English, Spanish, Portuguese, French, Italian, and
+                German.
+              </p>
+            </div>
 
             <div className="card">
               <h3>Lightweight workflow</h3>
@@ -796,6 +810,32 @@ export default function Home() {
         .waitlist-input:focus {
           border-color: rgba(96, 165, 250, 0.9);
           box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+        }
+
+        /* ✅ Select styling so it matches inputs on iOS/Safari */
+        .waitlist-select-wrap {
+          position: relative;
+          min-width: 160px;
+        }
+
+        .waitlist-select {
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
+          padding-right: 34px; /* room for caret */
+          background-image: none;
+        }
+
+        .waitlist-select-caret {
+          position: absolute;
+          right: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          pointer-events: none;
+          opacity: 0.7;
+          color: #e2e8f0;
+          font-size: 12px;
+          line-height: 1;
         }
 
         .hero-note {
