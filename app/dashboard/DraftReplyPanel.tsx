@@ -112,7 +112,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const COPY = {
     title: "Draft a reply in your voice",
     subtitle:
-      "Paste a guest review. We’ll suggest a short reply that sounds like you. You can edit it before you post anywhere.",
+      "Paste the guest's review here. We'll draft a short reply in your style—you can tweak it before you post it anywhere.",
     businessLabel: "Business name",
     ratingLabel: "Review rating",
     replyLanguageLabel: "Reviewer language (copy-ready)",

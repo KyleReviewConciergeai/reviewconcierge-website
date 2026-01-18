@@ -81,7 +81,7 @@ export default function DashboardPage() {
   const COPY = {
     title: "Your reviews",
     subtitle:
-      "Read what guests wrote, then draft a short reply that sounds like you. You’ll edit it before you post anywhere.",
+      "RRead what guests wrote, then write a short reply in your own voice. You can edit it before posting.",
     reloadBtn: "Reload",
     reloadBtnLoading: "Reloading…",
     syncBtn: "Bring in recent Google reviews",
@@ -93,7 +93,7 @@ export default function DashboardPage() {
     connectBody:
       "This links your business so we can bring in a recent sample of your Google reviews for drafting replies. Nothing is posted on your behalf.",
     connectTip: "Tip: search “business name + city”.",
-    connectBtn: "Verify & connect",
+    connectBtn: "Verify & Connect",
     connectBtnLoading: "Verifying…",
     connectedLabel: "Google connected",
     connectedHelp:

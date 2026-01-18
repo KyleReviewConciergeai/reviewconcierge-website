@@ -140,7 +140,7 @@ export default function Home() {
         {/* Hero */}
         <section className="hero">
           <div className="hero-text">
-            <div className="badge">Owner-voice replies • AI drafts • you stay in control</div>
+            <div className="badge">Owner-voice replies • AI drafts • You stay in control</div>
 
             <h1>
               Reply to reviews in your voice
@@ -174,7 +174,7 @@ export default function Home() {
               <div className="micro-item">
                 <div className="micro-title">Today</div>
                 <div className="micro-text">
-                  Connect a Google Place ID • sync a recent sample of reviews • generate
+                  Connect a Google Place ID • Sync a recent sample of reviews • Generate
                   reply drafts you can copy, tweak (optional), and post manually.
                 </div>
               </div>
