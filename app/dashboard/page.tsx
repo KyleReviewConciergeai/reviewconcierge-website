@@ -81,7 +81,7 @@ export default function DashboardPage() {
   const COPY = {
     title: "Your reviews",
     subtitle:
-      "RRead what guests wrote, then write a short reply in your own voice. You can edit it before posting.",
+      "Read what guests wrote, then write a short reply in your own voice. You can edit it before posting.",
     reloadBtn: "Reload",
     reloadBtnLoading: "Reloading…",
     syncBtn: "Bring in recent Google reviews",
