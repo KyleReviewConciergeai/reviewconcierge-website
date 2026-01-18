@@ -32,22 +32,44 @@ function ResetPasswordInner() {
   useEffect(() => {
     const supabase = supabaseBrowser();
 
+    const code = searchParams.get("code");
     const type = (searchParams.get("type") || "").toLowerCase();
     const hasRecoverySignals =
       type === "recovery" ||
-      !!searchParams.get("code") ||
+      !!code ||
       !!searchParams.get("token") ||
       !!searchParams.get("access_token");
 
-    if (hasRecoverySignals) {
-      supabase.auth.getSession().then(({ data }) => {
-        if (data.session) setMode("update");
-      });
-    }
+    // If the reset link includes a "code" (PKCE), exchange it for a session.
+    // This is what makes the "Choose a new password" view reliably appear in prod.
+    (async () => {
+      try {
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) {
+            setError(error.message || "Invalid or expired reset link. Please request a new one.");
+            setMode("request");
+            return;
+          }
+          setMode("update");
+          return;
+        }
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) setMode("update");
-    });
+        // If no code, but we have other recovery signals, try session.
+        if (hasRecoverySignals) {
+          const { data } = await supabase.auth.getSession();
+          if (data.session) setMode("update");
+        } else {
+          // Normal visit
+          const { data } = await supabase.auth.getSession();
+          if (data.session) setMode("update");
+        }
+      } catch (e: any) {
+        // Fail open to request mode with a helpful message
+        setMode("request");
+        setError(e?.message || "Could not validate reset link. Please request a new one.");
+      }
+    })();
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) setMode("update");
@@ -55,7 +77,7 @@ function ResetPasswordInner() {
 
     return () => sub.subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   async function onRequestReset(e: React.FormEvent) {
     e.preventDefault();
@@ -136,10 +158,7 @@ function ResetPasswordInner() {
             Enter your email and we’ll send a password reset link.
           </p>
 
-          <form
-            onSubmit={onRequestReset}
-            style={{ display: "grid", gap: 10, marginTop: 16 }}
-          >
+          <form onSubmit={onRequestReset} style={{ display: "grid", gap: 10, marginTop: 16 }}>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -169,10 +188,7 @@ function ResetPasswordInner() {
             Enter a new password for your account.
           </p>
 
-          <form
-            onSubmit={onUpdatePassword}
-            style={{ display: "grid", gap: 10, marginTop: 16 }}
-          >
+          <form onSubmit={onUpdatePassword} style={{ display: "grid", gap: 10, marginTop: 16 }}>
             <input
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
