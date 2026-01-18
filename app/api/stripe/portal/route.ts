@@ -5,22 +5,11 @@ import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { requireOrgContext } from "@/lib/orgServer";
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
     const { supabase, organizationId } = await requireOrgContext();
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL;
-    if (!baseUrl) {
-      return NextResponse.json(
-        { ok: false, error: "Missing NEXT_PUBLIC_APP_URL" },
-        { status: 500 }
-      );
-    }
-
     // ✅ Pull Stripe customer id from org_subscriptions
-    // Assumed schema:
-    // org_subscriptions.organization_id (uuid)
-    // org_subscriptions.stripe_customer_id (text)
     const { data: sub, error } = await supabase
       .from("org_subscriptions")
       .select("stripe_customer_id")
@@ -44,9 +33,12 @@ export async function POST() {
       );
     }
 
+    // ✅ Works in prod/preview/local without env vars
+    const origin = req.headers.get("origin") || "http://localhost:3000";
+
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: `${baseUrl}/dashboard`,
+      return_url: `${origin}/dashboard`,
     });
 
     return NextResponse.json({ ok: true, url: session.url });
