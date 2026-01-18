@@ -26,11 +26,9 @@ function ResetPasswordInner() {
 
   useEffect(() => {
     const supabase = supabaseBrowser();
-
     const token_hash = searchParams.get("token_hash");
     const type = searchParams.get("type")?.toLowerCase();
 
-    // Handle recovery link click: verify token_hash to establish session
     (async () => {
       if (token_hash && type === "recovery") {
         setLoading(true);
@@ -39,12 +37,8 @@ function ResetPasswordInner() {
             token_hash,
             type: "recovery",
           });
+          if (verifyError) throw verifyError;
 
-          if (verifyError) {
-            throw verifyError;
-          }
-
-          // Session should now be set via cookies
           const { data: { session } } = await supabase.auth.getSession();
           if (session) {
             setMode("update");
@@ -54,15 +48,13 @@ function ResetPasswordInner() {
           }
         } catch (err: any) {
           setError(
-            err?.message ||
-              "Invalid or expired reset link. Please request a new one."
+            err?.message || "Invalid or expired reset link. Please request a new one."
           );
           setMode("request");
         } finally {
           setLoading(false);
         }
       } else {
-        // If no recovery params, check if already signed in (e.g., direct visit)
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
           setMode("update");
@@ -70,7 +62,6 @@ function ResetPasswordInner() {
       }
     })();
 
-    // Listen for auth state changes (e.g., if session updates later)
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) setMode("update");
     });
@@ -88,13 +79,8 @@ function ResetPasswordInner() {
     try {
       const supabase = supabaseBrowser();
       const redirectTo = `${baseUrl}/reset-password`;
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo,
-      });
-
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
       if (error) throw error;
-
       setMsg("Password reset email sent. Please check your inbox.");
     } catch (err: any) {
       setError(err?.message || "Could not send reset email.");
@@ -111,7 +97,6 @@ function ResetPasswordInner() {
 
     const pw = newPassword.trim();
     const pw2 = confirmPassword.trim();
-
     if (pw.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
@@ -122,15 +107,12 @@ function ResetPasswordInner() {
     }
 
     setLoading(true);
-
     try {
       const supabase = supabaseBrowser();
       const { error } = await supabase.auth.updateUser({ password: pw });
-
       if (error) throw error;
 
-      await supabase.auth.signOut(); // Optional: sign out after reset for security
-
+      await supabase.auth.signOut();
       setMsg("Password updated successfully. Redirecting to login…");
 
       setTimeout(() => {
@@ -145,20 +127,17 @@ function ResetPasswordInner() {
   }
 
   return (
-    <main style={{ maxWidth: 520, margin: "40px auto", padding: 16 }}>
-      <h1 style={{ marginBottom: 6 }}>
+    <main style={{ padding: 24, maxWidth: 520, margin: "0 auto" }}>
+      <h1 style={{ fontSize: 24, marginBottom: 12 }}>
         {mode === "request" ? "Reset password" : "Choose a new password"}
       </h1>
 
       {mode === "request" ? (
         <>
-          <p style={{ opacity: 0.8, marginTop: 0 }}>
+          <p style={{ opacity: 0.8, margin: "0 0 16px 0", fontSize: 15 }}>
             Enter your email and we’ll send a password reset link.
           </p>
-          <form
-            onSubmit={onRequestReset}
-            style={{ display: "grid", gap: 10, marginTop: 16 }}
-          >
+          <form onSubmit={onRequestReset} style={{ display: "grid", gap: 10 }}>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -169,25 +148,39 @@ function ResetPasswordInner() {
               disabled={loading}
               style={inputStyle}
             />
-            <button disabled={loading} style={buttonStyle}>
+            <button
+              type="submit"
+              disabled={loading || !email.trim()}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(148,163,184,0.35)",
+                background: "rgba(15,23,42,0.7)",
+                cursor: loading || !email.trim() ? "not-allowed" : "pointer",
+                fontWeight: 600,
+                opacity: loading || !email.trim() ? 0.7 : 1,
+                color: "inherit",
+              }}
+            >
               {loading ? "Sending…" : "Send reset link"}
             </button>
-            {msg && <div style={{ color: "green" }}>{msg}</div>}
-            {error && <div style={{ color: "#ffb3b3" }}>{error}</div>}
-            <div style={{ fontSize: 14, opacity: 0.9 }}>
-              <a href="/login">Back to login</a>
+
+            {msg && <div style={{ color: "lightgreen", fontSize: 13 }}>{msg}</div>}
+            {error && <div style={{ color: "#ffb3b3", fontSize: 13 }}>{error}</div>}
+
+            <div style={{ display: "flex", gap: 12, marginTop: 6, opacity: 0.85 }}>
+              <a href="/login" style={{ color: "inherit", textDecoration: "underline" }}>
+                Back to login
+              </a>
             </div>
           </form>
         </>
       ) : (
         <>
-          <p style={{ opacity: 0.8, marginTop: 0 }}>
+          <p style={{ opacity: 0.8, margin: "0 0 16px 0", fontSize: 15 }}>
             Enter a new password for your account.
           </p>
-          <form
-            onSubmit={onUpdatePassword}
-            style={{ display: "grid", gap: 10, marginTop: 16 }}
-          >
+          <form onSubmit={onUpdatePassword} style={{ display: "grid", gap: 10 }}>
             <input
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -208,11 +201,29 @@ function ResetPasswordInner() {
               disabled={loading}
               style={inputStyle}
             />
-            <button disabled={loading} style={buttonStyle}>
+            <button
+              type="submit"
+              disabled={loading || !newPassword.trim() || !confirmPassword.trim()}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(148,163,184,0.35)",
+                background: "rgba(15,23,42,0.7)",
+                cursor:
+                  loading || !newPassword.trim() || !confirmPassword.trim()
+                    ? "not-allowed"
+                    : "pointer",
+                fontWeight: 600,
+                opacity:
+                  loading || !newPassword.trim() || !confirmPassword.trim() ? 0.7 : 1,
+                color: "inherit",
+              }}
+            >
               {loading ? "Updating…" : "Update password"}
             </button>
-            {msg && <div style={{ color: "green" }}>{msg}</div>}
-            {error && <div style={{ color: "#ffb3b3" }}>{error}</div>}
+
+            {msg && <div style={{ color: "lightgreen", fontSize: 13 }}>{msg}</div>}
+            {error && <div style={{ color: "#ffb3b3", fontSize: 13 }}>{error}</div>}
           </form>
         </>
       )}
@@ -231,14 +242,9 @@ export default function ResetPasswordPage() {
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid rgba(0,0,0,0.15)",
-};
-
-const buttonStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid rgba(0,0,0,0.12)",
-  cursor: "pointer",
-  fontWeight: 600,
+  borderRadius: 10,
+  border: "1px solid rgba(148,163,184,0.35)",
+  background: "rgba(15,23,42,0.7)",
+  color: "inherit",
+  outline: "none",
 };
