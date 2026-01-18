@@ -1,5 +1,4 @@
 "use client";
-
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
@@ -16,73 +15,72 @@ function getBaseUrl() {
 function ResetPasswordInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-
   const [mode, setMode] = useState<Mode>("request");
   const [email, setEmail] = useState("");
-
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string>("");
   const [error, setError] = useState<string>("");
-
   const baseUrl = useMemo(() => getBaseUrl(), []);
 
   useEffect(() => {
     const supabase = supabaseBrowser();
 
-    const code = searchParams.get("code");
-    const type = (searchParams.get("type") || "").toLowerCase();
-    const hasRecoverySignals =
-      type === "recovery" ||
-      !!code ||
-      !!searchParams.get("token") ||
-      !!searchParams.get("access_token");
+    const token_hash = searchParams.get("token_hash");
+    const type = searchParams.get("type")?.toLowerCase();
 
-    // If the reset link includes a "code" (PKCE), exchange it for a session.
-    // This is what makes the "Choose a new password" view reliably appear in prod.
+    // Handle recovery link click: verify token_hash to establish session
     (async () => {
-      try {
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) {
-            setError(error.message || "Invalid or expired reset link. Please request a new one.");
-            setMode("request");
-            return;
-          }
-          setMode("update");
-          return;
-        }
+      if (token_hash && type === "recovery") {
+        setLoading(true);
+        try {
+          const { error: verifyError } = await supabase.auth.verifyOtp({
+            token_hash,
+            type: "recovery",
+          });
 
-        // If no code, but we have other recovery signals, try session.
-        if (hasRecoverySignals) {
-          const { data } = await supabase.auth.getSession();
-          if (data.session) setMode("update");
-        } else {
-          // Normal visit
-          const { data } = await supabase.auth.getSession();
-          if (data.session) setMode("update");
+          if (verifyError) {
+            throw verifyError;
+          }
+
+          // Session should now be set via cookies
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session) {
+            setMode("update");
+            setMsg("Reset link verified. Enter your new password below.");
+          } else {
+            throw new Error("Session not established after verification.");
+          }
+        } catch (err: any) {
+          setError(
+            err?.message ||
+              "Invalid or expired reset link. Please request a new one."
+          );
+          setMode("request");
+        } finally {
+          setLoading(false);
         }
-      } catch (e: any) {
-        // Fail open to request mode with a helpful message
-        setMode("request");
-        setError(e?.message || "Could not validate reset link. Please request a new one.");
+      } else {
+        // If no recovery params, check if already signed in (e.g., direct visit)
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          setMode("update");
+        }
       }
     })();
 
+    // Listen for auth state changes (e.g., if session updates later)
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) setMode("update");
     });
 
     return () => sub.subscription.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   async function onRequestReset(e: React.FormEvent) {
     e.preventDefault();
     if (loading) return;
-
     setError("");
     setMsg("");
     setLoading(true);
@@ -91,7 +89,7 @@ function ResetPasswordInner() {
       const supabase = supabaseBrowser();
       const redirectTo = `${baseUrl}/reset-password`;
 
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo,
       });
 
@@ -108,7 +106,6 @@ function ResetPasswordInner() {
   async function onUpdatePassword(e: React.FormEvent) {
     e.preventDefault();
     if (loading) return;
-
     setError("");
     setMsg("");
 
@@ -128,17 +125,18 @@ function ResetPasswordInner() {
 
     try {
       const supabase = supabaseBrowser();
-
       const { error } = await supabase.auth.updateUser({ password: pw });
+
       if (error) throw error;
 
-      await supabase.auth.signOut();
+      await supabase.auth.signOut(); // Optional: sign out after reset for security
 
-      setMsg("Password updated. Redirecting…");
+      setMsg("Password updated successfully. Redirecting to login…");
+
       setTimeout(() => {
         router.push("/login?next=/dashboard");
         router.refresh();
-      }, 700);
+      }, 1500);
     } catch (err: any) {
       setError(err?.message || "Could not update password.");
     } finally {
@@ -157,8 +155,10 @@ function ResetPasswordInner() {
           <p style={{ opacity: 0.8, marginTop: 0 }}>
             Enter your email and we’ll send a password reset link.
           </p>
-
-          <form onSubmit={onRequestReset} style={{ display: "grid", gap: 10, marginTop: 16 }}>
+          <form
+            onSubmit={onRequestReset}
+            style={{ display: "grid", gap: 10, marginTop: 16 }}
+          >
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -169,14 +169,11 @@ function ResetPasswordInner() {
               disabled={loading}
               style={inputStyle}
             />
-
             <button disabled={loading} style={buttonStyle}>
               {loading ? "Sending…" : "Send reset link"}
             </button>
-
             {msg && <div style={{ color: "green" }}>{msg}</div>}
             {error && <div style={{ color: "#ffb3b3" }}>{error}</div>}
-
             <div style={{ fontSize: 14, opacity: 0.9 }}>
               <a href="/login">Back to login</a>
             </div>
@@ -187,8 +184,10 @@ function ResetPasswordInner() {
           <p style={{ opacity: 0.8, marginTop: 0 }}>
             Enter a new password for your account.
           </p>
-
-          <form onSubmit={onUpdatePassword} style={{ display: "grid", gap: 10, marginTop: 16 }}>
+          <form
+            onSubmit={onUpdatePassword}
+            style={{ display: "grid", gap: 10, marginTop: 16 }}
+          >
             <input
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -199,7 +198,6 @@ function ResetPasswordInner() {
               disabled={loading}
               style={inputStyle}
             />
-
             <input
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
@@ -210,11 +208,9 @@ function ResetPasswordInner() {
               disabled={loading}
               style={inputStyle}
             />
-
             <button disabled={loading} style={buttonStyle}>
               {loading ? "Updating…" : "Update password"}
             </button>
-
             {msg && <div style={{ color: "green" }}>{msg}</div>}
             {error && <div style={{ color: "#ffb3b3" }}>{error}</div>}
           </form>
@@ -225,7 +221,6 @@ function ResetPasswordInner() {
 }
 
 export default function ResetPasswordPage() {
-  // ✅ REQUIRED when using useSearchParams in App Router
   return (
     <Suspense fallback={<main style={{ padding: 24 }}>Loading…</main>}>
       <ResetPasswordInner />
