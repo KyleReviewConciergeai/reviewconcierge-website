@@ -816,15 +816,18 @@ export default function Home() {
         .waitlist-select-wrap {
           position: relative;
           min-width: 160px;
+          flex: 1;          /* ✅ lets it expand like other inputs */
         }
 
         .waitlist-select {
-          appearance: none;
+          width: 100%;      /* ✅ fills the wrapper */
+           appearance: none;
           -webkit-appearance: none;
           -moz-appearance: none;
-          padding-right: 34px; /* room for caret */
+           padding-right: 34px;
           background-image: none;
         }
+
 
         .waitlist-select-caret {
           position: absolute;
