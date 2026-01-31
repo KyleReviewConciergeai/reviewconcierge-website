@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { cookies } from "next/headers";
 import "./globals.css";
+import { getLocaleServer } from "@/lib/locale";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,52 +15,28 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  // ✅ FIX: tells Next how to resolve absolute URLs for OG/Twitter
   metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ?? "https://reviewconcierge.ai"
+    process.env.NEXT_PUBLIC_APP_URL ?? "https://www.reviewconcierge.ai"
   ),
-
   title: "Review Concierge AI",
   description:
     "AI-powered review monitoring, response drafting, and reputation management for hospitality operators.",
-
-  openGraph: {
-    title: "Review Concierge AI",
-    description:
-      "Turn online reviews into more bookings and revenue with AI automation.",
-    url: "https://reviewconcierge.ai",
-    siteName: "Review Concierge AI",
-    images: [
-      {
-        url: "/og-image.png", // resolves correctly now
-        width: 1200,
-        height: 630,
-        alt: "Review Concierge AI",
-      },
-    ],
-    locale: "en_US",
-    type: "website",
-  },
-
-  twitter: {
-    card: "summary_large_image",
-    title: "Review Concierge AI",
-    description:
-      "Turn online reviews into more bookings & revenue with AI automation.",
-    images: ["/og-image.png"],
-  },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // ✅ In your Next setup, cookies() is async
+  const cookieStore = await cookies();
+
+  // ✅ Your helper expects a cookieStore argument
+  const locale = getLocaleServer(cookieStore);
+
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    <html lang={locale}>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
       </body>
     </html>
