@@ -4,6 +4,7 @@ import { supabaseServerClient } from "@/lib/supabaseServerClient";
 import { supabaseServer } from "@/lib/supabaseServer";
 
 export type OrgContext = {
+  // Session-aware client (anon + cookies) for auth & user-scoped reads
   supabase: Awaited<ReturnType<typeof supabaseServerClient>>;
   userId: string;
   organizationId: string;
@@ -17,6 +18,12 @@ function defaultOrgName(email?: string | null) {
   return "New Organization";
 }
 
+/**
+ * Resolves the current user's org context.
+ * - Requires an authenticated Supabase user (via cookies)
+ * - Ensures a profile exists
+ * - Ensures an organization exists (bootstraps if missing)
+ */
 export async function requireOrgContext(): Promise<OrgContext> {
   // Session-aware client (anon + cookies) for auth
   const supabase = await supabaseServerClient();
@@ -25,12 +32,13 @@ export async function requireOrgContext(): Promise<OrgContext> {
   const user = authData?.user;
 
   if (authError || !user) {
+    // Keep this string stable; API routes can key off it for 401s.
     throw new Error("Unauthorized");
   }
 
   const admin = supabaseServer(); // ✅ service role (server-only)
 
-  // 1) Try to load profile (service role avoids RLS surprises)
+  // 1) Load profile (service role avoids RLS surprises)
   const { data: profile, error: profErr } = await admin
     .from("profiles")
     .select("id, organization_id, email")
@@ -83,4 +91,13 @@ export async function requireOrgContext(): Promise<OrgContext> {
     organizationId: profile.organization_id,
     email: profile.email ?? user.email ?? null,
   };
+}
+
+/**
+ * Convenience helper for server routes that only need the org id.
+ * Keeps all org lookup/bootstrap behavior in one place.
+ */
+export async function requireOrgId(): Promise<string> {
+  const ctx = await requireOrgContext();
+  return ctx.organizationId;
 }
