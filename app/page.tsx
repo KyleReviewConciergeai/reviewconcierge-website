@@ -7,6 +7,10 @@ type Locale = "en" | "es" | "pt";
 
 const LOCALE_COOKIE = "rc_locale";
 
+// ✅ Hosted on Vercel Blob (public URL)
+const DEMO_VIDEO_URL =
+  "https://r0sironssiim51vb.public.blob.vercel-storage.com/demo.mp4";
+
 function readLocaleCookie(): Locale {
   if (typeof document === "undefined") return "en";
   const match = document.cookie
@@ -33,7 +37,7 @@ export default function Home() {
     setLocale(readLocaleCookie());
   }, []);
 
-  // Demo video existence (shows placeholder until /public/demo.mp4 exists)
+  // ✅ Demo video readiness (hosted on Vercel Blob)
   const [demoReady, setDemoReady] = useState<boolean>(true);
 
   // Waitlist form state
@@ -107,7 +111,11 @@ export default function Home() {
         matrix: {
           nowTitle: "Included now",
           soonTitle: "Coming soon",
-          now: ["Google sync (recent sample)", "Owner-voice drafts", "Copy + post manually"],
+          now: [
+            "Google sync (recent sample)",
+            "Owner-voice drafts",
+            "Copy + post manually",
+          ],
           soon: [
             "Full Google Business Profile integration",
             "Deeper voice training",
@@ -124,9 +132,9 @@ export default function Home() {
         lengthNote: "Demo video: under 1 minute.",
         label: "Demo video",
         sec: "Draft in ≈30s",
-        placeholderTitle: "Video coming today",
+        placeholderTitle: "Video unavailable",
         placeholderBody:
-          "We’re finishing a quick walkthrough edit right now. As soon as /public/demo.mp4 is uploaded, it will appear here automatically.",
+          "The demo video is hosted on our secure file store. If it doesn’t load, please refresh or try again in a moment.",
         steps: ["Open dashboard", "Pick a review", "Draft reply", "Copy + post"],
         note: "No auto-posting. You stay in control.",
         whatTitle: "What you’ll see",
@@ -249,7 +257,11 @@ export default function Home() {
         matrix: {
           nowTitle: "Incluye hoy",
           soonTitle: "Muy pronto",
-          now: ["Sync de Google (muestra reciente)", "Borradores con tu voz", "Copiar + publicar manualmente"],
+          now: [
+            "Sync de Google (muestra reciente)",
+            "Borradores con tu voz",
+            "Copiar + publicar manualmente",
+          ],
           soon: [
             "Integración completa con Google Business Profile",
             "Mejor entrenamiento de voz",
@@ -266,9 +278,9 @@ export default function Home() {
         lengthNote: "Video demo: menos de 1 minuto.",
         label: "Video demo",
         sec: "Borrador en ≈30s",
-        placeholderTitle: "Video en camino",
+        placeholderTitle: "Video no disponible",
         placeholderBody:
-          "Estamos terminando una edición rápida. Apenas subamos /public/demo.mp4, va a aparecer acá automáticamente.",
+          "El video demo está alojado en nuestro almacenamiento. Si no carga, actualiza la página o vuelve a intentar en unos segundos.",
         steps: ["Abrir panel", "Elegir reseña", "Generar respuesta", "Copiar + publicar"],
         note: "Nada de auto-publicación. Tú tienes el control.",
         whatTitle: "Qué vas a ver",
@@ -390,7 +402,11 @@ export default function Home() {
         matrix: {
           nowTitle: "Inclui hoje",
           soonTitle: "Em breve",
-          now: ["Sync do Google (amostra recente)", "Rascunhos com voz do dono", "Copiar + postar manualmente"],
+          now: [
+            "Sync do Google (amostra recente)",
+            "Rascunhos com voz do dono",
+            "Copiar + postar manualmente",
+          ],
           soon: [
             "Integração completa com Google Business Profile",
             "Treinamento de voz melhor",
@@ -407,9 +423,9 @@ export default function Home() {
         lengthNote: "Vídeo demo: menos de 1 minuto.",
         label: "Vídeo demo",
         sec: "Rascunho em ≈30s",
-        placeholderTitle: "Vídeo chegando",
+        placeholderTitle: "Vídeo indisponível",
         placeholderBody:
-          "Estamos finalizando uma edição rápida. Assim que /public/demo.mp4 estiver pronto, ele aparecerá aqui automaticamente.",
+          "O vídeo demo está hospedado no nosso armazenamento. Se não carregar, atualize a página ou tente novamente em alguns segundos.",
         steps: ["Abrir painel", "Escolher avaliação", "Gerar resposta", "Copiar + postar"],
         note: "Sem autopost. Você no controle.",
         whatTitle: "O que você vai ver",
@@ -733,12 +749,16 @@ export default function Home() {
                     className="demo-video"
                     onError={() => setDemoReady(false)}
                   >
-                    <source src="/demo.mp4" type="video/mp4" />
+                    <source src={DEMO_VIDEO_URL} type="video/mp4" />
                   </video>
                 ) : (
                   <div className="demo-placeholder">
-                    <div className="demo-placeholder-title">{t.demo.placeholderTitle}</div>
-                    <div className="demo-placeholder-body">{t.demo.placeholderBody}</div>
+                    <div className="demo-placeholder-title">
+                      {t.demo.placeholderTitle}
+                    </div>
+                    <div className="demo-placeholder-body">
+                      {t.demo.placeholderBody}
+                    </div>
                   </div>
                 )}
               </div>
@@ -820,7 +840,9 @@ export default function Home() {
                     className="waitlist-input waitlist-select"
                     required
                     style={{
-                      color: businessType ? "#f9fafb" : "rgba(209, 213, 219, 0.55)",
+                      color: businessType
+                        ? "#f9fafb"
+                        : "rgba(209, 213, 219, 0.55)",
                     }}
                   >
                     <option value="" disabled>
@@ -866,12 +888,18 @@ export default function Home() {
                   pattern="[0-9]*"
                   placeholder={t.waitlist.locations}
                   value={locationsCount}
-                  onChange={(e) => setLocationsCount(e.target.value.replace(/\D/g, ""))}
+                  onChange={(e) =>
+                    setLocationsCount(e.target.value.replace(/\D/g, ""))
+                  }
                   className="waitlist-input"
                   required
                 />
 
-                <button type="submit" className="primary-btn" disabled={status === "loading"}>
+                <button
+                  type="submit"
+                  className="primary-btn"
+                  disabled={status === "loading"}
+                >
                   {status === "loading" ? t.waitlist.joining : t.waitlist.join}
                 </button>
               </div>
