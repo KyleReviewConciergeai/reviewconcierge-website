@@ -104,17 +104,25 @@ export default function Home() {
           "Copy, lightly edit (optional), and post manually",
           "Never auto-posts",
         ],
-        soonTitle: "Coming soon",
-        soonText:
-          "Better voice training, multilingual support, and workflows for teams and multi-location groups.",
+        matrix: {
+          nowTitle: "Included now",
+          soonTitle: "Coming soon",
+          now: ["Google sync (recent sample)", "Owner-voice drafts", "Copy + post manually"],
+          soon: [
+            "Full Google Business Profile integration",
+            "Deeper voice training",
+            "Team roles + approvals",
+            "Multi-location workflows",
+          ],
+          foot:
+            "Roadmap features are in progress. Early access customers help shape what ships next.",
+        },
       },
       demo: {
         title: "Quick demo",
         subtitle: "Dashboard → pick a review → draft reply → copy. (~30 seconds)",
-        // ✅ NEW helper line (clarifies video length)
         lengthNote: "Demo video: under 1 minute.",
         label: "Demo video",
-        // ✅ UPDATED pill label (draft speed, not video length)
         sec: "Draft in ≈30s",
         placeholderTitle: "Video coming today",
         placeholderBody:
@@ -128,8 +136,6 @@ export default function Home() {
           "Generate an owner-voice draft",
           "Copy + post manually in Google",
         ],
-        languageNote:
-          "Want the video in Spanish later? Totally fine — but for the homepage demo, English is perfect (it’s “universal” and keeps the first impression simple).",
       },
       waitlist: {
         title: "Join the beta waitlist",
@@ -240,17 +246,25 @@ export default function Home() {
           "Copia, edita un poco (opcional) y publica manualmente",
           "Nunca publica automáticamente",
         ],
-        soonTitle: "Muy pronto",
-        soonText:
-          "Mejor entrenamiento de voz, soporte multilingüe y flujos para equipos y negocios multi-ubicación.",
+        matrix: {
+          nowTitle: "Incluye hoy",
+          soonTitle: "Muy pronto",
+          now: ["Sync de Google (muestra reciente)", "Borradores con tu voz", "Copiar + publicar manualmente"],
+          soon: [
+            "Integración completa con Google Business Profile",
+            "Mejor entrenamiento de voz",
+            "Roles de equipo + aprobaciones",
+            "Flujos multi-ubicación",
+          ],
+          foot:
+            "Las funciones del roadmap están en progreso. Los primeros clientes ayudan a priorizar qué sale primero.",
+        },
       },
       demo: {
         title: "Demo rápida",
         subtitle: "Panel → elige una reseña → genera respuesta → copia. (~30 segundos)",
-        // ✅ NEW helper line (clarifies video length)
         lengthNote: "Video demo: menos de 1 minuto.",
         label: "Video demo",
-        // ✅ UPDATED pill label (draft speed, not video length)
         sec: "Borrador en ≈30s",
         placeholderTitle: "Video en camino",
         placeholderBody:
@@ -264,8 +278,6 @@ export default function Home() {
           "Generar un borrador con voz de dueño",
           "Copiar y publicar manualmente en Google",
         ],
-        languageNote:
-          "¿Querés el video en español después? Perfecto — pero para la demo en la home, el inglés funciona muy bien (es “universal” y mantiene la primera impresión simple).",
       },
       waitlist: {
         title: "Sumate a la beta",
@@ -375,17 +387,25 @@ export default function Home() {
           "Copie, edite um pouco (opcional) e poste manualmente",
           "Nunca posta automaticamente",
         ],
-        soonTitle: "Em breve",
-        soonText:
-          "Treinamento de voz melhor, suporte multilíngue e fluxos para equipes e negócios multi-localização.",
+        matrix: {
+          nowTitle: "Inclui hoje",
+          soonTitle: "Em breve",
+          now: ["Sync do Google (amostra recente)", "Rascunhos com voz do dono", "Copiar + postar manualmente"],
+          soon: [
+            "Integração completa com Google Business Profile",
+            "Treinamento de voz melhor",
+            "Papéis da equipe + aprovações",
+            "Fluxos multi-localização",
+          ],
+          foot:
+            "Recursos do roadmap estão em desenvolvimento. Clientes early access ajudam a definir prioridades.",
+        },
       },
       demo: {
         title: "Demo rápida",
         subtitle: "Painel → escolha uma avaliação → gerar resposta → copiar. (~30 segundos)",
-        // ✅ NEW helper line (clarifies video length)
         lengthNote: "Vídeo demo: menos de 1 minuto.",
         label: "Vídeo demo",
-        // ✅ UPDATED pill label (draft speed, not video length)
         sec: "Rascunho em ≈30s",
         placeholderTitle: "Vídeo chegando",
         placeholderBody:
@@ -399,8 +419,6 @@ export default function Home() {
           "Gerar um rascunho com voz do dono",
           "Copiar e postar manualmente no Google",
         ],
-        languageNote:
-          "Quer o vídeo em português depois? Perfeito — mas para a demo da home, inglês é ótimo (é “universal” e mantém a primeira impressão simples).",
       },
       waitlist: {
         title: "Entre na beta",
@@ -649,7 +667,9 @@ export default function Home() {
           <div className="hero-card">
             <h2>{t.heroCard.title}</h2>
             <p>{t.heroCard.body}</p>
-            <ul>
+
+            {/* ✅ Fix consultant-flagged bullets: no weird dots on mobile + consistent alignment */}
+            <ul className="checklist">
               {t.heroCard.bullets.map((b) => (
                 <li key={b}>{b}</li>
               ))}
@@ -657,10 +677,28 @@ export default function Home() {
 
             <div className="card-divider" />
 
-            <div className="card-foot">
-              <div className="card-foot-title">{t.heroCard.soonTitle}</div>
-              <div className="card-foot-text">{t.heroCard.soonText}</div>
+            {/* ✅ New: visual roadmap matrix (instead of text block + divider weirdness) */}
+            <div className="roadmap-matrix" aria-label="Product roadmap">
+              <div className="roadmap-col">
+                <div className="roadmap-title">{t.heroCard.matrix.nowTitle}</div>
+                <ul className="roadmap-list">
+                  {t.heroCard.matrix.now.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="roadmap-col">
+                <div className="roadmap-title">{t.heroCard.matrix.soonTitle}</div>
+                <ul className="roadmap-list roadmap-soon">
+                  {t.heroCard.matrix.soon.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
+
+            <div className="roadmap-foot">{t.heroCard.matrix.foot}</div>
           </div>
         </section>
 
@@ -719,7 +757,7 @@ export default function Home() {
 
             <div className="demo-what-card">
               <h3>{t.demo.whatTitle}</h3>
-              <ul>
+              <ul className="checklist">
                 {t.demo.whatBullets.map((b) => (
                   <li key={b}>{b}</li>
                 ))}
@@ -1159,6 +1197,98 @@ export default function Home() {
           font-size: 14px;
         }
 
+        /* ✅ Fix: default UL bullets can look weird on iOS; use clean checkmarks instead */
+        .checklist {
+          list-style: none;
+          padding: 0;
+          margin: 12px 0 0;
+        }
+
+        .checklist li {
+          position: relative;
+          padding-left: 26px;
+          margin: 10px 0;
+          color: rgba(226, 232, 240, 0.92);
+          line-height: 1.35;
+        }
+
+        .checklist li::before {
+          content: "✓";
+          position: absolute;
+          left: 0;
+          top: 0.1em;
+          width: 18px;
+          height: 18px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          font-weight: 800;
+          background: rgba(37, 99, 235, 0.22);
+          border: 1px solid rgba(96, 165, 250, 0.35);
+          color: rgba(226, 232, 240, 0.95);
+        }
+
+        /* ✅ New: roadmap matrix visual */
+        .roadmap-matrix {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+          margin-top: 14px;
+        }
+
+        .roadmap-col {
+          border: 1px solid rgba(148, 163, 184, 0.18);
+          background: rgba(2, 6, 23, 0.18);
+          border-radius: 14px;
+          padding: 12px 12px 10px;
+        }
+
+        .roadmap-title {
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.01em;
+          color: rgba(226, 232, 240, 0.92);
+          margin-bottom: 8px;
+        }
+
+        .roadmap-list {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+        }
+
+        .roadmap-list li {
+          position: relative;
+          padding-left: 22px;
+          margin: 8px 0;
+          font-size: 12px;
+          color: rgba(209, 213, 219, 0.88);
+          line-height: 1.35;
+        }
+
+        .roadmap-list li::before {
+          content: "✓";
+          position: absolute;
+          left: 0;
+          top: 0.05em;
+          font-weight: 900;
+          color: rgba(96, 165, 250, 0.92);
+        }
+
+        .roadmap-list.roadmap-soon li::before {
+          content: "⏳";
+          color: rgba(156, 163, 175, 0.92);
+        }
+
+        .roadmap-foot {
+          margin-top: 10px;
+          font-size: 12px;
+          color: rgba(156, 163, 175, 0.92);
+          line-height: 1.35;
+        }
+
         .hero-text h1 {
           font-size: 40px;
           line-height: 1.1;
@@ -1265,19 +1395,6 @@ export default function Home() {
           height: 1px;
           background: rgba(148, 163, 184, 0.25);
           margin: 14px 0;
-        }
-
-        .card-foot-title {
-          font-size: 12px;
-          font-weight: 700;
-          margin-bottom: 6px;
-          color: rgba(226, 232, 240, 0.92);
-        }
-
-        .card-foot-text {
-          font-size: 12px;
-          color: rgba(209, 213, 219, 0.85);
-          line-height: 1.4;
         }
 
         .primary-btn {
@@ -1445,20 +1562,6 @@ export default function Home() {
           margin-bottom: 10px;
           color: rgba(226, 232, 240, 0.95);
           font-size: 16px;
-        }
-
-        .demo-what-card ul {
-          padding-left: 18px;
-          margin: 0;
-          color: rgba(209, 213, 219, 0.88);
-          font-size: 13px;
-          line-height: 1.5;
-        }
-
-        .demo-language-note {
-          font-size: 12px;
-          color: rgba(156, 163, 175, 0.95);
-          margin: 0;
         }
 
         /* Waitlist */
@@ -1693,6 +1796,10 @@ export default function Home() {
           }
 
           .hero-micro {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .roadmap-matrix {
             grid-template-columns: minmax(0, 1fr);
           }
 
