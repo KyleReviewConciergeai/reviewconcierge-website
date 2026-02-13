@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getAccessTokenFromRefreshToken } from "@/lib/googleOAuthServer";
 import { createClient } from "@supabase/supabase-js";
-import { requireOrgId } from "@/lib/orgServer";
+import { requireOrgContext } from "@/lib/orgServer";
 
 function mustEnv(name: string) {
   const v = process.env[name];
@@ -10,23 +10,49 @@ function mustEnv(name: string) {
   return v;
 }
 
+// IMPORTANT: use Service Role on the server only
 function supabaseAdmin() {
   const url = mustEnv("NEXT_PUBLIC_SUPABASE_URL");
   const service = mustEnv("SUPABASE_SERVICE_ROLE_KEY");
   return createClient(url, service, { auth: { persistSession: false } });
 }
 
-function looksLikeGbpPendingQuota(detailText: string) {
-  // Google sometimes includes quota_limit_value: "0" when access isn't granted yet
-  return detailText.includes('"quota_limit_value": "0"') || detailText.includes("RESOURCE_EXHAUSTED");
+function truncate(s: string, max = 1200) {
+  if (!s) return s;
+  return s.length > max ? `${s.slice(0, max)}…(truncated)` : s;
+}
+
+// Detect "GBP access pending / quota 0 / API not enabled for project"
+function isGbpAccessPending(detailText: string) {
+  const t = detailText || "";
+
+  const hasQuotaZero =
+    t.includes('"quota_limit_value":"0"') ||
+    t.includes('"quota_limit_value": "0"') ||
+    (t.includes("quota_limit_value") && t.includes("0"));
+
+  const mentionsGbpServices =
+    t.includes("mybusinessaccountmanagement.googleapis.com") ||
+    t.includes("mybusinessbusinessinformation.googleapis.com");
+
+  const mentionsResourceExhausted =
+    t.includes("RESOURCE_EXHAUSTED") || t.includes("Quota exceeded");
+
+  const mentionsNotConfigured =
+    t.includes("has not been used in project") ||
+    t.includes("is not enabled") ||
+    t.includes("Enable it by visiting") ||
+    t.includes("accessNotConfigured");
+
+  return (mentionsGbpServices && (hasQuotaZero || mentionsResourceExhausted)) || mentionsNotConfigured;
 }
 
 export async function GET(req: Request) {
   try {
-    const url = new URL(req.url);
+    const ctx = await requireOrgContext();
+    const orgId = ctx.organizationId;
 
-    // ✅ Reads org from authenticated session (cookies)
-    const orgId = await requireOrgId();
+    const url = new URL(req.url);
 
     const accountName = url.searchParams.get("account"); // e.g. "accounts/1234567890"
     const pageToken = url.searchParams.get("pageToken") ?? "";
@@ -55,7 +81,11 @@ export async function GET(req: Request) {
 
     if (!data?.refresh_token) {
       return NextResponse.json(
-        { ok: false, error: "No Google connection yet. Complete OAuth connect first." },
+        {
+          ok: false,
+          code: "NO_GOOGLE_CONNECTION",
+          error: "No Google connection yet. Complete OAuth connect first.",
+        },
         { status: 400 }
       );
     }
@@ -77,22 +107,21 @@ export async function GET(req: Request) {
     const bodyText = await r.text();
 
     if (!r.ok) {
-      // ✅ Friendly “pending” error (quota 0)
-      if (r.status === 429 && looksLikeGbpPendingQuota(bodyText)) {
+      if (isGbpAccessPending(bodyText)) {
         return NextResponse.json(
           {
             ok: false,
             code: "GBP_ACCESS_PENDING",
             error:
-              "Google Business Profile API access is still pending approval for this project, so quota is currently 0. OAuth is connected successfully; we’ll enable location loading as soon as Google grants access.",
-            detail: bodyText,
+              "Google Business Profile API access is pending approval (quota is currently 0) or not enabled for this project yet. OAuth is connected successfully; we’ll enable location loading as soon as Google grants access.",
+            detail: truncate(bodyText),
           },
           { status: 429 }
         );
       }
 
       return NextResponse.json(
-        { ok: false, error: `Locations fetch failed: ${r.status}`, detail: bodyText },
+        { ok: false, error: `Locations fetch failed: ${r.status}`, detail: truncate(bodyText) },
         { status: 500 }
       );
     }
@@ -100,7 +129,7 @@ export async function GET(req: Request) {
     const parsed = JSON.parse(bodyText);
     const locations = Array.isArray(parsed?.locations) ? parsed.locations : [];
 
-    return NextResponse.json({ ok: true, locations, raw: parsed });
+    return NextResponse.json({ ok: true, locations });
   } catch (e: any) {
     const msg = e?.message ?? "Unknown server error";
     if (msg === "Unauthorized") {

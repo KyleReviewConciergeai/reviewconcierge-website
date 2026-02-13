@@ -18,14 +18,37 @@ function supabaseAdmin() {
   return createClient(url, service, { auth: { persistSession: false } });
 }
 
-function looksLikeGbPQuotaZero(detailText: string) {
-  // Google returns quota metadata; the smoking gun is quota_limit_value "0"
-  // plus the mybusinessaccountmanagement service name.
-  return (
-    detailText.includes("mybusinessaccountmanagement.googleapis.com") &&
-    (detailText.includes('"quota_limit_value": "0"') ||
-      detailText.includes("quota_limit_value") && detailText.includes("0"))
-  );
+function truncate(s: string, max = 1200) {
+  if (!s) return s;
+  return s.length > max ? `${s.slice(0, max)}…(truncated)` : s;
+}
+
+// Detect "GBP access pending / quota 0 / API not enabled for project"
+function isGbpAccessPending(detailText: string) {
+  const t = detailText || "";
+
+  // Commonly seen when approval isn't granted yet
+  const hasQuotaZero =
+    t.includes('"quota_limit_value":"0"') ||
+    t.includes('"quota_limit_value": "0"') ||
+    t.includes("quota_limit_value") && t.includes("0");
+
+  // Services involved in GBP account + business info
+  const mentionsGbpServices =
+    t.includes("mybusinessaccountmanagement.googleapis.com") ||
+    t.includes("mybusinessbusinessinformation.googleapis.com");
+
+  // Other common error markers
+  const mentionsResourceExhausted =
+    t.includes("RESOURCE_EXHAUSTED") || t.includes("Quota exceeded");
+
+  const mentionsNotConfigured =
+    t.includes("has not been used in project") ||
+    t.includes("is not enabled") ||
+    t.includes("Enable it by visiting") ||
+    t.includes("accessNotConfigured");
+
+  return (mentionsGbpServices && (hasQuotaZero || mentionsResourceExhausted)) || mentionsNotConfigured;
 }
 
 export async function GET(_req: Request) {
@@ -35,7 +58,6 @@ export async function GET(_req: Request) {
 
     const supabase = supabaseAdmin();
 
-    // Grab any active integration row for this org to get its refresh token
     const { data, error } = await supabase
       .from("google_integrations")
       .select("refresh_token")
@@ -50,7 +72,11 @@ export async function GET(_req: Request) {
 
     if (!data?.refresh_token) {
       return NextResponse.json(
-        { ok: false, code: "NO_GOOGLE_CONNECTION", error: "No Google connection yet. Complete OAuth connect first." },
+        {
+          ok: false,
+          code: "NO_GOOGLE_CONNECTION",
+          error: "No Google connection yet. Complete OAuth connect first.",
+        },
         { status: 400 }
       );
     }
@@ -66,22 +92,22 @@ export async function GET(_req: Request) {
     const text = await r.text();
 
     if (!r.ok) {
-      // ✅ Friendly handling for “quota=0 pending approval”
-      if (r.status === 429 && looksLikeGbPQuotaZero(text)) {
+      // ✅ Friendly handling for pending approval / quota issues / API not configured
+      if (isGbpAccessPending(text)) {
         return NextResponse.json(
           {
             ok: false,
             code: "GBP_ACCESS_PENDING",
             error:
-              "Google Business Profile API access is still pending approval for this project, so quota is currently 0. OAuth is connected successfully; we’ll enable account/location loading as soon as Google grants access.",
-            detail: text,
+              "Google Business Profile API access is pending approval (quota is currently 0) or not enabled for this project yet. OAuth is connected successfully; we’ll enable account/location loading as soon as Google grants access.",
+            detail: truncate(text),
           },
           { status: 429 }
         );
       }
 
       return NextResponse.json(
-        { ok: false, error: `Accounts fetch failed: ${r.status}`, detail: text },
+        { ok: false, error: `Accounts fetch failed: ${r.status}`, detail: truncate(text) },
         { status: 500 }
       );
     }
@@ -97,7 +123,7 @@ export async function GET(_req: Request) {
       ? parsed.accounts
       : parsed?.accounts ?? parsed?.items ?? [];
 
-    return NextResponse.json({ ok: true, accounts, raw: parsed });
+    return NextResponse.json({ ok: true, accounts });
   } catch (e: any) {
     const msg = e?.message ?? "Unknown server error";
 
