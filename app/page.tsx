@@ -742,26 +742,27 @@ export default function Home() {
 
               <div className="demo-media">
                 {demoReady ? (
-                  <video
-                    controls
-                    playsInline
-                    preload="metadata"
-                    className="demo-video"
-                    onError={() => setDemoReady(false)}
-                  >
-                    <source src={DEMO_VIDEO_URL} type="video/mp4" />
-                  </video>
-                ) : (
-                  <div className="demo-placeholder">
-                    <div className="demo-placeholder-title">
-                      {t.demo.placeholderTitle}
-                    </div>
-                    <div className="demo-placeholder-body">
-                      {t.demo.placeholderBody}
-                    </div>
-                  </div>
-                )}
-              </div>
+                <video
+                controls
+                playsInline
+                webkit-playsinline="true"
+                preload="metadata"
+                className="demo-video"
+                crossOrigin="anonymous"
+                controlsList="nodownload noplaybackrate"
+                disablePictureInPicture
+                onError={() => setDemoReady(false)}
+                >
+              <source src={DEMO_VIDEO_URL} type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            ) : (
+              <div className="demo-placeholder">
+              <div className="demo-placeholder-title">{t.demo.placeholderTitle}</div>
+              <div className="demo-placeholder-body">{t.demo.placeholderBody}</div>
+            </div>
+            )}
+          </div>
 
               <div className="demo-steps">
                 {t.demo.steps.map((s, idx) => (
@@ -1509,21 +1510,27 @@ export default function Home() {
           color: rgba(226, 232, 240, 0.92);
         }
 
-        .demo-media {
-          border-radius: 14px;
-          border: 1px solid rgba(148, 163, 184, 0.2);
-          background: rgba(2, 6, 23, 0.22);
-          overflow: hidden;
-          min-height: 260px;
-        }
+       .demo-media {
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(2, 6, 23, 0.22);
+  overflow: hidden;
 
-        .demo-video {
-          width: 100%;
-          height: 100%;
-          display: block;
-          max-height: 420px;
-          background: rgba(2, 6, 23, 0.5);
-        }
+  /* Fix iOS/inline media spacing + ensure container hugs content */
+  line-height: 0;
+  min-height: 0;
+}
+
+.demo-video {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 420px;
+  background: rgba(2, 6, 23, 0.5);
+
+  /* Extra safety: remove any accidental whitespace sizing behavior */
+  margin: 0;
+}
 
         .demo-placeholder {
           padding: 18px;
