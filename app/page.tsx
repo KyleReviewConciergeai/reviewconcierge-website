@@ -11,6 +11,10 @@ const LOCALE_COOKIE = "rc_locale";
 const DEMO_VIDEO_URL =
   "https://r0sironssiim51vb.public.blob.vercel-storage.com/demo.mp4";
 
+const DEMO_POSTER_URL =
+  process.env.NEXT_PUBLIC_DEMO_POSTER_URL ||
+  "https://r0sironssiim51vb.public.blob.vercel-storage.com/demo-poster.png";
+
 function readLocaleCookie(): Locale {
   if (typeof document === "undefined") return "en";
   const match = document.cookie
@@ -736,15 +740,16 @@ export default function Home() {
                 playsInline
                 webkit-playsinline="true"
                 preload="metadata"
+                poster={DEMO_POSTER_URL}
                 className="demo-video"
                 crossOrigin="anonymous"
                 controlsList="nodownload noplaybackrate"
                 disablePictureInPicture
                 onError={() => setDemoReady(false)}
-                >
-              <source src={DEMO_VIDEO_URL} type="video/mp4" />
+                  >
+               <source src={DEMO_VIDEO_URL} type="video/mp4" />
                 Your browser does not support the video tag.
-              </video>
+                </video>
             ) : (
               <div className="demo-placeholder">
               <div className="demo-placeholder-title">{t.demo.placeholderTitle}</div>
