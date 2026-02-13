@@ -666,17 +666,6 @@ export default function Home() {
                 {t.cta.already} <a href="/login">{t.nav.login}</a>
               </div>
             </div>
-
-            <div className="hero-micro">
-              <div className="micro-item">
-                <div className="micro-title">{t.todayNext.todayTitle}</div>
-                <div className="micro-text">{t.todayNext.todayText}</div>
-              </div>
-              <div className="micro-item">
-                <div className="micro-title">{t.todayNext.nextTitle}</div>
-                <div className="micro-text">{t.todayNext.nextText}</div>
-              </div>
-            </div>
           </div>
 
           {/* Right-side card */}
