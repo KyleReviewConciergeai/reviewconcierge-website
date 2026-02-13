@@ -91,6 +91,11 @@ export default function ConnectGooglePage() {
   const [gbpStatus, setGbpStatus] = useState<string | null>(null);
   const [gbpPendingApproval, setGbpPendingApproval] = useState(false);
 
+  // NEW: OAuth connection status from server (google_integrations)
+  const [gbpOauthConnected, setGbpOauthConnected] = useState(false);
+  const [gbpOauthEmail, setGbpOauthEmail] = useState<string | null>(null);
+  const [gbpOauthChecked, setGbpOauthChecked] = useState(false);
+
   const [gbpAccounts, setGbpAccounts] = useState<GbpAccount[]>([]);
   const [gbpSelectedAccount, setGbpSelectedAccount] = useState<string>("");
   const [gbpLocations, setGbpLocations] = useState<GbpLocation[]>([]);
@@ -121,6 +126,25 @@ export default function ConnectGooglePage() {
     return null;
   }
 
+  async function loadGbpOauthStatus() {
+    try {
+      const res = await fetch("/api/google/oauth/status", { cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && json?.ok) {
+        setGbpOauthConnected(Boolean(json?.connected));
+        setGbpOauthEmail(json?.integration?.google_account_email ?? null);
+      } else {
+        setGbpOauthConnected(false);
+        setGbpOauthEmail(null);
+      }
+    } catch {
+      setGbpOauthConnected(false);
+      setGbpOauthEmail(null);
+    } finally {
+      setGbpOauthChecked(true);
+    }
+  }
+
   async function gbpLoadSavedLocations() {
     if (gbpSavedLoading) return;
     setGbpSavedLoading(true);
@@ -131,7 +155,6 @@ export default function ConnectGooglePage() {
         const locs = Array.isArray(json?.locations) ? (json.locations as SavedGbpLocation[]) : [];
         setGbpSavedLocations(locs);
       } else {
-        // Silent failure; don't spam user if not set up yet.
         setGbpSavedLocations([]);
       }
     } catch {
@@ -171,7 +194,6 @@ export default function ConnectGooglePage() {
       const revoked = typeof json?.revoked === "number" ? json.revoked : 1;
       showToast({ message: `Removed (${revoked}).`, type: "success" }, 2200);
 
-      // Refresh saved list
       await gbpLoadSavedLocations();
     } catch (e: any) {
       const msg = e?.message ?? "Failed to remove location.";
@@ -274,6 +296,14 @@ export default function ConnectGooglePage() {
   async function gbpLoadAccounts() {
     if (gbpLoading) return;
 
+    // Require OAuth connection first
+    if (!gbpOauthConnected) {
+      const msg = "Connect Google (OAuth) first, then load accounts.";
+      setGbpStatus(msg);
+      showToast({ message: msg, type: "error" }, 3000);
+      return;
+    }
+
     setGbpLoading("accounts");
     setGbpStatus(null);
     setGbpPendingApproval(false);
@@ -287,13 +317,12 @@ export default function ConnectGooglePage() {
       const res = await fetch("/api/google/gbp/accounts", { cache: "no-store" });
       const json = await res.json();
 
-      // ✅ Special case: GBP access pending approval (quota=0)
       if (json?.code === "GBP_ACCESS_PENDING") {
         setGbpPendingApproval(true);
         setGbpStatus(
           "Google Business Profile API access is pending approval. You’re connected via OAuth, and we’ll enable full review syncing as soon as Google grants access."
         );
-        return; // do NOT show a red toast
+        return;
       }
 
       if (!res.ok) {
@@ -339,13 +368,12 @@ export default function ConnectGooglePage() {
       );
       const json = await res.json();
 
-      // ✅ Pending approval should be friendly here too
       if (json?.code === "GBP_ACCESS_PENDING") {
         setGbpPendingApproval(true);
         setGbpStatus(
           "Google Business Profile API access is pending approval. You’re connected via OAuth, and we’ll enable location loading as soon as Google grants access."
         );
-        return; // no red toast
+        return;
       }
 
       if (!res.ok) {
@@ -422,7 +450,6 @@ export default function ConnectGooglePage() {
       setGbpStatus(msg);
       showToast({ message: msg, type: "success" }, 2200);
 
-      // Refresh saved list
       await gbpLoadSavedLocations();
     } catch (e: any) {
       const msg = e?.message ?? "Failed to save selected locations.";
@@ -449,18 +476,19 @@ export default function ConnectGooglePage() {
         return;
       }
 
+      // Load OAuth status first so GBP section is truthful
+      await loadGbpOauthStatus();
+
       await gbpLoadSavedLocations();
 
       const b = await loadCurrentBusiness();
 
-      // If already connected (Places), show summary first (no forced redirect).
       if (b?.google_place_id) {
         setShowReconnectUI(false);
         setLoading(false);
         return;
       }
 
-      // Not connected → show connect UI
       setShowReconnectUI(true);
       setLoading(false);
     }
@@ -530,6 +558,26 @@ export default function ConnectGooglePage() {
                 : ""}
             </div>
           )}
+
+          {/* GBP OAuth status (informational) */}
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(148,163,184,0.18)" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+              Google Business Profile (OAuth)
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              {gbpOauthChecked ? (
+                gbpOauthConnected ? (
+                  <>
+                    Connected ✅{gbpOauthEmail ? ` (${gbpOauthEmail})` : ""}
+                  </>
+                ) : (
+                  "Not connected yet."
+                )
+              ) : (
+                "Checking…"
+              )}
+            </div>
+          </div>
 
           <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button
@@ -610,6 +658,19 @@ export default function ConnectGooglePage() {
           (multi-location supported). If you haven’t connected yet, start with OAuth.
         </div>
 
+        <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 10 }}>
+          OAuth status:{" "}
+          {gbpOauthChecked ? (
+            gbpOauthConnected ? (
+              <strong>Connected ✅{gbpOauthEmail ? ` (${gbpOauthEmail})` : ""}</strong>
+            ) : (
+              <strong>Not connected</strong>
+            )
+          ) : (
+            "Checking…"
+          )}
+        </div>
+
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <a
             href="/api/google/oauth/start"
@@ -622,14 +683,14 @@ export default function ConnectGooglePage() {
             }}
             title="Connect Google via OAuth"
           >
-            Connect Google (OAuth)
+            {gbpOauthConnected ? "Reconnect Google (OAuth)" : "Connect Google (OAuth)"}
           </a>
 
           <button
             onClick={gbpLoadAccounts}
-            disabled={gbpLoading !== null}
+            disabled={gbpLoading !== null || !gbpOauthConnected}
             style={buttonStyle}
-            title="Load GBP accounts"
+            title={!gbpOauthConnected ? "Connect Google (OAuth) first" : "Load GBP accounts"}
           >
             {gbpLoading === "accounts" ? "Loading accounts…" : "Load accounts"}
           </button>
