@@ -1,7 +1,7 @@
 // app/api/google/gbp/locations/selected/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { requireOrgId } from "@/lib/orgServer";
+import { requireOrgContext } from "@/lib/orgServer";
 
 function mustEnv(name: string) {
   const v = process.env[name];
@@ -21,7 +21,9 @@ function supabaseAdmin() {
  */
 export async function GET(_req: Request) {
   try {
-    const orgId = await requireOrgId();
+    const ctx = await requireOrgContext();
+    const orgId = ctx.organizationId;
+
     const supabase = supabaseAdmin();
 
     const { data, error } = await supabase
@@ -58,7 +60,9 @@ type DeleteBody = {
  */
 export async function DELETE(req: Request) {
   try {
-    const orgId = await requireOrgId();
+    const ctx = await requireOrgContext();
+    const orgId = ctx.organizationId;
+
     const supabase = supabaseAdmin();
 
     let body: DeleteBody | null = null;
@@ -70,25 +74,23 @@ export async function DELETE(req: Request) {
 
     const google_location_id = body?.google_location_id?.trim();
     if (!google_location_id) {
-      return NextResponse.json(
-        { ok: false, error: "Missing google_location_id" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Missing google_location_id" }, { status: 400 });
     }
 
-    // Soft delete by setting status to "revoked"
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("google_gbp_locations")
       .update({ status: "revoked", updated_at: new Date().toISOString() })
       .eq("org_id", orgId)
       .eq("google_location_id", google_location_id)
-      .eq("status", "active");
+      .eq("status", "active")
+      .select("google_location_id");
 
     if (error) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, revoked: 1 });
+    const revoked = Array.isArray(data) ? data.length : 0;
+    return NextResponse.json({ ok: true, revoked });
   } catch (e: any) {
     const msg = e?.message ?? "Unknown server error";
     if (msg === "Unauthorized") {
