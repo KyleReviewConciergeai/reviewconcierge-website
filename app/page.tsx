@@ -33,6 +33,21 @@ function writeLocaleCookie(locale: Locale) {
   )}; Path=/; Max-Age=${maxAge}; SameSite=Lax`;
 }
 
+function getOrCreateSessionId() {
+  if (typeof window === "undefined") return "server";
+  const key = "rc_sid";
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+
+  const sid =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `sid_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+
+  window.localStorage.setItem(key, sid);
+  return sid;
+}
+
 export default function Home() {
   // Locale
   const [locale, setLocale] = useState<Locale>("en");
@@ -71,6 +86,33 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessType]);
 
+  // --- Lightweight, safe event tracking (fails silently if /api/events isn't implemented yet)
+  const track = async (eventName: string, props?: Record<string, unknown>) => {
+    try {
+      const sid = getOrCreateSessionId();
+      await fetch("/api/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_name: eventName,
+          ts: new Date().toISOString(),
+          path: typeof window !== "undefined" ? window.location.pathname : "/",
+          locale,
+          session_id: sid,
+          props: props ?? {},
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    // Home view event
+    track("home_view");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const COPY = useMemo(() => {
     const en = {
       nav: {
@@ -78,7 +120,7 @@ export default function Home() {
         what: "What it does",
         pricing: "Pricing",
         login: "Log in",
-        getStarted: "Start free trial",
+        getStarted: "Get started",
       },
       badge: "Owner-voice replies • AI drafts • You stay in control",
       h1a: "Reply to reviews in your voice",
@@ -87,19 +129,14 @@ export default function Home() {
         "Review Concierge drafts short, human replies that sound like you — so you can respond fast without giving up control or sounding generic.",
       subtitleB:
         "Draft thoughtful replies to reviews in English, Spanish, Portuguese, French, Italian, and German.",
-      outcome: "Reply to your last 10 reviews in ~15 minutes.",
       cta: {
-        primary: "Start 14-day free trial",
-        waitlistLink: "Not ready? Join the waitlist",
+        primary: "Get started",
+        trial: "2-week free trial",
+        waitlist: "Join waitlist",
         already: "Already have an account?",
-      },
-      todayNext: {
-        todayTitle: "Today",
-        todayText:
-          "Connect a Google Place ID • Sync a recent sample of reviews • Generate reply drafts you can copy, tweak (optional), and post manually.",
-        nextTitle: "Next",
-        nextText:
-          "Deeper voice training, team roles + approvals, and direct integration with Google Business Profile for importing reviews — so all your reviews appear in one place, ready for thoughtful replies.",
+        seeWithYours: "See it with your reviews →",
+        seeWithYoursSub: "Takes ~30 seconds. No auto-posting.",
+        trust: "Never auto-posts. Cancel anytime.",
       },
       heroCard: {
         title: "Draft replies that sound like you",
@@ -107,7 +144,7 @@ export default function Home() {
           "Pull recent Google reviews into one place and generate owner-voice drafts you can post in minutes.",
         bullets: [
           "Connect your Google Place ID",
-          "Sync a recent sample of reviews",
+          "Sync a recent sample of reviews (up to 10 today)",
           "Generate a reply draft in your voice",
           "Copy, lightly edit (optional), and post manually",
           "Never auto-posts",
@@ -118,7 +155,6 @@ export default function Home() {
           now: [
             "Google sync (recent sample)",
             "Owner-voice drafts",
-            "Multilingual drafting",
             "Copy + post manually",
           ],
           soon: [
@@ -150,10 +186,24 @@ export default function Home() {
           "Copy + post manually in Google",
         ],
       },
+      placeId: {
+        title: "Use it with your Google reviews in 60 seconds",
+        subtitle:
+          "You can start today with Google Places: connect a Place ID, sync a recent sample (up to 10), and draft replies immediately.",
+        steps: [
+          "Find your Google Place ID",
+          "Paste it into Review Concierge",
+          "Sync reviews → draft replies instantly",
+        ],
+        note: "Today: Places-based recent sample (up to 10). No auto-posting.",
+        linkText: "How to find your Place ID",
+        linkHref:
+          "https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder",
+      },
       waitlist: {
         title: "Join the beta waitlist",
         intro:
-          "Prefer to wait? Join the waitlist and we’ll reach out when slots open.",
+          "Not ready to create an account yet? Join the waitlist and we’ll reach out when slots open.",
         businessName: "Business name *",
         businessType: "Business type *",
         workEmail: "Work email *",
@@ -173,7 +223,7 @@ export default function Home() {
         c1t: "1. Create an account",
         c1b: "Sign up in seconds. No call. No setup fees.",
         c2t: "2. Connect Google",
-        c2b: "Add your Google Place ID — takes ~60 seconds. We’ll show you where to find it.",
+        c2b: "Add your Google Place ID and confirm your business. Subscription enables sync.",
         c3t: "3. Draft & post",
         c3b: "Generate replies you can copy/paste into Google. You stay in control.",
       },
@@ -194,20 +244,20 @@ export default function Home() {
         a4b: "See reviews, draft replies, copy/paste. Everything else stays out of your way.",
       },
       pricing: {
-        title: "Founders Pilot pricing",
+        title: "Early-access pricing",
         intro:
-          "One simple plan — built to get you replying faster this week.",
-        plan: "Founders Pilot",
+          "Simple subscription to enable Google sync. Join the waitlist if you’re not ready yet.",
+        plan: "Early Access",
         price: "$49",
         per: "/ month",
         bullets: [
-          "Google sync (recent sample)",
+          "Enable Google sync (recent sample up to 10)",
           "Reply drafting inside the dashboard",
-          "Multilingual drafting (EN/ES/PT/FR/IT/DE)",
           "Priority support + roadmap input",
+          "Multilingual support coming soon",
         ],
         note:
-          "Note: today uses Google Places “recent sample”. GBP import is coming next.",
+          "Note: today uses Google Places “recent sample”. We focus on voice fidelity first — not feature bloat.",
       },
       footer: {
         privacy: "Privacy",
@@ -225,7 +275,7 @@ export default function Home() {
         what: "Qué hace",
         pricing: "Precios",
         login: "Iniciar sesión",
-        getStarted: "Prueba gratis",
+        getStarted: "Empezar",
       },
       badge: "Respuestas con tu voz • Borradores con IA • Tú decides",
       h1a: "Responde reseñas con tu voz",
@@ -234,19 +284,14 @@ export default function Home() {
         "Review Concierge redacta respuestas cortas y humanas que suenan como tú — para que respondas rápido sin perder control ni sonar genérico.",
       subtitleB:
         "Redacta respuestas cuidadas en inglés, español, portugués, francés, italiano y alemán.",
-      outcome: "Responde tus últimas 10 reseñas en ~15 minutos.",
       cta: {
-        primary: "Prueba gratis 14 días",
-        waitlistLink: "¿Aún no? Sumate a la lista",
+        primary: "Empezar",
+        trial: "Prueba gratis 2 semanas",
+        waitlist: "Sumarme a la lista",
         already: "¿Ya tienes cuenta?",
-      },
-      todayNext: {
-        todayTitle: "Hoy",
-        todayText:
-          "Conecta tu Place ID de Google • Sincroniza una muestra reciente de reseñas • Genera borradores que puedes copiar, ajustar (opcional) y publicar manualmente.",
-        nextTitle: "Próximamente",
-        nextText:
-          "Mejor entrenamiento de voz, roles de equipo + aprobaciones e integración directa con Google Business Profile para importar reseñas — todo en un solo lugar, listo para responder bien.",
+        seeWithYours: "Verlo con tus reseñas →",
+        seeWithYoursSub: "Toma ~30 segundos. Sin auto-publicación.",
+        trust: "Nunca publica automáticamente. Cancela cuando quieras.",
       },
       heroCard: {
         title: "Borradores que suenan como tú",
@@ -254,7 +299,7 @@ export default function Home() {
           "Trae reseñas recientes de Google a un solo lugar y genera borradores con voz de dueño en minutos.",
         bullets: [
           "Conecta tu Place ID de Google",
-          "Sincroniza una muestra reciente de reseñas",
+          "Sincroniza una muestra reciente de reseñas (hasta 10 hoy)",
           "Genera un borrador con tu voz",
           "Copia, edita un poco (opcional) y publica manualmente",
           "Nunca publica automáticamente",
@@ -265,7 +310,6 @@ export default function Home() {
           now: [
             "Sync de Google (muestra reciente)",
             "Borradores con tu voz",
-            "Borradores multilingües",
             "Copiar + publicar manualmente",
           ],
           soon: [
@@ -297,10 +341,24 @@ export default function Home() {
           "Copiar y publicar manualmente en Google",
         ],
       },
+      placeId: {
+        title: "Usalo con tus reseñas de Google en 60 segundos",
+        subtitle:
+          "Podés empezar hoy con Google Places: conectá un Place ID, sincronizá una muestra reciente (hasta 10) y generá respuestas al instante.",
+        steps: [
+          "Encontrá tu Place ID de Google",
+          "Pegalo en Review Concierge",
+          "Sincronizá reseñas → generá borradores al instante",
+        ],
+        note: "Hoy: muestra reciente vía Places (hasta 10). Sin auto-publicación.",
+        linkText: "Cómo encontrar tu Place ID",
+        linkHref:
+          "https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder",
+      },
       waitlist: {
         title: "Sumate a la beta",
         intro:
-          "¿Preferís esperar? Sumate a la lista y te contactamos cuando se abran cupos.",
+          "¿Aún no querés crear una cuenta? Sumate a la lista y te contactamos cuando se abran cupos.",
         businessName: "Nombre del negocio *",
         businessType: "Tipo de negocio *",
         workEmail: "Email de trabajo *",
@@ -320,7 +378,7 @@ export default function Home() {
         c1t: "1. Crea una cuenta",
         c1b: "Registrate en segundos. Sin llamadas. Sin costos de setup.",
         c2t: "2. Conecta Google",
-        c2b: "Agrega tu Place ID — tarda ~60 segundos. Te mostramos dónde encontrarlo.",
+        c2b: "Agrega tu Place ID y confirma tu negocio. La suscripción habilita la sincronización.",
         c3t: "3. Redacta y publica",
         c3b: "Genera respuestas para copiar/pegar en Google. Tú decides.",
       },
@@ -340,20 +398,20 @@ export default function Home() {
         a4b: "Ves reseñas, generas borradores, copias/pegas. Sin complicaciones.",
       },
       pricing: {
-        title: "Precio Founders Pilot",
+        title: "Precios de acceso temprano",
         intro:
-          "Un plan simple — para que respondas más rápido esta semana.",
-        plan: "Founders Pilot",
+          "Suscripción simple para habilitar la sincronización con Google. Si querés, sumate a la lista.",
+        plan: "Early Access",
         price: "$49",
         per: "/ mes",
         bullets: [
-          "Sync de Google (muestra reciente)",
+          "Habilita sincronización con Google (muestra reciente hasta 10)",
           "Redacción de respuestas en el panel",
-          "Borradores multilingües (EN/ES/PT/FR/IT/DE)",
           "Soporte prioritario + feedback de roadmap",
+          "Soporte multilingüe pronto",
         ],
         note:
-          "Nota: hoy usamos una “muestra reciente” vía Google Places. Importación completa por GBP viene después.",
+          "Nota: hoy usamos una “muestra reciente” vía Google Places. Priorizamos fidelidad de voz por sobre más features.",
       },
       footer: {
         privacy: "Privacidad",
@@ -371,7 +429,7 @@ export default function Home() {
         what: "O que faz",
         pricing: "Preços",
         login: "Entrar",
-        getStarted: "Teste grátis",
+        getStarted: "Começar",
       },
       badge: "Respostas com sua voz • Rascunhos com IA • Você no controle",
       h1a: "Responda avaliações com sua voz",
@@ -380,19 +438,14 @@ export default function Home() {
         "O Review Concierge cria respostas curtas e humanas que soam como você — para responder rápido sem perder o controle nem parecer genérico.",
       subtitleB:
         "Crie respostas cuidadosas em inglês, espanhol, português, francês, italiano e alemão.",
-      outcome: "Responda suas últimas 10 avaliações em ~15 minutos.",
       cta: {
-        primary: "Teste grátis por 14 dias",
-        waitlistLink: "Ainda não? Entre na lista",
+        primary: "Começar",
+        trial: "Teste grátis 2 semanas",
+        waitlist: "Entrar na lista",
         already: "Já tem conta?",
-      },
-      todayNext: {
-        todayTitle: "Hoje",
-        todayText:
-          "Conecte um Place ID do Google • Sincronize uma amostra recente de avaliações • Gere rascunhos para copiar, ajustar (opcional) e postar manualmente.",
-        nextTitle: "Em breve",
-        nextText:
-          "Treinamento de voz melhor, papéis da equipe + aprovações e integração direta com o Google Business Profile para importar avaliações — tudo em um só lugar, pronto para responder bem.",
+        seeWithYours: "Ver com suas avaliações →",
+        seeWithYoursSub: "Leva ~30 segundos. Sem autopost.",
+        trust: "Nunca publica automaticamente. Cancele quando quiser.",
       },
       heroCard: {
         title: "Rascunhos que soam como você",
@@ -400,7 +453,7 @@ export default function Home() {
           "Traga avaliações recentes do Google para um só lugar e gere rascunhos com voz do proprietário em minutos.",
         bullets: [
           "Conecte seu Place ID do Google",
-          "Sincronize uma amostra recente de avaliações",
+          "Sincronize uma amostra recente de avaliações (até 10 hoje)",
           "Gere um rascunho com sua voz",
           "Copie, edite um pouco (opcional) e poste manualmente",
           "Nunca posta automaticamente",
@@ -411,7 +464,6 @@ export default function Home() {
           now: [
             "Sync do Google (amostra recente)",
             "Rascunhos com voz do dono",
-            "Rascunhos multilíngues",
             "Copiar + postar manualmente",
           ],
           soon: [
@@ -443,10 +495,24 @@ export default function Home() {
           "Copiar e postar manualmente no Google",
         ],
       },
+      placeId: {
+        title: "Use com suas avaliações do Google em 60 segundos",
+        subtitle:
+          "Você pode começar hoje com Google Places: conecte um Place ID, sincronize uma amostra recente (até 10) e gere respostas imediatamente.",
+        steps: [
+          "Encontre seu Google Place ID",
+          "Cole no Review Concierge",
+          "Sincronize avaliações → gere rascunhos na hora",
+        ],
+        note: "Hoje: amostra recente via Places (até 10). Sem autopost.",
+        linkText: "Como encontrar seu Place ID",
+        linkHref:
+          "https://developers.google.com/maps/documentation/javascript/examples/places-placeid-finder",
+      },
       waitlist: {
         title: "Entre na beta",
         intro:
-          "Prefere esperar? Entre na lista e avisaremos quando abrirem vagas.",
+          "Ainda não quer criar uma conta? Entre na lista e avisaremos quando abrirem vagas.",
         businessName: "Nome do negócio *",
         businessType: "Tipo de negócio *",
         workEmail: "Email de trabalho *",
@@ -466,7 +532,7 @@ export default function Home() {
         c1t: "1. Crie uma conta",
         c1b: "Cadastre-se em segundos. Sem ligação. Sem taxa de setup.",
         c2t: "2. Conecte o Google",
-        c2b: "Adicione seu Place ID — leva ~60 segundos. Mostramos onde encontrar.",
+        c2b: "Adicione seu Place ID e confirme seu negócio. A assinatura habilita a sincronização.",
         c3t: "3. Rascunhe e poste",
         c3b: "Gere respostas para copiar/colar no Google. Você decide.",
       },
@@ -486,20 +552,20 @@ export default function Home() {
         a4b: "Veja avaliações, gere rascunhos, copie/cole. Sem complicação.",
       },
       pricing: {
-        title: "Preço Founders Pilot",
+        title: "Preços de acesso antecipado",
         intro:
-          "Um plano simples — para você responder mais rápido nesta semana.",
-        plan: "Founders Pilot",
+          "Assinatura simples para habilitar a sincronização com Google. Entre na lista se ainda não estiver pronto.",
+        plan: "Early Access",
         price: "$49",
         per: "/ mês",
         bullets: [
-          "Sync do Google (amostra recente)",
+          "Habilita sync do Google (amostra recente até 10)",
           "Rascunhos dentro do painel",
-          "Rascunhos multilíngues (EN/ES/PT/FR/IT/DE)",
           "Suporte prioritário + feedback de roadmap",
+          "Suporte multilíngue em breve",
         ],
         note:
-          "Obs.: hoje usamos a “amostra recente” via Google Places. Importação completa por GBP vem depois.",
+          "Obs.: hoje usamos a “amostra recente” via Google Places. Priorizamos fidelidade de voz — não excesso de recursos.",
       },
       footer: {
         privacy: "Privacidade",
@@ -574,6 +640,11 @@ export default function Home() {
       }
 
       setStatus("success");
+      track("waitlist_submit_success", {
+        businessType: businessType || "unknown",
+        locationsCount: locationsCount || "unknown",
+      });
+
       setName("");
       setEmail("");
       setBusinessName("");
@@ -599,6 +670,22 @@ export default function Home() {
     // simple + reliable for now
     window.location.reload();
   }
+
+  const onSignupClick = (source: string) => {
+    track("cta_click_signup", { source });
+  };
+
+  const onWaitlistClick = (source: string) => {
+    track("cta_click_waitlist", { source });
+  };
+
+  const onDemoPlay = () => {
+    track("demo_play");
+  };
+
+  const onSeeWithYoursClick = () => {
+    track("cta_click_see_with_yours");
+  };
 
   return (
     <>
@@ -633,7 +720,11 @@ export default function Home() {
             <a className="nav-link" href="/login">
               {t.nav.login}
             </a>
-            <a className="nav-primary" href="/signup">
+            <a
+              className="nav-primary"
+              href="/signup"
+              onClick={() => onSignupClick("nav_primary")}
+            >
               {t.nav.getStarted}
             </a>
           </div>
@@ -656,22 +747,49 @@ export default function Home() {
               <span style={{ opacity: 0.85 }}>{t.subtitleB}</span>
             </p>
 
-            {/* ✅ Concrete outcome line */}
-            <p className="hero-outcome">{t.outcome}</p>
-
-            {/* ✅ Single primary CTA + secondary text link (removes mixed signals) */}
             <div className="hero-ctas">
-              <a className="primary-btn" href="/signup">
+              <a
+                className="primary-btn"
+                href="/signup"
+                onClick={() => onSignupClick("hero_primary")}
+              >
                 {t.cta.primary}
               </a>
 
-              <a className="text-link" href="#waitlist">
-                {t.cta.waitlistLink}
+              <a
+                className="trial-btn"
+                href="/signup"
+                onClick={() => onSignupClick("hero_trial")}
+              >
+                {t.cta.trial}
+              </a>
+
+              <a
+                className="secondary-btn"
+                href="#waitlist"
+                onClick={() => onWaitlistClick("hero_waitlist")}
+              >
+                {t.cta.waitlist}
               </a>
 
               <div className="cta-note">
                 {t.cta.already} <a href="/login">{t.nav.login}</a>
               </div>
+
+              {/* ✅ NEW: “See it with your reviews” micro-CTA */}
+              <div className="micro-cta">
+                <a
+                  className="micro-cta-link"
+                  href="#place-id"
+                  onClick={onSeeWithYoursClick}
+                >
+                  {t.cta.seeWithYours}
+                </a>
+                <div className="micro-cta-sub">{t.cta.seeWithYoursSub}</div>
+              </div>
+
+              {/* ✅ NEW: trust note under CTAs */}
+              <div className="trust-note">{t.cta.trust}</div>
             </div>
           </div>
 
@@ -714,7 +832,7 @@ export default function Home() {
 
         <div className="section-divider" />
 
-        {/* Demo */}
+        {/* ✅ Quick demo */}
         <section className="demo-section">
           <div className="demo-head">
             <h2>{t.demo.title}</h2>
@@ -736,7 +854,7 @@ export default function Home() {
                   <video
                     controls
                     playsInline
-                    // @ts-ignore - attribute is fine in DOM
+                    // @ts-ignore - allow attribute for iOS Safari
                     webkit-playsinline="true"
                     preload="metadata"
                     poster={DEMO_POSTER_URL}
@@ -745,6 +863,7 @@ export default function Home() {
                     controlsList="nodownload noplaybackrate"
                     disablePictureInPicture
                     onError={() => setDemoReady(false)}
+                    onPlay={onDemoPlay}
                   >
                     <source src={DEMO_VIDEO_URL} type="video/mp4" />
                     Your browser does not support the video tag.
@@ -786,7 +905,52 @@ export default function Home() {
 
         <div className="section-divider" />
 
-        {/* Waitlist */}
+        {/* ✅ NEW: Place ID / onboarding micro-guide */}
+        <section id="place-id" className="placeid-section">
+          <div className="placeid-head">
+            <h2>{t.placeId.title}</h2>
+            <p className="section-intro" style={{ marginBottom: 0 }}>
+              {t.placeId.subtitle}
+            </p>
+          </div>
+
+          <div className="placeid-card">
+            <div className="placeid-steps">
+              {t.placeId.steps.map((s, idx) => (
+                <div className="placeid-step" key={s}>
+                  <div className="placeid-step-num">{idx + 1}</div>
+                  <div className="placeid-step-text">{s}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="placeid-actions">
+              <a
+                className="primary-btn"
+                href="/signup"
+                onClick={() => onSignupClick("placeid_primary")}
+              >
+                {t.nav.getStarted}
+              </a>
+
+              <a
+                className="secondary-btn"
+                href={t.placeId.linkHref}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => track("placeid_help_click")}
+              >
+                {t.placeId.linkText}
+              </a>
+            </div>
+
+            <div className="placeid-note">{t.placeId.note}</div>
+          </div>
+        </section>
+
+        <div className="section-divider" />
+
+        {/* Waitlist (secondary) */}
         <section id="waitlist" className="waitlist-section">
           <div className="waitlist-head">
             <h2>{t.waitlist.title}</h2>
@@ -952,6 +1116,14 @@ export default function Home() {
 
               {status === "idle" && <p className="hero-note">{t.waitlist.noSpam}</p>}
             </form>
+
+            {/* small: track when someone clicks waitlist section via secondary CTA */}
+            <div style={{ display: "none" }}>
+              <button
+                type="button"
+                onClick={() => onWaitlistClick("waitlist_section")}
+              />
+            </div>
           </div>
         </section>
 
@@ -1013,11 +1185,19 @@ export default function Home() {
             </ul>
 
             <div className="pricing-actions">
-              <a className="primary-btn" href="/signup">
-                {t.cta.primary}
+              <a
+                className="primary-btn"
+                href="/signup"
+                onClick={() => onSignupClick("pricing_primary")}
+              >
+                {t.nav.getStarted}
               </a>
-              <a className="secondary-btn" href="#waitlist">
-                {t.waitlist.title}
+              <a
+                className="secondary-btn"
+                href="#waitlist"
+                onClick={() => onWaitlistClick("pricing_waitlist")}
+              >
+                {t.cta.waitlist}
               </a>
             </div>
 
@@ -1039,8 +1219,12 @@ export default function Home() {
 
           <div className="footer-links">
             <a href="/login">{t.nav.login}</a>
-            <a href="/signup">{t.cta.primary}</a>
-            <a href="#waitlist">{t.waitlist.title}</a>
+            <a href="/signup" onClick={() => onSignupClick("footer_primary")}>
+              {t.nav.getStarted}
+            </a>
+            <a href="#waitlist" onClick={() => onWaitlistClick("footer_waitlist")}>
+              {t.cta.waitlist}
+            </a>
           </div>
         </footer>
       </main>
@@ -1225,7 +1409,6 @@ export default function Home() {
           font-size: 14px;
         }
 
-        /* ✅ Fix: default UL bullets can look weird on iOS; use clean checkmarks instead */
         .checklist {
           list-style: none;
           padding: 0;
@@ -1258,7 +1441,6 @@ export default function Home() {
           color: rgba(226, 232, 240, 0.95);
         }
 
-        /* ✅ New: roadmap matrix visual */
         .roadmap-matrix {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1328,17 +1510,9 @@ export default function Home() {
         }
 
         .hero-subtitle {
-          margin: 0 0 10px;
+          margin: 0 0 18px;
           color: #d1d5db;
           max-width: 560px;
-        }
-
-        /* ✅ New outcome line */
-        .hero-outcome {
-          margin: 0 0 18px;
-          font-size: 14px;
-          font-weight: 700;
-          color: rgba(226, 232, 240, 0.92);
         }
 
         .hero-ctas {
@@ -1347,19 +1521,6 @@ export default function Home() {
           gap: 12px;
           flex-wrap: wrap;
           margin-bottom: 18px;
-        }
-
-        .text-link {
-          font-size: 13px;
-          color: rgba(226, 232, 240, 0.9);
-          text-decoration: underline;
-          text-underline-offset: 3px;
-          opacity: 0.9;
-          padding: 10px 4px;
-        }
-
-        .text-link:hover {
-          opacity: 1;
         }
 
         .secondary-btn {
@@ -1381,6 +1542,25 @@ export default function Home() {
           border-color: rgba(96, 165, 250, 0.55);
         }
 
+        .trial-btn {
+          height: 44px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 18px;
+          border-radius: 999px;
+          border: 1px solid rgba(96, 165, 250, 0.55);
+          background: rgba(37, 99, 235, 0.14);
+          color: rgba(226, 232, 240, 0.95);
+          text-decoration: none;
+          font-weight: 600;
+          font-size: 14px;
+        }
+
+        .trial-btn:hover {
+          filter: brightness(1.05);
+        }
+
         .cta-note {
           width: 100%;
           font-size: 12px;
@@ -1391,6 +1571,41 @@ export default function Home() {
           color: rgba(226, 232, 240, 0.92);
           text-decoration: underline;
           text-underline-offset: 3px;
+        }
+
+        /* ✅ NEW: micro-CTA under hero CTAs */
+        .micro-cta {
+          width: 100%;
+          margin-top: 2px;
+          display: flex;
+          align-items: baseline;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+
+        .micro-cta-link {
+          color: rgba(226, 232, 240, 0.95);
+          text-decoration: underline;
+          text-underline-offset: 3px;
+          font-weight: 700;
+          font-size: 13px;
+        }
+
+        .micro-cta-link:hover {
+          opacity: 0.95;
+        }
+
+        .micro-cta-sub {
+          font-size: 12px;
+          color: rgba(156, 163, 175, 0.95);
+        }
+
+        /* ✅ NEW: trust note under CTAs */
+        .trust-note {
+          width: 100%;
+          font-size: 12px;
+          color: rgba(209, 213, 219, 0.78);
+          margin-top: 6px;
         }
 
         .card-divider {
@@ -1565,6 +1780,74 @@ export default function Home() {
           margin-bottom: 10px;
           color: rgba(226, 232, 240, 0.95);
           font-size: 16px;
+        }
+
+        /* ✅ NEW: Place ID section */
+        .placeid-section {
+          margin-bottom: 56px;
+        }
+
+        .placeid-head {
+          margin-bottom: 16px;
+        }
+
+        .placeid-card {
+          background: rgba(15, 23, 42, 0.95);
+          border-radius: 18px;
+          padding: 18px 18px 16px;
+          border: 1px solid rgba(148, 163, 184, 0.25);
+          box-shadow: 0 18px 45px rgba(15, 23, 42, 0.65);
+        }
+
+        .placeid-steps {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+          margin-bottom: 14px;
+        }
+
+        .placeid-step {
+          border: 1px solid rgba(148, 163, 184, 0.18);
+          background: rgba(2, 6, 23, 0.18);
+          border-radius: 14px;
+          padding: 12px 12px;
+          display: flex;
+          gap: 10px;
+          align-items: flex-start;
+        }
+
+        .placeid-step-num {
+          width: 24px;
+          height: 24px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(37, 99, 235, 0.28);
+          border: 1px solid rgba(96, 165, 250, 0.35);
+          font-size: 12px;
+          font-weight: 800;
+          flex: 0 0 auto;
+        }
+
+        .placeid-step-text {
+          font-size: 13px;
+          color: rgba(226, 232, 240, 0.92);
+          line-height: 1.35;
+        }
+
+        .placeid-actions {
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+          align-items: center;
+          margin-top: 6px;
+          margin-bottom: 8px;
+        }
+
+        .placeid-note {
+          font-size: 12px;
+          color: rgba(156, 163, 175, 0.95);
         }
 
         /* Waitlist */
@@ -1799,6 +2082,10 @@ export default function Home() {
           }
 
           .roadmap-matrix {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .placeid-steps {
             grid-template-columns: minmax(0, 1fr);
           }
 
