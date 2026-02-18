@@ -78,7 +78,7 @@ export default function Home() {
         what: "What it does",
         pricing: "Pricing",
         login: "Log in",
-        getStarted: "Get started",
+        getStarted: "Start free trial",
       },
       badge: "Owner-voice replies • AI drafts • You stay in control",
       h1a: "Reply to reviews in your voice",
@@ -87,10 +87,10 @@ export default function Home() {
         "Review Concierge drafts short, human replies that sound like you — so you can respond fast without giving up control or sounding generic.",
       subtitleB:
         "Draft thoughtful replies to reviews in English, Spanish, Portuguese, French, Italian, and German.",
+      outcome: "Reply to your last 10 reviews in ~15 minutes.",
       cta: {
-        primary: "Get started",
-        trial: "2-week free trial",
-        waitlist: "Join waitlist",
+        primary: "Start 14-day free trial",
+        waitlistLink: "Not ready? Join the waitlist",
         already: "Already have an account?",
       },
       todayNext: {
@@ -99,7 +99,7 @@ export default function Home() {
           "Connect a Google Place ID • Sync a recent sample of reviews • Generate reply drafts you can copy, tweak (optional), and post manually.",
         nextTitle: "Next",
         nextText:
-          "Deeper voice training, multilingual replies, and direct integration with Google Business Profile for importing reviews — so all your reviews appear in one place, ready for thoughtful replies.",
+          "Deeper voice training, team roles + approvals, and direct integration with Google Business Profile for importing reviews — so all your reviews appear in one place, ready for thoughtful replies.",
       },
       heroCard: {
         title: "Draft replies that sound like you",
@@ -118,6 +118,7 @@ export default function Home() {
           now: [
             "Google sync (recent sample)",
             "Owner-voice drafts",
+            "Multilingual drafting",
             "Copy + post manually",
           ],
           soon: [
@@ -152,7 +153,7 @@ export default function Home() {
       waitlist: {
         title: "Join the beta waitlist",
         intro:
-          "Not ready to create an account yet? Join the waitlist and we’ll reach out when slots open.",
+          "Prefer to wait? Join the waitlist and we’ll reach out when slots open.",
         businessName: "Business name *",
         businessType: "Business type *",
         workEmail: "Work email *",
@@ -172,7 +173,7 @@ export default function Home() {
         c1t: "1. Create an account",
         c1b: "Sign up in seconds. No call. No setup fees.",
         c2t: "2. Connect Google",
-        c2b: "Add your Google Place ID and confirm your business. Subscription enables sync.",
+        c2b: "Add your Google Place ID — takes ~60 seconds. We’ll show you where to find it.",
         c3t: "3. Draft & post",
         c3b: "Generate replies you can copy/paste into Google. You stay in control.",
       },
@@ -193,20 +194,20 @@ export default function Home() {
         a4b: "See reviews, draft replies, copy/paste. Everything else stays out of your way.",
       },
       pricing: {
-        title: "Early-access pricing",
+        title: "Founders Pilot pricing",
         intro:
-          "Simple subscription to enable Google sync. Join the waitlist if you’re not ready yet.",
-        plan: "Early Access",
+          "One simple plan — built to get you replying faster this week.",
+        plan: "Founders Pilot",
         price: "$49",
         per: "/ month",
         bullets: [
-          "Enable Google sync (recent sample)",
+          "Google sync (recent sample)",
           "Reply drafting inside the dashboard",
+          "Multilingual drafting (EN/ES/PT/FR/IT/DE)",
           "Priority support + roadmap input",
-          "Multilingual support coming soon",
         ],
         note:
-          "Note: today uses Google Places “recent sample”. We focus on voice fidelity first — not feature bloat.",
+          "Note: today uses Google Places “recent sample”. GBP import is coming next.",
       },
       footer: {
         privacy: "Privacy",
@@ -224,7 +225,7 @@ export default function Home() {
         what: "Qué hace",
         pricing: "Precios",
         login: "Iniciar sesión",
-        getStarted: "Empezar",
+        getStarted: "Prueba gratis",
       },
       badge: "Respuestas con tu voz • Borradores con IA • Tú decides",
       h1a: "Responde reseñas con tu voz",
@@ -233,10 +234,10 @@ export default function Home() {
         "Review Concierge redacta respuestas cortas y humanas que suenan como tú — para que respondas rápido sin perder control ni sonar genérico.",
       subtitleB:
         "Redacta respuestas cuidadas en inglés, español, portugués, francés, italiano y alemán.",
+      outcome: "Responde tus últimas 10 reseñas en ~15 minutos.",
       cta: {
-        primary: "Empezar",
-        trial: "Prueba gratis 2 semanas",
-        waitlist: "Sumarme a la lista",
+        primary: "Prueba gratis 14 días",
+        waitlistLink: "¿Aún no? Sumate a la lista",
         already: "¿Ya tienes cuenta?",
       },
       todayNext: {
@@ -245,7 +246,7 @@ export default function Home() {
           "Conecta tu Place ID de Google • Sincroniza una muestra reciente de reseñas • Genera borradores que puedes copiar, ajustar (opcional) y publicar manualmente.",
         nextTitle: "Próximamente",
         nextText:
-          "Mejor entrenamiento de voz, respuestas multilingües e integración directa con Google Business Profile para importar reseñas — todo en un solo lugar, listo para responder bien.",
+          "Mejor entrenamiento de voz, roles de equipo + aprobaciones e integración directa con Google Business Profile para importar reseñas — todo en un solo lugar, listo para responder bien.",
       },
       heroCard: {
         title: "Borradores que suenan como tú",
@@ -264,6 +265,7 @@ export default function Home() {
           now: [
             "Sync de Google (muestra reciente)",
             "Borradores con tu voz",
+            "Borradores multilingües",
             "Copiar + publicar manualmente",
           ],
           soon: [
@@ -298,7 +300,7 @@ export default function Home() {
       waitlist: {
         title: "Sumate a la beta",
         intro:
-          "¿Aún no querés crear una cuenta? Sumate a la lista y te contactamos cuando se abran cupos.",
+          "¿Preferís esperar? Sumate a la lista y te contactamos cuando se abran cupos.",
         businessName: "Nombre del negocio *",
         businessType: "Tipo de negocio *",
         workEmail: "Email de trabajo *",
@@ -318,7 +320,7 @@ export default function Home() {
         c1t: "1. Crea una cuenta",
         c1b: "Registrate en segundos. Sin llamadas. Sin costos de setup.",
         c2t: "2. Conecta Google",
-        c2b: "Agrega tu Place ID y confirma tu negocio. La suscripción habilita la sincronización.",
+        c2b: "Agrega tu Place ID — tarda ~60 segundos. Te mostramos dónde encontrarlo.",
         c3t: "3. Redacta y publica",
         c3b: "Genera respuestas para copiar/pegar en Google. Tú decides.",
       },
@@ -338,20 +340,20 @@ export default function Home() {
         a4b: "Ves reseñas, generas borradores, copias/pegas. Sin complicaciones.",
       },
       pricing: {
-        title: "Precios de acceso temprano",
+        title: "Precio Founders Pilot",
         intro:
-          "Suscripción simple para habilitar la sincronización con Google. Si querés, sumate a la lista.",
-        plan: "Early Access",
+          "Un plan simple — para que respondas más rápido esta semana.",
+        plan: "Founders Pilot",
         price: "$49",
         per: "/ mes",
         bullets: [
-          "Habilita sincronización con Google (muestra reciente)",
+          "Sync de Google (muestra reciente)",
           "Redacción de respuestas en el panel",
+          "Borradores multilingües (EN/ES/PT/FR/IT/DE)",
           "Soporte prioritario + feedback de roadmap",
-          "Soporte multilingüe pronto",
         ],
         note:
-          "Nota: hoy usamos una “muestra reciente” vía Google Places. Priorizamos fidelidad de voz por sobre más features.",
+          "Nota: hoy usamos una “muestra reciente” vía Google Places. Importación completa por GBP viene después.",
       },
       footer: {
         privacy: "Privacidad",
@@ -369,7 +371,7 @@ export default function Home() {
         what: "O que faz",
         pricing: "Preços",
         login: "Entrar",
-        getStarted: "Começar",
+        getStarted: "Teste grátis",
       },
       badge: "Respostas com sua voz • Rascunhos com IA • Você no controle",
       h1a: "Responda avaliações com sua voz",
@@ -378,10 +380,10 @@ export default function Home() {
         "O Review Concierge cria respostas curtas e humanas que soam como você — para responder rápido sem perder o controle nem parecer genérico.",
       subtitleB:
         "Crie respostas cuidadosas em inglês, espanhol, português, francês, italiano e alemão.",
+      outcome: "Responda suas últimas 10 avaliações em ~15 minutos.",
       cta: {
-        primary: "Começar",
-        trial: "Teste grátis 2 semanas",
-        waitlist: "Entrar na lista",
+        primary: "Teste grátis por 14 dias",
+        waitlistLink: "Ainda não? Entre na lista",
         already: "Já tem conta?",
       },
       todayNext: {
@@ -390,7 +392,7 @@ export default function Home() {
           "Conecte um Place ID do Google • Sincronize uma amostra recente de avaliações • Gere rascunhos para copiar, ajustar (opcional) e postar manualmente.",
         nextTitle: "Em breve",
         nextText:
-          "Treinamento de voz melhor, respostas multilíngues e integração direta com o Google Business Profile para importar avaliações — tudo em um só lugar, pronto para responder bem.",
+          "Treinamento de voz melhor, papéis da equipe + aprovações e integração direta com o Google Business Profile para importar avaliações — tudo em um só lugar, pronto para responder bem.",
       },
       heroCard: {
         title: "Rascunhos que soam como você",
@@ -409,6 +411,7 @@ export default function Home() {
           now: [
             "Sync do Google (amostra recente)",
             "Rascunhos com voz do dono",
+            "Rascunhos multilíngues",
             "Copiar + postar manualmente",
           ],
           soon: [
@@ -443,7 +446,7 @@ export default function Home() {
       waitlist: {
         title: "Entre na beta",
         intro:
-          "Ainda não quer criar uma conta? Entre na lista e avisaremos quando abrirem vagas.",
+          "Prefere esperar? Entre na lista e avisaremos quando abrirem vagas.",
         businessName: "Nome do negócio *",
         businessType: "Tipo de negócio *",
         workEmail: "Email de trabalho *",
@@ -463,7 +466,7 @@ export default function Home() {
         c1t: "1. Crie uma conta",
         c1b: "Cadastre-se em segundos. Sem ligação. Sem taxa de setup.",
         c2t: "2. Conecte o Google",
-        c2b: "Adicione seu Place ID e confirme seu negócio. A assinatura habilita a sincronização.",
+        c2b: "Adicione seu Place ID — leva ~60 segundos. Mostramos onde encontrar.",
         c3t: "3. Rascunhe e poste",
         c3b: "Gere respostas para copiar/colar no Google. Você decide.",
       },
@@ -483,20 +486,20 @@ export default function Home() {
         a4b: "Veja avaliações, gere rascunhos, copie/cole. Sem complicação.",
       },
       pricing: {
-        title: "Preços de acesso antecipado",
+        title: "Preço Founders Pilot",
         intro:
-          "Assinatura simples para habilitar a sincronização com Google. Entre na lista se ainda não estiver pronto.",
-        plan: "Early Access",
+          "Um plano simples — para você responder mais rápido nesta semana.",
+        plan: "Founders Pilot",
         price: "$49",
         per: "/ mês",
         bullets: [
-          "Habilita sync do Google (amostra recente)",
+          "Sync do Google (amostra recente)",
           "Rascunhos dentro do painel",
+          "Rascunhos multilíngues (EN/ES/PT/FR/IT/DE)",
           "Suporte prioritário + feedback de roadmap",
-          "Suporte multilíngue em breve",
         ],
         note:
-          "Obs.: hoje usamos a “amostra recente” via Google Places. Priorizamos fidelidade de voz — não excesso de recursos.",
+          "Obs.: hoje usamos a “amostra recente” via Google Places. Importação completa por GBP vem depois.",
       },
       footer: {
         privacy: "Privacidade",
@@ -653,17 +656,17 @@ export default function Home() {
               <span style={{ opacity: 0.85 }}>{t.subtitleB}</span>
             </p>
 
+            {/* ✅ Concrete outcome line */}
+            <p className="hero-outcome">{t.outcome}</p>
+
+            {/* ✅ Single primary CTA + secondary text link (removes mixed signals) */}
             <div className="hero-ctas">
               <a className="primary-btn" href="/signup">
                 {t.cta.primary}
               </a>
 
-              <a className="trial-btn" href="/signup">
-                {t.cta.trial}
-              </a>
-
-              <a className="secondary-btn" href="#waitlist">
-                {t.cta.waitlist}
+              <a className="text-link" href="#waitlist">
+                {t.cta.waitlistLink}
               </a>
 
               <div className="cta-note">
@@ -677,7 +680,6 @@ export default function Home() {
             <h2>{t.heroCard.title}</h2>
             <p>{t.heroCard.body}</p>
 
-            {/* ✅ Fix consultant-flagged bullets: no weird dots on mobile + consistent alignment */}
             <ul className="checklist">
               {t.heroCard.bullets.map((b) => (
                 <li key={b}>{b}</li>
@@ -686,7 +688,6 @@ export default function Home() {
 
             <div className="card-divider" />
 
-            {/* ✅ New: visual roadmap matrix (instead of text block + divider weirdness) */}
             <div className="roadmap-matrix" aria-label="Product roadmap">
               <div className="roadmap-col">
                 <div className="roadmap-title">{t.heroCard.matrix.nowTitle}</div>
@@ -711,18 +712,15 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ✅ Small separation so waitlist is clearly secondary */}
         <div className="section-divider" />
 
-        {/* ✅ Quick demo (full-width, clean on desktop) */}
+        {/* Demo */}
         <section className="demo-section">
           <div className="demo-head">
             <h2>{t.demo.title}</h2>
             <p className="section-intro" style={{ marginBottom: 0 }}>
               {t.demo.subtitle}
             </p>
-
-            {/* ✅ NEW: clarify that the demo video itself is under 1 minute */}
             <p className="demo-length-note">{t.demo.lengthNote}</p>
           </div>
 
@@ -735,28 +733,33 @@ export default function Home() {
 
               <div className="demo-media">
                 {demoReady ? (
-                <video
-                controls
-                playsInline
-                webkit-playsinline="true"
-                preload="metadata"
-                poster={DEMO_POSTER_URL}
-                className="demo-video"
-                crossOrigin="anonymous"
-                controlsList="nodownload noplaybackrate"
-                disablePictureInPicture
-                onError={() => setDemoReady(false)}
+                  <video
+                    controls
+                    playsInline
+                    // @ts-ignore - attribute is fine in DOM
+                    webkit-playsinline="true"
+                    preload="metadata"
+                    poster={DEMO_POSTER_URL}
+                    className="demo-video"
+                    crossOrigin="anonymous"
+                    controlsList="nodownload noplaybackrate"
+                    disablePictureInPicture
+                    onError={() => setDemoReady(false)}
                   >
-               <source src={DEMO_VIDEO_URL} type="video/mp4" />
-                Your browser does not support the video tag.
-                </video>
-            ) : (
-              <div className="demo-placeholder">
-              <div className="demo-placeholder-title">{t.demo.placeholderTitle}</div>
-              <div className="demo-placeholder-body">{t.demo.placeholderBody}</div>
-            </div>
-            )}
-          </div>
+                    <source src={DEMO_VIDEO_URL} type="video/mp4" />
+                    Your browser does not support the video tag.
+                  </video>
+                ) : (
+                  <div className="demo-placeholder">
+                    <div className="demo-placeholder-title">
+                      {t.demo.placeholderTitle}
+                    </div>
+                    <div className="demo-placeholder-body">
+                      {t.demo.placeholderBody}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="demo-steps">
                 {t.demo.steps.map((s, idx) => (
@@ -937,7 +940,9 @@ export default function Home() {
                 </div>
               </details>
 
-              {status === "success" && <p className="hero-note">{t.waitlist.success}</p>}
+              {status === "success" && (
+                <p className="hero-note">{t.waitlist.success}</p>
+              )}
 
               {status === "error" && (
                 <p className="hero-note" style={{ color: "#ffb3b3" }}>
@@ -1009,10 +1014,10 @@ export default function Home() {
 
             <div className="pricing-actions">
               <a className="primary-btn" href="/signup">
-                {t.nav.getStarted}
+                {t.cta.primary}
               </a>
               <a className="secondary-btn" href="#waitlist">
-                {t.cta.waitlist}
+                {t.waitlist.title}
               </a>
             </div>
 
@@ -1034,8 +1039,8 @@ export default function Home() {
 
           <div className="footer-links">
             <a href="/login">{t.nav.login}</a>
-            <a href="/signup">{t.nav.getStarted}</a>
-            <a href="#waitlist">{t.cta.waitlist}</a>
+            <a href="/signup">{t.cta.primary}</a>
+            <a href="#waitlist">{t.waitlist.title}</a>
           </div>
         </footer>
       </main>
@@ -1323,9 +1328,17 @@ export default function Home() {
         }
 
         .hero-subtitle {
-          margin: 0 0 18px;
+          margin: 0 0 10px;
           color: #d1d5db;
           max-width: 560px;
+        }
+
+        /* ✅ New outcome line */
+        .hero-outcome {
+          margin: 0 0 18px;
+          font-size: 14px;
+          font-weight: 700;
+          color: rgba(226, 232, 240, 0.92);
         }
 
         .hero-ctas {
@@ -1334,6 +1347,19 @@ export default function Home() {
           gap: 12px;
           flex-wrap: wrap;
           margin-bottom: 18px;
+        }
+
+        .text-link {
+          font-size: 13px;
+          color: rgba(226, 232, 240, 0.9);
+          text-decoration: underline;
+          text-underline-offset: 3px;
+          opacity: 0.9;
+          padding: 10px 4px;
+        }
+
+        .text-link:hover {
+          opacity: 1;
         }
 
         .secondary-btn {
@@ -1355,25 +1381,6 @@ export default function Home() {
           border-color: rgba(96, 165, 250, 0.55);
         }
 
-        .trial-btn {
-          height: 44px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 0 18px;
-          border-radius: 999px;
-          border: 1px solid rgba(96, 165, 250, 0.55);
-          background: rgba(37, 99, 235, 0.14);
-          color: rgba(226, 232, 240, 0.95);
-          text-decoration: none;
-          font-weight: 600;
-          font-size: 14px;
-        }
-
-        .trial-btn:hover {
-          filter: brightness(1.05);
-        }
-
         .cta-note {
           width: 100%;
           font-size: 12px;
@@ -1384,34 +1391,6 @@ export default function Home() {
           color: rgba(226, 232, 240, 0.92);
           text-decoration: underline;
           text-underline-offset: 3px;
-        }
-
-        .hero-micro {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 12px;
-          margin-top: 10px;
-          max-width: 760px;
-        }
-
-        .micro-item {
-          border: 1px solid rgba(148, 163, 184, 0.25);
-          background: rgba(2, 6, 23, 0.25);
-          border-radius: 14px;
-          padding: 12px 12px;
-        }
-
-        .micro-title {
-          font-size: 12px;
-          font-weight: 700;
-          color: rgba(226, 232, 240, 0.92);
-          margin-bottom: 6px;
-        }
-
-        .micro-text {
-          font-size: 12px;
-          color: rgba(209, 213, 219, 0.85);
-          line-height: 1.4;
         }
 
         .card-divider {
@@ -1463,7 +1442,6 @@ export default function Home() {
           margin-bottom: 14px;
         }
 
-        /* ✅ NEW: small helper note under demo subtitle */
         .demo-length-note {
           margin: 6px 0 0;
           font-size: 12px;
@@ -1504,27 +1482,23 @@ export default function Home() {
           color: rgba(226, 232, 240, 0.92);
         }
 
-       .demo-media {
-  border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(2, 6, 23, 0.22);
-  overflow: hidden;
+        .demo-media {
+          border-radius: 14px;
+          border: 1px solid rgba(148, 163, 184, 0.2);
+          background: rgba(2, 6, 23, 0.22);
+          overflow: hidden;
+          line-height: 0;
+          min-height: 0;
+        }
 
-  /* Fix iOS/inline media spacing + ensure container hugs content */
-  line-height: 0;
-  min-height: 0;
-}
-
-.demo-video {
-  width: 100%;
-  height: auto;
-  display: block;
-  max-height: 420px;
-  background: rgba(2, 6, 23, 0.5);
-
-  /* Extra safety: remove any accidental whitespace sizing behavior */
-  margin: 0;
-}
+        .demo-video {
+          width: 100%;
+          height: auto;
+          display: block;
+          max-height: 420px;
+          background: rgba(2, 6, 23, 0.5);
+          margin: 0;
+        }
 
         .demo-placeholder {
           padding: 18px;
@@ -1821,10 +1795,6 @@ export default function Home() {
           }
 
           .waitlist-more-grid {
-            grid-template-columns: minmax(0, 1fr);
-          }
-
-          .hero-micro {
             grid-template-columns: minmax(0, 1fr);
           }
 
