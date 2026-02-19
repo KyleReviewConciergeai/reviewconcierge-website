@@ -1,3 +1,4 @@
+// app/dashboard/DraftReplyPanel.tsx
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -26,14 +27,37 @@ type DraftReplyPanelProps = {
   businessName?: string | null;
 };
 
+/**
+ * Dashboard emits: window.dispatchEvent(new CustomEvent("rc:select-review", { detail: { ... } }))
+ * We support BOTH payload shapes:
+ *  - Old:  { reviewText, rating, authorName, detectedLanguage, reviewId }
+ *  - New:  { text, rating, authorName, language, reviewId }
+ */
 type RcSelectReviewDetail = {
-  reviewId: string;
-  text: string;
-  rating: number;
+  reviewId?: string | null;
+
+  // new shape
+  text?: string | null;
+  language?: string | null;
+
+  // old shape
+  reviewText?: string | null;
+  detectedLanguage?: string | null;
+
+  rating?: number | null;
   authorName?: string | null;
   createdAt?: string | null;
-  language?: string | null;
   source?: string | null; // e.g. "places_sample"
+};
+
+type SelectedReview = {
+  reviewId: string;
+  text: string;
+  rating: number | null;
+  authorName: string | null;
+  createdAt: string | null;
+  language: string | null;
+  source: string | null;
 };
 
 /** Small hook for responsive inline styles (safe in React/Next) */
@@ -90,7 +114,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const panelRef = useRef<HTMLElement | null>(null);
   const reviewTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const [selectedReview, setSelectedReview] = useState<RcSelectReviewDetail | null>(null);
+  const [selectedReview, setSelectedReview] = useState<SelectedReview | null>(null);
 
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
   const [rating, setRating] = useState<number>(5);
@@ -166,18 +190,35 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     if (typeof window === "undefined") return;
 
     const handler = (evt: Event) => {
-      const ce = evt as CustomEvent<Partial<RcSelectReviewDetail> | undefined>;
+      const ce = evt as CustomEvent<RcSelectReviewDetail | undefined>;
       const d = ce.detail;
+      if (!d) return;
 
-      if (!d || typeof d.text !== "string") return;
+      // Support both shapes
+      const rawText =
+        typeof d.text === "string"
+          ? d.text
+          : typeof d.reviewText === "string"
+          ? d.reviewText
+          : "";
 
-      const next: RcSelectReviewDetail = {
+      const text = (rawText ?? "").trim();
+      if (!text) return;
+
+      const langRaw =
+        typeof d.language === "string"
+          ? d.language
+          : typeof d.detectedLanguage === "string"
+          ? d.detectedLanguage
+          : null;
+
+      const next: SelectedReview = {
         reviewId: String(d.reviewId ?? ""),
-        text: d.text ?? "",
-        rating: Number(d.rating ?? 0) || 0,
+        text,
+        rating: typeof d.rating === "number" ? d.rating : null,
         authorName: d.authorName ?? null,
         createdAt: d.createdAt ?? null,
-        language: d.language ?? null,
+        language: langRaw ?? null,
         source: d.source ?? null,
       };
 
@@ -185,7 +226,10 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       // Prefill core inputs
       setReviewText(next.text);
-      if (next.rating >= 1 && next.rating <= 5) setRating(next.rating);
+
+      if (typeof next.rating === "number" && next.rating >= 1 && next.rating <= 5) {
+        setRating(next.rating);
+      }
 
       // If caller provides a language hint, set the copy-ready language dropdown
       if (typeof next.language === "string" && next.language.trim()) {
@@ -476,7 +520,9 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               >
                 {COPY.selectedHint}
                 {selectedReview.authorName ? ` · ${selectedReview.authorName}` : ""}
-                {selectedReview.rating ? ` · ${selectedReview.rating}★` : ""}
+                {typeof selectedReview.rating === "number" && selectedReview.rating > 0
+                  ? ` · ${selectedReview.rating}★`
+                  : ""}
               </span>
 
               <button
