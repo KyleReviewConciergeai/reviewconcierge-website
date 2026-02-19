@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import VoiceSamplesCard from "./VoiceSamplesCard";
 
 type Settings = {
   owner_language: string;
@@ -246,6 +247,9 @@ export default function SettingsPage() {
             Example: <span style={{ fontStyle: "italic" }}>{selectedTone.example}</span>
           </div>
         </div>
+
+        {/* ✅ NEW: Voice Samples (clean + future-proof) */}
+        <VoiceSamplesCard />
 
         <div style={cardStyle}>
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Signature (optional)</div>
