@@ -20,22 +20,33 @@ function parseRating(v: unknown) {
   return n;
 }
 
-function safeTrimReply(s: string, maxLen = 800) {
+function safeTrimReply(s: string, maxLen = 900) {
   const t = (s ?? "").trim();
   if (!t) return "";
   return t.slice(0, maxLen);
 }
 
 function stripEmojis(text: string) {
+  // Broad emoji/pictograph ranges; safe for EN/ES/PT/FR/IT/DE
   return text.replace(
     /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/gu,
     ""
   );
 }
 
+function removeQuotations(text: string) {
+  return text.replace(/["“”‘’]/g, "");
+}
+
+function collapseWhitespace(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function limitSentences(text: string, maxSentences: number) {
   const t = text.trim();
   if (!t) return t;
+
+  // Split on sentence end punctuation; works reasonably across Latin languages
   const parts = t
     .split(/(?<=[.!?])\s+/)
     .map((p) => p.trim())
@@ -45,27 +56,23 @@ function limitSentences(text: string, maxSentences: number) {
   return parts.slice(0, maxSentences).join(" ");
 }
 
-function removeQuotations(text: string) {
-  return text.replace(/["“”‘’]/g, "");
-}
-
 function languageInstruction(languageTag: string) {
   const tag = (languageTag || "en").toLowerCase();
 
   switch (tag) {
     case "en":
-      return "Write in English (natural, human, not corporate).";
+      return "Write in English. Natural, human, non-corporate.";
     case "es":
-      return "Write in Spanish (natural Spanish, not a literal translation).";
+      return "Write in Spanish. Natural Spanish, not a literal translation.";
     case "pt":
     case "pt-br":
-      return "Write in Portuguese (natural Portuguese, not a literal translation).";
+      return "Write in Portuguese. Natural Portuguese, not a literal translation.";
     case "fr":
-      return "Write in French (natural French, not a literal translation).";
+      return "Write in French. Natural French, not a literal translation.";
     case "it":
-      return "Write in Italian (natural Italian, not a literal translation).";
+      return "Write in Italian. Natural Italian, not a literal translation.";
     case "de":
-      return "Write in German (natural German, not a literal translation).";
+      return "Write in German. Natural German, not a literal translation.";
     default:
       return `Write in the owner's preferred language (${languageTag}).`;
   }
@@ -86,44 +93,38 @@ const DEFAULT_VOICE = {
   brevity: "short" as const,
   formality: "professional" as const,
   things_to_avoid: [
-    // Existing
+    // Corporate / template-y
     "Thank you for your feedback",
     "We appreciate your feedback",
+    "We appreciate your thoughts",
+    "We appreciate your comments",
+    "Thank you for taking the time",
+    "Thank you for sharing",
     "We strive",
     "We will look into this",
     "We take this seriously",
     "Please accept our apologies",
-    "delighted",
-    "thrilled",
     "valued customer",
+    "valued guest",
     "expectations",
+    "did not meet expectations",
     "didn't meet expectations",
     "fell short",
     "acknowledge",
-    "appreciate your thoughts",
-    "take your comments",
-    "we understand that",
-    "it's disappointing to hear",
+    "we understand",
     "we hear your",
-    "we recognize that",
+    "we recognize",
+    "it's disappointing to hear",
     "it's concerning to hear",
     "we'll keep that in mind",
-    "did not meet expectations",
+    "refine our",
 
-
-    // Anti-AI / anti-corporate (NEW)
+    // AI-ish tells / faux empathy openers
     "we're sorry to hear",
     "we are sorry to hear",
+    "it sounds like",
     "we're glad you",
     "we are glad you",
-    "thank you for sharing",
-    "thank you for taking the time",
-    "it sounds like",
-    "we appreciate your thoughts",
-    "we appreciate your comments",
-    "keep your comments in mind",
-    "fell short",
-    "refine our",
   ],
   allow_exclamation: false,
 };
@@ -182,7 +183,7 @@ function normalizeVoice(v?: VoiceProfile | null) {
     ...DEFAULT_VOICE,
     ...vv,
     things_to_avoid: Array.isArray(vv.things_to_avoid)
-      ? vv.things_to_avoid.filter(Boolean)
+      ? vv.things_to_avoid.map((x) => String(x)).filter(Boolean)
       : DEFAULT_VOICE.things_to_avoid,
     allow_exclamation:
       typeof vv.allow_exclamation === "boolean"
@@ -196,7 +197,7 @@ function normalizeToneFromOrg(tone: string): VoiceProfile["tone"] {
   if (t === "playful") return "playful";
   if (t === "direct") return "direct";
   if (t === "neutral") return "neutral";
-  if (t === "professional") return "neutral"; // professional handled via formality line
+  if (t === "professional") return "neutral";
   return "warm";
 }
 
@@ -225,75 +226,159 @@ function parseClientRules(v: unknown): string[] {
   return cleaned;
 }
 
-/**
- * NEW: prevent weird tone choices for negative reviews
- */
 function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoiceProfile["tone"] {
   if (!tone) return tone;
   if (rating <= 2 && tone === "playful") return "neutral";
   return tone;
 }
 
-/**
- * Step 2: Make rating guidance push the model away from templated/corporate phrasing.
- * These strings are directly injected into the prompt; keep them crisp and human-biased.
- */
-function ratingGuidance(rating: number) {
+function sentencePolicyForRating(rating: number) {
+  if (rating >= 5) return 4; // allow a touch more when praise is detailed
+  if (rating === 4) return 3;
+  if (rating === 3) return 3;
+  if (rating === 2) return 3;
+  return 3; // 1-star also 3 max (calm + direct)
+}
+
+function mustDoForRating(rating: number) {
+  const base = [
+    "Write 2–4 short sentences max (follow sentence limit below).",
+    "Sentence 1 MUST reference exactly one concrete detail from the review (dish, staff moment, timing, vibe, service detail).",
+    "Sound like a real owner writing quickly on Google (not a brand statement).",
+    "Use plain language. No PR tone. No templates.",
+    "Do NOT invent details. Only reference what the reviewer actually wrote.",
+    "Do NOT quote the review text.",
+    "No emojis.",
+  ];
+
   if (rating >= 5) {
     return [
-      "For 5-star reviews:",
-      "- FIRST sentence must reference ONE concrete detail they mentioned (dish, dessert, coffee, vibe, staff moment).",
-      "- Sound appreciative but grounded (no hype, no marketing language).",
-      "- If the review is detailed, you may acknowledge TWO details total, but keep it natural.",
-      "- No generic openers like 'we're glad you' or 'it's great to hear'.",
-      "- Close with a simple, low-pressure welcome back (not salesy).",
-    ].join("\n");
+      ...base,
+      "Be appreciative but grounded (no hype, no marketing).",
+      "Close with a simple, low-pressure welcome back (not salesy).",
+    ];
   }
 
   if (rating === 4) {
     return [
-      "For 4-star reviews:",
-      "- FIRST sentence must reference ONE specific positive detail they mentioned.",
-      "- Keep it relaxed and conversational (like a real owner replying).",
-      "- If they hinted at an issue, acknowledge it briefly in plain language (no corporate phrasing).",
-      "- Avoid phrases like 'we appreciate your feedback' or 'we'll keep that in mind' or 'refine our menu'.",
-      "- Close with a simple welcome back.",
-    ].join("\n");
+      ...base,
+      "If there’s a small issue hinted, acknowledge it briefly in plain language (no corporate phrasing).",
+      "Close with a simple welcome back.",
+    ];
   }
 
   if (rating === 3) {
     return [
-      "For 3-star reviews:",
-      "- FIRST sentence must reference ONE concrete detail from the review (dish, wait time, noise, service moment).",
-      "- Reflect the mixed experience plainly (not PR language).",
-      "- Acknowledge the miss without over-apologizing or promising fixes.",
-      "- Optional: include ONE short, human offline follow-up line only if it feels appropriate (no 'we'll investigate').",
-      "- Avoid generic empathy openers like 'sorry to hear' or 'we understand'.",
-    ].join("\n");
+      ...base,
+      "Reflect the mixed experience plainly (not PR language).",
+      "Acknowledge the miss without over-apologizing or promising fixes.",
+    ];
   }
 
   if (rating === 2) {
     return [
-      "For 2-star reviews:",
-      "- FIRST sentence must reference ONE specific detail from the review (service moment, timing, dish, staff interaction).",
-      "- Acknowledge the disappointment calmly, without sounding apologetic/defensive or corporate.",
-      "- Avoid generic empathy phrases ('sorry to hear', 'we understand', 'it sounds like').",
-      "- Use plain, conversational language — how a real owner would speak, not a brand.",
-      "- If inviting follow-up, keep it one short, human line (no corporate framing).",
-      "- Do NOT promise fixes, investigations, or improvements.",
-    ].join("\n");
+      ...base,
+      "Acknowledge disappointment calmly (no defensiveness).",
+      "If inviting follow-up, keep it ONE short human line (no corporate framing).",
+    ];
   }
 
-  // rating === 1
+  // 1-star
   return [
-    "For 1-star reviews:",
-    "- FIRST sentence must reference ONE specific detail from the review (what went wrong).",
-    "- Be calm and direct. No defensiveness, no long apology, no PR phrasing.",
-    "- Avoid 'did not meet expectations', 'we recognize', 'it's concerning', 'we take this seriously'.",
-    "- Use plain language; acknowledge impact without admitting legal fault or offering compensation.",
-    "- If inviting follow-up, keep it one short line (email/phone), not legalistic.",
-    "- Do NOT promise fixes, investigations, or improvements.",
-  ].join("\n");
+    ...base,
+    "Be calm and direct. Avoid long apologies and PR language.",
+    "If inviting follow-up, keep it ONE short line (email/phone), not legalistic.",
+  ];
+}
+
+function mustNotForRating(rating: number) {
+  const base = [
+    "Do NOT mention AI, automation, internal processes, investigations, or policies.",
+    "Do NOT offer refunds/discounts/compensation.",
+    "Do NOT promise future changes or guarantees (no 'we will make sure', 'we will improve').",
+    "Do NOT admit legal fault.",
+    "Do NOT use corporate filler or templated empathy.",
+    "Do NOT use exclamation points unless explicitly allowed (rule below).",
+  ];
+
+  if (rating <= 2) {
+    return [
+      ...base,
+      "Do NOT be playful or joking.",
+      "Do NOT argue with the reviewer.",
+      "Do NOT blame the customer.",
+    ];
+  }
+
+  return base;
+}
+
+function styleLines(params: {
+  voice: ReturnType<typeof normalizeVoice>;
+  org_reply_tone_raw: string;
+  reply_signature: string | null;
+  clientTone?: VoiceProfile["tone"] | null;
+  rating: number;
+}) {
+  const { voice, org_reply_tone_raw, reply_signature, clientTone, rating } = params;
+
+  const who =
+    voice.reply_as === "owner"
+      ? 'Reply as the owner using "I".'
+      : voice.reply_as === "manager"
+        ? 'Reply as the manager using "I".'
+        : 'Reply as the business using "we".';
+
+  const orgTone = (org_reply_tone_raw || "").toLowerCase().trim();
+  const effectiveFormality = orgTone === "professional" ? "professional" : voice.formality;
+
+  const toneLine =
+    voice.tone === "warm"
+      ? "Default tone: warm, real, calm."
+      : voice.tone === "neutral"
+        ? "Default tone: steady, human, not overly emotional."
+        : voice.tone === "direct"
+          ? "Default tone: direct, respectful, concise."
+          : "Default tone: lightly playful but still respectful.";
+
+  const clientToneLine =
+    clientTone === "warm"
+      ? "User tone override: warm, human, not salesy."
+      : clientTone === "neutral"
+        ? "User tone override: neutral, calm, straightforward."
+        : clientTone === "direct"
+          ? "User tone override: direct, concise, respectful."
+          : clientTone === "playful"
+            ? "User tone override: lightly playful (ONLY if appropriate)."
+            : "";
+
+  const brevityLine = voice.brevity === "short" ? "Brevity: short." : "Brevity: medium-short.";
+
+  const formalityLine =
+    effectiveFormality === "casual"
+      ? "Formality: casual (still respectful)."
+      : "Formality: professional (not stiff).";
+
+  const signatureLine = reply_signature
+    ? `Signature: end with “— ${reply_signature}”.`
+    : "Signature: none.";
+
+  const exclamationLine = voice.allow_exclamation
+    ? rating >= 5
+      ? "Exclamation points allowed sparingly (max 1), only if it feels natural."
+      : "Exclamation points allowed sparingly (max 1) if it feels natural."
+    : "No exclamation points.";
+
+  return [who, toneLine, clientToneLine, brevityLine, formalityLine, signatureLine, exclamationLine]
+    .filter(Boolean)
+    .join("\n- ");
+}
+
+function buildAvoidList(voice: ReturnType<typeof normalizeVoice>) {
+  const avoid = Array.isArray(voice.things_to_avoid) ? voice.things_to_avoid : [];
+  const list = avoid.map((s) => cleanString(s, 80)).filter(Boolean).slice(0, 40);
+  if (!list.length) return "";
+  return list.join(" | ");
 }
 
 function buildPrompt(params: {
@@ -319,110 +404,63 @@ function buildPrompt(params: {
     client_rules,
   } = params;
 
-  const who =
-    voice.reply_as === "owner"
-      ? "Write as the owner using “I”."
-      : voice.reply_as === "manager"
-        ? "Write as the manager using “I”."
-        : "Write as the business using “we”.";
+  const maxSentences = sentencePolicyForRating(rating);
 
-  const toneLine =
-    voice.tone === "warm"
-      ? "Tone: warm, real, and calm."
-      : voice.tone === "neutral"
-        ? "Tone: steady, human, and not overly emotional."
-        : voice.tone === "direct"
-          ? "Tone: direct, respectful, and concise."
-          : "Tone: lightly playful but still respectful.";
+  const mustDo = mustDoForRating(rating);
+  const mustNot = mustNotForRating(rating);
 
-  const orgTone = (org_reply_tone_raw || "").toLowerCase().trim();
-  const effectiveFormality = orgTone === "professional" ? "professional" : voice.formality;
+  const avoidList = buildAvoidList(voice);
+  const voiceProfile = styleLines({
+    voice,
+    org_reply_tone_raw,
+    reply_signature,
+    clientTone: client_tone ?? null,
+    rating,
+  });
 
-  const brevityLine =
-    voice.brevity === "short" ? "Length: keep it SHORT." : "Length: medium-short.";
-
-  const formalityLine =
-    effectiveFormality === "casual"
-      ? "Style: casual human phrasing (not overly polite)."
-      : "Style: professional but not stiff.";
-
-  const exclamationRule = voice.allow_exclamation
-    ? "Exclamation points allowed, but only if it feels natural."
-    : "Do NOT use exclamation points.";
-
-  const avoidList =
-    voice.things_to_avoid && voice.things_to_avoid.length
-      ? `Avoid these phrases/words (do not use them): ${voice.things_to_avoid.join(", ")}`
-      : "";
-
-  const signatureLine = reply_signature
-    ? `Signature: end with “— ${reply_signature}”.`
-    : "Signature: none.";
-
-  const clientToneLine =
-    client_tone === "warm"
-      ? "User-selected tone override: warm, human, not salesy."
-      : client_tone === "neutral"
-        ? "User-selected tone override: neutral, calm, straightforward."
-        : client_tone === "direct"
-          ? "User-selected tone override: direct, concise, respectful."
-          : client_tone === "playful"
-            ? "User-selected tone override: lightly playful (only if appropriate)."
-            : "";
-
-  const clientRulesBlock =
+  const userRules =
     client_rules && client_rules.length
-      ? ["User-selected rules (HIGHEST priority):", ...client_rules.map((r) => `- ${r}`)].join(
-          "\n"
-        )
+      ? ["USER RULES (highest priority):", ...client_rules.map((r) => `- ${r}`)].join("\n")
       : "";
 
-  // Step 2: sentence policy in the prompt (lets 5★ be a touch longer when warranted)
-  const sentencePolicy =
-    rating >= 5
-      ? "For 5-star reviews: 2–4 short sentences are acceptable if their praise is detailed."
-      : rating <= 2
-        ? "For negative reviews: 2–3 sentences max (use 3 only if needed)."
-        : "For all other reviews: 2–3 sentences max.";
-
+  // Important: repeated, crisp constraints reduce “AI feel”
   return `
-OWNER VOICE INPUTS (highest priority):
-- ${who}
-- ${toneLine}
-- ${brevityLine}
-- ${formalityLine}
-- ${exclamationRule}
-- No emojis.
-- Do not sound like PR, templates, or policy language.
-- Do not mention AI, automation, internal processes, investigations, or policies.
-- Do not offer refunds/discounts/compensation.
-- Do not admit legal fault.
-- Do not quote the review.
-- The FIRST sentence must reference a specific detail from the review (food, service moment, vibe, timing, or staff), not a generic emotion.
-- The FIRST sentence must reference a concrete detail from the review (dish, service moment, timing, vibe, or staff) — never a generic emotion.
-- ${sentencePolicy}
-- ${avoidList}
-- ${signatureLine}
-${clientToneLine ? `\n${clientToneLine}\n` : ""}
-${clientRulesBlock ? `\n${clientRulesBlock}\n` : ""}
+You are writing a public reply to a Google review.
 
-REVIEW TEXT (use ONLY what they wrote; do not invent details):
-Business: ${business_name}
-Rating: ${rating}/5
+VOICE PROFILE:
+- ${voiceProfile}
 
-Review:
+HARD CONSTRAINTS (follow exactly):
+- Max sentences: ${maxSentences}
+- No emojis
+- No quotes from the review
+- Do not invent details
+- Output ONLY the reply text (no labels, no bullet points)
+
+MUST DO:
+${mustDo.map((x) => `- ${x}`).join("\n")}
+
+MUST NOT DO:
+${mustNot.map((x) => `- ${x}`).join("\n")}
+
+BANNED PHRASES / AI-TELLS (do not use any of these, even partially):
+${avoidList ? `- ${avoidList}` : "- (none)"}
+
+${userRules ? `${userRules}\n` : ""}
+
+LANGUAGE:
+- ${languageInstruction(owner_language)}
+- Draft in the OWNER language.
+
+BUSINESS: ${business_name}
+RATING: ${rating}/5
+
+REVIEW:
 """
 ${review_text}
 """
 
-LANGUAGE LAYER (MVP Step 3a):
-- ${languageInstruction(owner_language)}
-- Draft in the OWNER language (not the reviewer language).
-
-RATING GUIDANCE:
-${ratingGuidance(rating)}
-
-Return ONLY the reply text. No bullet points. No labels.
+Return ONLY the reply text.
 `.trim();
 }
 
@@ -432,11 +470,30 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
 
   const normalized = reply.toLowerCase();
   const marker = `— ${sig}`.toLowerCase();
-
   if (normalized.includes(marker)) return reply;
 
-  // Add a clean signature on a new line
   return `${reply.trim()}\n— ${sig}`.trim();
+}
+
+/**
+ * Extra post-clean to remove common templated openers if they slip through.
+ * Keep this conservative so we don’t accidentally destroy good content.
+ */
+function stripTemplatedOpeners(text: string) {
+  let t = text.trim();
+
+  const patterns: RegExp[] = [
+    /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words))?)[,!.]\s*/i,
+    /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
+    /^\s*(we('?| a)re (sorry|sorry to hear|sorry that))[,!.]\s*/i,
+    /^\s*(we('?| a)re glad( you)?)[,!.]\s*/i,
+  ];
+
+  for (const re of patterns) {
+    t = t.replace(re, "");
+  }
+
+  return t.trim();
 }
 
 export async function POST(req: Request) {
@@ -458,7 +515,7 @@ export async function POST(req: Request) {
 
     const review_text = cleanString(body?.review_text, 5000);
     const business_name = cleanString(body?.business_name, 200);
-    const reviewer_language = cleanLanguage(body?.language); // keep for Step 3b
+    const reviewer_language = cleanLanguage(body?.language); // kept for meta
     const rating = parseRating(body?.rating);
 
     if (!review_text) {
@@ -471,7 +528,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "rating must be 1–5" }, { status: 400 });
     }
 
-    // NEW: client overrides (safe)
     const clientToneRaw = parseClientTone(body?.tone);
     const clientTone = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
     const clientRules = parseClientRules(body?.rules);
@@ -494,8 +550,6 @@ export async function POST(req: Request) {
 
     const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
 
-    // Org settings define default voice tone.
-    // clientTone is handled as a highest-priority instruction block (not blindly overwriting voice.tone).
     const voice = normalizeVoice({
       ...merged,
       tone: merged?.tone ? merged.tone : toneFromOrg,
@@ -522,11 +576,14 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: rating <= 2 ? 0.15 : 0.25,
+        // Mild repetition control can reduce “templated feel”
+        frequency_penalty: 0.2,
+        presence_penalty: 0.1,
         messages: [
           {
             role: "system",
             content:
-              "You write short, human-sounding public review replies. Follow instructions exactly. Output only the reply.",
+              "You write short, human-sounding public review replies for local businesses. Follow constraints exactly. Output only the reply text.",
           },
           { role: "user", content: prompt },
         ],
@@ -558,18 +615,33 @@ export async function POST(req: Request) {
 
     content = removeQuotations(content);
     content = stripEmojis(content);
-    content = content.replace(/\s+/g, " ").trim();
+    content = collapseWhitespace(content);
 
-    // Step 2: allow slightly longer 5★ replies (while keeping others tight)
-    const maxSentences = rating <= 2 ? 3 : rating === 3 ? 2 : rating === 4 ? 2 : 4;
-    content = limitSentences(content, maxSentences);
+    // Remove templated opener phrases if model still sneaks them in
+    content = stripTemplatedOpeners(content);
 
+    // Sentence enforcement
+    content = limitSentences(content, sentencePolicyForRating(rating));
+
+    // Exclamation enforcement (also removes Spanish inverted ¡)
     if (!voice.allow_exclamation) {
-      content = content.replace(/!/g, ".");
+      content = content.replace(/[!¡]/g, ".");
       content = content.replace(/\.\.+/g, ".").trim();
+    } else {
+      // If allowed, still keep it sane: max 1 exclamation.
+      const exCount = (content.match(/[!¡]/g) ?? []).length;
+      if (exCount > 1) {
+        // Replace extras with periods, keep first
+        let seen = 0;
+        content = content.replace(/[!¡]/g, (m) => {
+          seen += 1;
+          return seen === 1 ? m : ".";
+        });
+        content = content.replace(/\.\.+/g, ".").trim();
+      }
     }
 
-    // ✅ Enforce signature at the end (MVP reliability)
+    // Signature enforcement
     content = appendSignatureIfMissing(content, reply_signature);
 
     if (!content) {
