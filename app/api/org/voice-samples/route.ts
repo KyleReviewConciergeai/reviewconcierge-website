@@ -9,6 +9,14 @@ function cleanString(v: unknown, maxLen = 2000) {
   return v.trim().slice(0, maxLen);
 }
 
+function jsonError(message: string, status = 400) {
+  return NextResponse.json({ ok: false, error: message }, { status });
+}
+
+/**
+ * GET /api/org/voice-samples
+ * Returns up to 50 samples for the current org.
+ */
 export async function GET() {
   try {
     const { supabase, organizationId } = await requireOrgContext();
@@ -20,92 +28,77 @@ export async function GET() {
       .order("created_at", { ascending: true })
       .limit(50);
 
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
+    if (error) return jsonError(error.message, 500);
 
     return NextResponse.json({ ok: true, samples: data ?? [] }, { status: 200 });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? "Failed to load voice samples" },
-      { status: 500 }
-    );
+    return jsonError(err?.message ?? "Failed to load voice samples", 500);
   }
 }
 
+/**
+ * POST /api/org/voice-samples
+ * Body: { sample_text: string }
+ * Creates a new sample for the current org.
+ */
 export async function POST(req: Request) {
   try {
     const { supabase, organizationId } = await requireOrgContext();
     const body = await req.json().catch(() => ({}));
 
-    // Back-compat: allow either "action" style OR simple REST create
-    const action = cleanString((body as any)?.action, 32);
     const sampleText = cleanString((body as any)?.sample_text, 2000);
-    const sampleId = cleanString((body as any)?.id, 80);
+    if (!sampleText) return jsonError("sample_text is required", 400);
 
-    // ----- CREATE (preferred): { sample_text }
-    // Also supports legacy: { action: "create", sample_text }
-    if (!action || action === "create") {
-      if (!sampleText) {
-        return NextResponse.json({ ok: false, error: "sample_text is required" }, { status: 400 });
-      }
+    const { data, error } = await supabase
+      .from("org_voice_samples")
+      .insert({ organization_id: organizationId, sample_text: sampleText })
+      .select("id,sample_text,created_at,updated_at")
+      .single();
 
-      const { data, error } = await supabase
-        .from("org_voice_samples")
-        .insert({ organization_id: organizationId, sample_text: sampleText })
-        .select("id,sample_text,created_at,updated_at")
-        .single();
+    if (error) return jsonError(error.message, 500);
 
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-      return NextResponse.json({ ok: true, sample: data }, { status: 200 });
-    }
-
-    // ----- UPDATE (legacy-supported): { action: "update", id, sample_text }
-    if (action === "update") {
-      if (!sampleId) {
-        return NextResponse.json({ ok: false, error: "id is required" }, { status: 400 });
-      }
-      if (!sampleText) {
-        return NextResponse.json({ ok: false, error: "sample_text is required" }, { status: 400 });
-      }
-
-      const { data, error } = await supabase
-        .from("org_voice_samples")
-        .update({ sample_text: sampleText, updated_at: new Date().toISOString() })
-        .eq("id", sampleId)
-        .eq("organization_id", organizationId)
-        .select("id,sample_text,created_at,updated_at")
-        .single();
-
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-      return NextResponse.json({ ok: true, sample: data }, { status: 200 });
-    }
-
-    // ----- DELETE (legacy-supported via POST): { action: "delete", id }
-    if (action === "delete") {
-      if (!sampleId) {
-        return NextResponse.json({ ok: false, error: "id is required" }, { status: 400 });
-      }
-
-      const { error } = await supabase
-        .from("org_voice_samples")
-        .delete()
-        .eq("id", sampleId)
-        .eq("organization_id", organizationId);
-
-      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-      return NextResponse.json({ ok: true }, { status: 200 });
-    }
-
-    return NextResponse.json({ ok: false, error: "Invalid action" }, { status: 400 });
+    return NextResponse.json({ ok: true, sample: data }, { status: 200 });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? "Failed to save voice samples" },
-      { status: 500 }
-    );
+    return jsonError(err?.message ?? "Failed to create voice sample", 500);
   }
 }
 
+/**
+ * PATCH /api/org/voice-samples
+ * Body: { id: string, sample_text: string }
+ * Updates a sample (future-proof for edit UI).
+ */
+export async function PATCH(req: Request) {
+  try {
+    const { supabase, organizationId } = await requireOrgContext();
+    const body = await req.json().catch(() => ({}));
+
+    const id = cleanString((body as any)?.id, 80);
+    const sampleText = cleanString((body as any)?.sample_text, 2000);
+
+    if (!id) return jsonError("id is required", 400);
+    if (!sampleText) return jsonError("sample_text is required", 400);
+
+    const { data, error } = await supabase
+      .from("org_voice_samples")
+      .update({ sample_text: sampleText })
+      .eq("id", id)
+      .eq("organization_id", organizationId)
+      .select("id,sample_text,created_at,updated_at")
+      .single();
+
+    if (error) return jsonError(error.message, 500);
+
+    return NextResponse.json({ ok: true, sample: data }, { status: 200 });
+  } catch (err: any) {
+    return jsonError(err?.message ?? "Failed to update voice sample", 500);
+  }
+}
+
+/**
+ * DELETE /api/org/voice-samples?id=<uuid>
+ * Deletes a sample owned by the current org.
+ */
 export async function DELETE(req: Request) {
   try {
     const { supabase, organizationId } = await requireOrgContext();
@@ -113,9 +106,7 @@ export async function DELETE(req: Request) {
     const url = new URL(req.url);
     const id = cleanString(url.searchParams.get("id"), 80);
 
-    if (!id) {
-      return NextResponse.json({ ok: false, error: "id is required" }, { status: 400 });
-    }
+    if (!id) return jsonError("id is required", 400);
 
     const { error } = await supabase
       .from("org_voice_samples")
@@ -123,13 +114,10 @@ export async function DELETE(req: Request) {
       .eq("id", id)
       .eq("organization_id", organizationId);
 
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (error) return jsonError(error.message, 500);
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? "Failed to delete voice sample" },
-      { status: 500 }
-    );
+    return jsonError(err?.message ?? "Failed to delete voice sample", 500);
   }
 }
