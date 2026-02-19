@@ -26,6 +26,16 @@ type DraftReplyPanelProps = {
   businessName?: string | null;
 };
 
+type RcSelectReviewDetail = {
+  reviewId: string;
+  text: string;
+  rating: number;
+  authorName?: string | null;
+  createdAt?: string | null;
+  language?: string | null;
+  source?: string | null; // e.g. "places_sample"
+};
+
 /** Small hook for responsive inline styles (safe in React/Next) */
 function useIsNarrow(maxWidthPx = 720) {
   const [isNarrow, setIsNarrow] = useState(false);
@@ -77,6 +87,11 @@ const DRAFT_RULES = [
 ];
 
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
+  const panelRef = useRef<HTMLElement | null>(null);
+  const reviewTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const [selectedReview, setSelectedReview] = useState<RcSelectReviewDetail | null>(null);
+
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
   const [rating, setRating] = useState<number>(5);
 
@@ -136,6 +151,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     statusError: "Couldn’t draft",
     errorDefault: "Couldn’t draft a reply right now. Please try again.",
     tip: "Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.",
+    selectedHint: "Selected review",
+    clearSelection: "Clear selection",
   };
 
   useEffect(() => {
@@ -143,6 +160,66 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     if (next && next !== businessNameState) setBusinessNameState(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessName]);
+
+  // ✅ Listen for review selection from dashboard list (rc:select-review)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handler = (evt: Event) => {
+      const ce = evt as CustomEvent<Partial<RcSelectReviewDetail> | undefined>;
+      const d = ce.detail;
+
+      if (!d || typeof d.text !== "string") return;
+
+      const next: RcSelectReviewDetail = {
+        reviewId: String(d.reviewId ?? ""),
+        text: d.text ?? "",
+        rating: Number(d.rating ?? 0) || 0,
+        authorName: d.authorName ?? null,
+        createdAt: d.createdAt ?? null,
+        language: d.language ?? null,
+        source: d.source ?? null,
+      };
+
+      setSelectedReview(next);
+
+      // Prefill core inputs
+      setReviewText(next.text);
+      if (next.rating >= 1 && next.rating <= 5) setRating(next.rating);
+
+      // If caller provides a language hint, set the copy-ready language dropdown
+      if (typeof next.language === "string" && next.language.trim()) {
+        const lang = normLang(next.language);
+        if (lang) setReplyLanguage(lang);
+      }
+
+      // Reset prior draft UI so it feels "fresh" for the selected review
+      setDraft("");
+      setFinalReply("");
+      setOwnerLanguage("en");
+      setVersion(0);
+      setStatus("idle");
+      setErrorMessage("");
+
+      // Bring panel into view and focus the review textarea for quick action
+      try {
+        panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {
+        // ignore
+      }
+
+      window.setTimeout(() => {
+        try {
+          reviewTextareaRef.current?.focus();
+        } catch {
+          // ignore
+        }
+      }, 50);
+    };
+
+    window.addEventListener("rc:select-review", handler as EventListener);
+    return () => window.removeEventListener("rc:select-review", handler as EventListener);
+  }, []);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -306,6 +383,17 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     }
   }
 
+  function onClearSelection() {
+    setSelectedReview(null);
+    setReviewText("");
+    setDraft("");
+    setFinalReply("");
+    setOwnerLanguage("en");
+    setVersion(0);
+    setStatus("idle");
+    setErrorMessage("");
+  }
+
   const isLoading = status === "loading";
   const hasDraft = Boolean(draft.trim());
   const hasFinal = Boolean(finalReply.trim());
@@ -333,7 +421,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const showFinalBox = !sameLang;
 
   return (
-    <section style={panelStyle}>
+    <section style={panelStyle} ref={panelRef as any}>
       {/* Header */}
       <div
         style={{
@@ -365,6 +453,50 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           >
             {COPY.subtitle}
           </p>
+
+          {selectedReview ? (
+            <div
+              style={{
+                marginTop: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 12,
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(148,163,184,0.28)",
+                  background: "rgba(15,23,42,0.75)",
+                  color: "#e2e8f0",
+                }}
+              >
+                {COPY.selectedHint}
+                {selectedReview.authorName ? ` · ${selectedReview.authorName}` : ""}
+                {selectedReview.rating ? ` · ${selectedReview.rating}★` : ""}
+              </span>
+
+              <button
+                type="button"
+                onClick={onClearSelection}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(148,163,184,0.28)",
+                  background: "rgba(15,23,42,0.75)",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+                title="Clear the selected review and reset the panel"
+              >
+                {COPY.clearSelection}
+              </button>
+            </div>
+          ) : null}
 
           {hasDraft ? (
             <div style={{ marginTop: 8, fontSize: 12, color: "rgba(226,232,240,0.55)" }}>
@@ -458,6 +590,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         </div>
 
         <textarea
+          ref={reviewTextareaRef}
           value={reviewText}
           onChange={(e) => setReviewText(e.target.value)}
           placeholder="Paste the review text here…"

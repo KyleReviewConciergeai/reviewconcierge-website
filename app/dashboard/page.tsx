@@ -50,6 +50,14 @@ type PlaceCandidate = {
   formatted_address?: string;
 };
 
+type ReviewStatus = "needs_reply" | "drafted" | "handled";
+
+type ReviewLocalState = {
+  status: ReviewStatus;
+  draftText: string;
+  updatedAt: string;
+};
+
 function formatDate(iso: string | null) {
   if (!iso) return "";
   try {
@@ -69,6 +77,15 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function safeJsonParse<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
 export default function DashboardPage() {
   const sb = supabaseBrowser();
 
@@ -84,33 +101,66 @@ export default function DashboardPage() {
       "Read what guests wrote, then write a short reply in your own voice. You can edit it before posting.",
     reloadBtn: "Reload",
     reloadBtnLoading: "Reloading…",
-    syncBtn: "Bring in recent Google reviews",
-    syncBtnLoading: "Bringing them in…",
+
+    // ✅ Make “sample” explicit (Places limitation)
+    syncBtn: "Refresh sample (Google Places)",
+    syncBtnLoading: "Refreshing…",
     syncTooltipDisabled: "Connect your Google business first",
     syncTooltipEnabled:
-      "Fetches a recent sample of your Google reviews to read and reply to here.",
+      "Google Places provides a small sample of reviews (not always the latest). You can also paste any review to draft instantly.",
+
     connectHeader: "Connect Google reviews",
     connectBody:
-      "This links your business so we can bring in a recent sample of your Google reviews for drafting replies. Nothing is posted on your behalf.",
+      "This links your business so we can bring in a small sample of your Google reviews for drafting replies. Nothing is posted on your behalf.",
     connectTip: "Tip: search “business name + city”.",
     connectBtn: "Verify & Connect",
     connectBtnLoading: "Verifying…",
+
     connectedLabel: "Google connected",
     connectedHelp:
-      "Use “Bring in recent Google reviews” to pull a recent sample. You’ll always review and choose what to post.",
+      "Use “Refresh sample (Google Places)” to bring in a small sample. You’ll always review and choose what to post.",
     planLockedTitle: "Google sync is currently locked",
     planLockedBody:
       "To bring in reviews from Google, you’ll need an active plan. Drafting and editing stays fully in your control.",
+
     emptyTitle: "No reviews here yet.",
     emptyBodyNoGoogle:
-      "Connect your business, then bring in recent Google reviews to start drafting replies in your voice.",
+      "Connect your business, then refresh a sample of Google reviews to start drafting replies in your voice.",
     emptyBodyHasGoogle:
-      "Bring in recent Google reviews to start drafting replies in your voice.",
+      "Refresh a sample of Google reviews to start drafting replies in your voice.",
+
     filtersRating: "Rating",
     filtersSearch: "Search",
     filtersClear: "Clear",
-    listLabel: "Recent reviews",
-    listLabelNote: "A recent sample from Google",
+    filtersStatus: "Status",
+    statusAll: "All",
+    statusNeeds: "Needs reply",
+    statusDrafted: "Drafted",
+    statusHandled: "Handled",
+
+    listLabel: "Sample from Google (Places)",
+    listLabelNote: "Google Places returns a limited sample (not always the latest).",
+    whyLink: "Why not all reviews?",
+    whyTitle: "Why not all reviews?",
+    whyBody:
+      "Google Places returns a limited sample of reviews. It may not include the newest review, and the number can vary by business. You can still reply fast by pasting any review into the draft box above.",
+    whyFooter:
+      "Full “latest reviews inbox” syncing is enabled when the Google Business Profile (GBP) API is approved.",
+
+    // Per-review actions
+    actionDraftReply: "Draft reply",
+    actionSaveDraft: "Save draft",
+    actionEditDraft: "Edit draft",
+    actionClearDraft: "Clear draft",
+    actionMarkHandled: "Mark handled",
+    actionMarkNeeds: "Mark needs reply",
+    actionCopyReview: "Copy review",
+    draftLabel: "Owner draft (editable)",
+    draftPlaceholder: "Write or paste your draft here…",
+    draftTip:
+      "Tip: Copy your draft, then paste it into Google Reviews to post. Nothing is posted automatically.",
+    selectHelp:
+      "Selected review copied into the draft area (if supported). If not, use “Copy review” and paste it into the draft box.",
   };
 
   // API data (reviews)
@@ -160,6 +210,20 @@ export default function DashboardPage() {
   // Filters
   const [ratingFilter, setRatingFilter] = useState<number | "all">("all");
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ReviewStatus | "all">("all");
+
+  // Local per-review state (draft + status)
+  const [reviewLocal, setReviewLocal] = useState<Record<string, ReviewLocalState>>({});
+  const [expandedDraftId, setExpandedDraftId] = useState<string | null>(null);
+  const [whyOpen, setWhyOpen] = useState(false);
+
+  // Selected review (for “Draft reply” button)
+  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
+
+  const storageKey = useMemo(() => {
+    // business scope helps prevent cross-business collisions on same browser
+    return `rc_review_state:${business?.id ?? "unknown"}`;
+  }, [business?.id]);
 
   // Derived flags
   const needsOnboarding = businessLoaded && (!business || !business.google_place_id);
@@ -176,13 +240,51 @@ export default function DashboardPage() {
     window.setTimeout(() => setToast(null), ms);
   }
 
+  // Load local state once business is known (or changes)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      const parsed = safeJsonParse<Record<string, ReviewLocalState>>(raw);
+      if (parsed && typeof parsed === "object") setReviewLocal(parsed);
+    } catch {
+      // ignore
+    }
+  }, [storageKey]);
+
+  // Persist local state
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(reviewLocal));
+    } catch {
+      // ignore
+    }
+  }, [reviewLocal, storageKey]);
+
+  function getLocalState(id: string): ReviewLocalState {
+    const existing = reviewLocal[id];
+    if (existing) return existing;
+    return { status: "needs_reply", draftText: "", updatedAt: new Date().toISOString() };
+  }
+
+  function setLocalState(id: string, patch: Partial<ReviewLocalState>) {
+    setReviewLocal((prev) => {
+      const current = prev[id] ?? getLocalState(id);
+      const next: ReviewLocalState = {
+        status: patch.status ?? current.status,
+        draftText: patch.draftText ?? current.draftText,
+        updatedAt: new Date().toISOString(),
+      };
+      return { ...prev, [id]: next };
+    });
+  }
+
   async function redirectToCheckout() {
     // keep UI consistent immediately
     setUpgradeRequired(true);
     setSubscriptionActive(false);
 
     try {
-      // ✅ Step 3: after Stripe, route them to connect Google (not back to dashboard)
+      // After Stripe, route them to connect Google (not back to dashboard)
       await startCheckout("/connect/google");
     } catch (e: any) {
       console.error("startCheckout failed:", e);
@@ -197,7 +299,7 @@ export default function DashboardPage() {
   }
 
   /**
-   * NEW (Step C): After Stripe success redirect back to /dashboard?session_id=...
+   * After Stripe success redirect back to /dashboard?session_id=...
    * - sync the Stripe session server-side
    * - then clean the URL so refresh doesn't re-sync
    */
@@ -216,9 +318,7 @@ export default function DashboardPage() {
       console.error("[dashboard] stripe sync failed", e);
     } finally {
       params.delete("session_id");
-      const clean = `${window.location.pathname}${
-        params.toString() ? `?${params.toString()}` : ""
-      }`;
+      const clean = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
       window.history.replaceState({}, "", clean);
     }
   }
@@ -233,9 +333,6 @@ export default function DashboardPage() {
       setSubscriptionActive(false);
     }
 
-    // IMPORTANT:
-    // Do NOT flip upgradeRequired/subscriptionActive to "good" just because /api/reviews returned ok.
-    // Only /api/subscription/status should confirm active subscription.
     return json;
   }
 
@@ -275,7 +372,6 @@ export default function DashboardPage() {
       if (res.ok && json?.ok) {
         const isActive = !!json?.isActive;
         setSubscriptionActive(isActive);
-        // upgradeRequired is a UI hint — keep it aligned with the status endpoint
         setUpgradeRequired(!isActive);
         return;
       }
@@ -322,45 +418,35 @@ export default function DashboardPage() {
       const googleRes = await fetch("/api/reviews/google", { cache: "no-store" });
       const googleJson = await googleRes.json();
 
-      // ✅ Mendoza requirement: paywall routes to checkout (no “Search failed”)
       if (googleRes.status === 402 || googleJson?.upgradeRequired) {
         await redirectToCheckout();
         return;
       }
 
-      // Normal error handling
       if (!googleRes.ok || !googleJson?.ok) {
         console.error("Google refresh failed:", googleJson);
-        showToast(
-          { message: "Couldn’t fetch from Google right now. Please try again.", type: "error" },
-          4500
-        );
+        showToast({ message: "Couldn’t refresh right now. Please try again.", type: "error" }, 4500);
         return;
       }
 
       const fetched = Number(googleJson?.fetched ?? 0);
       const inserted = Number(googleJson?.inserted ?? 0);
       const updated = Number(googleJson?.updated ?? 0);
-      const syncedAt =
-        (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
+      const syncedAt = (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
 
-      // Reload local list after sync
       const json = await loadReviews();
       setData(json);
       setLastRefreshedAt(syncedAt);
 
       const msg =
         fetched === 0
-          ? "Fetched from Google • No recent reviews returned."
-          : `Fetched from Google • ${inserted} new, ${updated} updated.`;
+          ? "Refreshed sample • No reviews returned from Google Places."
+          : `Refreshed sample • ${inserted} new, ${updated} updated.`;
 
       showToast({ message: msg, type: "success" }, 3500);
     } catch (e: any) {
       console.error("Refresh from Google error:", e);
-      showToast(
-        { message: "Couldn’t fetch from Google right now. Please try again.", type: "error" },
-        4500
-      );
+      showToast({ message: "Couldn’t refresh right now. Please try again.", type: "error" }, 4500);
     } finally {
       setActionLoading(null);
     }
@@ -443,7 +529,6 @@ export default function DashboardPage() {
         cache: "no-store",
       });
 
-      // IMPORTANT: read JSON safely (some error responses may not be JSON)
       let json: any = null;
       try {
         json = await res.json();
@@ -451,13 +536,10 @@ export default function DashboardPage() {
         json = null;
       }
 
-      // ✅ PAYWALL: immediately route to Stripe and STOP.
       if (res.status === 402 || json?.upgradeRequired) {
-        // clear the misleading UI error and stop loading state before redirect
         setPlaceSearchLoading(false);
         setPlaceSearchError(null);
         setPlaceSearchResults([]);
-
         await redirectToCheckout();
         return;
       }
@@ -467,10 +549,7 @@ export default function DashboardPage() {
         return;
       }
 
-      const candidates = Array.isArray(json?.candidates)
-        ? (json.candidates as PlaceCandidate[])
-        : [];
-
+      const candidates = Array.isArray(json?.candidates) ? (json.candidates as PlaceCandidate[]) : [];
       setPlaceSearchResults(candidates);
     } catch (e: any) {
       console.error("[dashboard] places search error:", e);
@@ -499,10 +578,7 @@ export default function DashboardPage() {
         const { data: userData } = await sb.auth.getUser();
         setUserEmail(userData?.user?.email ?? "");
 
-        // ✅ Step C: if we just returned from Stripe, sync first so status is correct
         await syncStripeIfNeeded();
-
-        // subscription status first so the UI is correct immediately
         await loadSubscriptionStatus();
         await loadCurrentBusiness();
 
@@ -520,16 +596,40 @@ export default function DashboardPage() {
 
   const reviews = data?.reviews ?? [];
 
+  // Ensure we have a local state entry for reviews we see (non-destructive)
+  useEffect(() => {
+    if (!reviews?.length) return;
+
+    setReviewLocal((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const r of reviews) {
+        if (!next[r.id]) {
+          next[r.id] = {
+            status: "needs_reply",
+            draftText: "",
+            updatedAt: new Date().toISOString(),
+          };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviews?.length]);
+
   const filteredReviews = useMemo(() => {
     const q = query.trim().toLowerCase();
 
     return reviews.filter((r) => {
       const matchesRating =
-        ratingFilter === "all"
-          ? true
-          : typeof r.rating === "number" && r.rating === ratingFilter;
-
+        ratingFilter === "all" ? true : typeof r.rating === "number" && r.rating === ratingFilter;
       if (!matchesRating) return false;
+
+      const local = getLocalState(r.id);
+      const matchesStatus = statusFilter === "all" ? true : local.status === statusFilter;
+      if (!matchesStatus) return false;
+
       if (!q) return true;
 
       const haystack = [
@@ -537,13 +637,15 @@ export default function DashboardPage() {
         r.review_text ?? "",
         r.source ?? "",
         r.detected_language ?? "",
+        local.draftText ?? "",
       ]
         .join(" ")
         .toLowerCase();
 
       return haystack.includes(q);
     });
-  }, [reviews, ratingFilter, query]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviews, ratingFilter, query, statusFilter, reviewLocal]);
 
   const avgRating = useMemo(() => {
     const n = business?.google_rating;
@@ -566,9 +668,7 @@ export default function DashboardPage() {
   }, [reviews]);
 
   const displayBusinessName =
-    business?.business_name ??
-    data?.business?.business_name ??
-    (businessLoaded ? "Unknown" : "Loading…");
+    business?.business_name ?? data?.business?.business_name ?? (businessLoaded ? "Unknown" : "Loading…");
 
   const isPlaceConnectLoading = actionLoading === "connect" || placeIdStatus === "loading";
 
@@ -579,36 +679,90 @@ export default function DashboardPage() {
     return `${s.slice(0, 6)}…${s.slice(-4)}`;
   }
 
-async function copyReviewToClipboard(review: Review) {
-  const text = (review.review_text ?? "").trim();
-  if (!text) {
-    showToast({ message: "No review text to copy.", type: "error" }, 2500);
-    return;
+  async function copyReviewToClipboard(review: Review) {
+    const text = (review.review_text ?? "").trim();
+    if (!text) {
+      showToast({ message: "No review text to copy.", type: "error" }, 2500);
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+
+      // Existing event (kept)
+      window.dispatchEvent(
+        new CustomEvent("rc:copy-review", {
+          detail: {
+            reviewText: text,
+            rating: review.rating ?? null,
+            authorName: review.author_name ?? null,
+          },
+        })
+      );
+
+      showToast({ message: "Copied review to clipboard.", type: "success" }, 2200);
+    } catch (e) {
+      console.error("clipboard copy failed:", e);
+      showToast(
+        { message: "Couldn’t copy automatically — please copy manually.", type: "error" },
+        3500
+      );
+    }
   }
 
-  try {
-    await navigator.clipboard.writeText(text);
+  function selectReviewForDraft(review: Review) {
+    const text = (review.review_text ?? "").trim();
+    if (!text) {
+      showToast({ message: "No review text to draft from.", type: "error" }, 2500);
+      return;
+    }
 
-    // Optional: lets DraftReplyPanel hook into this later (no-op today)
+    setSelectedReviewId(review.id);
+
+    // If DraftReplyPanel listens, it can prefill. If not, harmless.
     window.dispatchEvent(
-      new CustomEvent("rc:copy-review", {
+      new CustomEvent("rc:select-review", {
         detail: {
+          reviewId: review.id,
           reviewText: text,
           rating: review.rating ?? null,
           authorName: review.author_name ?? null,
+          detectedLanguage: review.detected_language ?? null,
         },
       })
     );
 
-    showToast({ message: "Copied review to clipboard.", type: "success" }, 2200);
-  } catch (e) {
-    console.error("clipboard copy failed:", e);
-    showToast(
-      { message: "Couldn’t copy automatically — please copy manually.", type: "error" },
-      3500
-    );
+    // Also copy for convenience (fastest path)
+    copyReviewToClipboard(review).catch(() => null);
+    showToast({ message: COPY.selectHelp, type: "success" }, 3500);
+
+    // Expand draft editor for this review
+    setExpandedDraftId((prev) => (prev === review.id ? prev : review.id));
+
+    // Scroll to drafting panel smoothly (best-effort)
+    window.setTimeout(() => {
+      const el = document.getElementById("rc-draft-panel-anchor");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
   }
-}
+
+  function statusLabel(s: ReviewStatus) {
+    if (s === "needs_reply") return COPY.statusNeeds;
+    if (s === "drafted") return COPY.statusDrafted;
+    return COPY.statusHandled;
+  }
+
+  function statusColor(s: ReviewStatus) {
+    if (s === "handled") return "rgba(34,197,94,0.22)";
+    if (s === "drafted") return "rgba(59,130,246,0.18)";
+    return "rgba(251,191,36,0.16)";
+  }
+
+  function statusBorder(s: ReviewStatus) {
+    if (s === "handled") return "rgba(34,197,94,0.35)";
+    if (s === "drafted") return "rgba(59,130,246,0.30)";
+    return "rgba(251,191,36,0.28)";
+  }
 
   if (loading) {
     return (
@@ -629,21 +783,12 @@ async function copyReviewToClipboard(review: Review) {
   if (!data?.ok) {
     return (
       <>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 14,
-            alignItems: "flex-start",
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
           <div>
             <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
             <p style={{ opacity: 0.8, marginTop: 0 }}>{COPY.subtitle}</p>
             {userEmail && (
-              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 10 }}>
-                Signed in as {userEmail}
-              </div>
+              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 10 }}>Signed in as {userEmail}</div>
             )}
           </div>
 
@@ -661,7 +806,6 @@ async function copyReviewToClipboard(review: Review) {
               {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
             </button>
 
-            {/* ✅ Step 3: trial CTA first */}
             {showSubscribe && (
               <div style={{ width: "100%" }}>
                 <SubscribeButton />
@@ -704,28 +848,17 @@ async function copyReviewToClipboard(review: Review) {
   return (
     <>
       {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 14,
-          alignItems: "flex-start",
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
         <div>
           <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
-          <p style={{ opacity: 0.82, marginTop: 0, maxWidth: 680, lineHeight: 1.45 }}>
-            {COPY.subtitle}
-          </p>
+          <p style={{ opacity: 0.82, marginTop: 0, maxWidth: 680, lineHeight: 1.45 }}>{COPY.subtitle}</p>
 
           <div style={{ opacity: 0.82, marginTop: 12 }}>
             <div>
               <strong>Business:</strong> {displayBusinessName}
             </div>
             {userEmail && (
-              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 6 }}>
-                Signed in as {userEmail}
-              </div>
+              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 6 }}>Signed in as {userEmail}</div>
             )}
           </div>
         </div>
@@ -740,7 +873,6 @@ async function copyReviewToClipboard(review: Review) {
             maxWidth: "100%",
           }}
         >
-          {/* ✅ Step 3: trial CTA first */}
           {showSubscribe && (
             <div style={{ width: "100%" }}>
               <SubscribeButton />
@@ -759,24 +891,50 @@ async function copyReviewToClipboard(review: Review) {
           <button
             onClick={refreshFromGoogleThenReload}
             disabled={actionLoading !== null || !business?.google_place_id}
-            style={{
-              ...buttonStyle,
-              width: "100%",
-              minWidth: 0,
-              opacity: !business?.google_place_id ? 0.6 : 1,
-            }}
+            style={{ ...buttonStyle, width: "100%", minWidth: 0, opacity: !business?.google_place_id ? 0.6 : 1 }}
             title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
             aria-disabled={actionLoading !== null || !business?.google_place_id}
           >
             {actionLoading === "google" ? COPY.syncBtnLoading : COPY.syncBtn}
           </button>
+
+          {hasGoogleConnected && (
+            <button
+              onClick={() => setWhyOpen((v) => !v)}
+              disabled={actionLoading !== null}
+              style={{ ...ghostButtonStyle, width: "100%", minWidth: 0, textAlign: "center" }}
+              title={COPY.whyTitle}
+            >
+              {COPY.whyLink}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* “Last fetched” is helpful, but keep it soft (no operations vibe) */}
+      {/* “Last fetched” */}
       {hasGoogleConnected && lastRefreshedAt && (
         <div style={{ fontSize: 12, opacity: 0.65, marginTop: 8 }}>
-          Last fetched from Google: {new Date(lastRefreshedAt).toLocaleString()}
+          Last refreshed: {new Date(lastRefreshedAt).toLocaleString()}
+        </div>
+      )}
+
+      {/* Why box */}
+      {hasGoogleConnected && whyOpen && (
+        <div
+          style={{
+            marginTop: 12,
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 14,
+            padding: 14,
+            background: "rgba(2,6,23,0.35)",
+            color: "rgba(226,232,240,0.92)",
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}
+        >
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>{COPY.whyTitle}</div>
+          <div style={{ opacity: 0.9 }}>{COPY.whyBody}</div>
+          <div style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>{COPY.whyFooter}</div>
         </div>
       )}
 
@@ -793,24 +951,18 @@ async function copyReviewToClipboard(review: Review) {
             marginBottom: 16,
           }}
         >
-          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-            {COPY.connectHeader}
-          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{COPY.connectHeader}</div>
 
-          <div style={{ opacity: 0.85, fontSize: 13, marginBottom: 12, lineHeight: 1.45 }}>
-            {COPY.connectBody}
-          </div>
+          <div style={{ opacity: 0.85, fontSize: 13, marginBottom: 12, lineHeight: 1.45 }}>{COPY.connectBody}</div>
 
           {/* iPhone-friendly business search */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button
               onClick={async () => {
-                // If locked, route to checkout instead of showing a misleading search error
                 if (subscriptionActive === false || upgradeRequired === true) {
                   await redirectToCheckout();
                   return;
                 }
-
                 setShowPlaceSearch((v) => !v);
                 setPlaceSearchError(null);
                 setPlaceSearchResults([]);
@@ -863,9 +1015,7 @@ async function copyReviewToClipboard(review: Review) {
               </div>
 
               {placeSearchError && (
-                <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>
-                  {placeSearchError}
-                </div>
+                <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>{placeSearchError}</div>
               )}
 
               {placeSearchResults.length > 0 && (
@@ -896,18 +1046,9 @@ async function copyReviewToClipboard(review: Review) {
                     >
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
                       {p.formatted_address && (
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                          {p.formatted_address}
-                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{p.formatted_address}</div>
                       )}
-                      <div
-                        style={{
-                          fontSize: 11,
-                          opacity: 0.55,
-                          marginTop: 8,
-                          fontFamily: "monospace",
-                        }}
-                      >
+                      <div style={{ fontSize: 11, opacity: 0.55, marginTop: 8, fontFamily: "monospace" }}>
                         {p.place_id}
                       </div>
                     </button>
@@ -915,27 +1056,16 @@ async function copyReviewToClipboard(review: Review) {
                 </div>
               )}
 
-              {placeSearchResults.length === 0 &&
-                !placeSearchLoading &&
-                placeSearchQuery.trim() &&
-                !placeSearchError && (
-                  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
-                    No results yet — try adding the city/neighborhood.
-                  </div>
-                )}
+              {placeSearchResults.length === 0 && !placeSearchLoading && placeSearchQuery.trim() && !placeSearchError && (
+                <div style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
+                  No results yet — try adding the city/neighborhood.
+                </div>
+              )}
             </div>
           )}
 
           {/* Place ID input + connect */}
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              flexWrap: "wrap",
-              marginTop: 12,
-            }}
-          >
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
             <input
               value={placeIdInput}
               onChange={(e) => {
@@ -969,36 +1099,29 @@ async function copyReviewToClipboard(review: Review) {
           </div>
 
           <div style={{ marginTop: 10 }}>
-            {placeIdStatus === "loading" && (
-              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>
-            )}
+            {placeIdStatus === "loading" && <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>}
 
             {placeIdStatus === "error" && (
               <div style={{ fontSize: 13, color: "#f87171" }}>
-                {placeIdError ??
-                  "We couldn’t verify this Place ID. Please double-check and try again."}
+                {placeIdError ?? "We couldn’t verify this Place ID. Please double-check and try again."}
               </div>
             )}
 
             {placeIdStatus === "success" && (
-              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>
-                Connected ✔
-              </div>
+              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>Connected ✔</div>
             )}
           </div>
 
           {placeVerify?.name && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
               Connected to <strong>{placeVerify.name}</strong>.
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                Next: bring in recent Google reviews above.
-              </div>
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>Next: refresh a sample of reviews above.</div>
             </div>
           )}
         </div>
       )}
 
-      {/* Connected confirmation + plan status (soft) */}
+      {/* Connected confirmation + plan status */}
       {!needsOnboarding && hasGoogleConnected && (
         <div
           style={{
@@ -1017,57 +1140,38 @@ async function copyReviewToClipboard(review: Review) {
           }}
         >
           <div style={{ minWidth: 260, flex: "1 1 420px" }}>
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 800,
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-              }}
-            >
+            <div style={{ fontSize: 14, fontWeight: 800, display: "flex", gap: 10, alignItems: "center" }}>
               <span style={{ color: "#22c55e" }}>●</span>
               {COPY.connectedLabel}
             </div>
 
             <div style={{ marginTop: 8, fontSize: 13, opacity: 0.92 }}>
               <div style={{ marginBottom: 6 }}>
-                <span style={{ opacity: 0.75 }}>Business:</span>{" "}
-                <strong>{displayBusinessName}</strong>
+                <span style={{ opacity: 0.75 }}>Business:</span> <strong>{displayBusinessName}</strong>
               </div>
 
               <div>
                 <span style={{ opacity: 0.75 }}>Place ID:</span>{" "}
-                <span style={{ fontFamily: "monospace", opacity: 0.95 }}>
-                  {maskPlaceId(business?.google_place_id)}
-                </span>
+                <span style={{ fontFamily: "monospace", opacity: 0.95 }}>{maskPlaceId(business?.google_place_id)}</span>
               </div>
             </div>
 
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
-              {COPY.connectedHelp}
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>{COPY.connectedHelp}</div>
 
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
-              Nothing is posted automatically.
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>Nothing is posted automatically.</div>
           </div>
 
           <div style={{ minWidth: 240, textAlign: "right" }}>
             {subscriptionActive === null ? (
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-                Google sync: Checking…
-              </div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>Google sync: Checking…</div>
             ) : subscriptionActive ? (
               <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                Google sync:{" "}
-                <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
+                Google sync: <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
               </div>
             ) : (
               <>
                 <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                  Google sync:{" "}
-                  <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
+                  Google sync: <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
                 </div>
                 <div
                   style={{
@@ -1091,7 +1195,7 @@ async function copyReviewToClipboard(review: Review) {
         </div>
       )}
 
-      {/* Summary cards — keep informational, not “dashboardy” */}
+      {/* Summary cards */}
       <div
         className="summary-grid"
         style={{
@@ -1119,14 +1223,12 @@ async function copyReviewToClipboard(review: Review) {
 
           <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>
             {totalReviews ?? data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
-              • showing {filteredReviews.length}
-            </span>
+            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>• showing {filteredReviews.length}</span>
           </div>
         </div>
 
         <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Last fetched</div>
+          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refreshed</div>
 
           <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>
             {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
@@ -1147,6 +1249,9 @@ async function copyReviewToClipboard(review: Review) {
         }
       `}</style>
 
+      {/* Anchor so “Draft reply” can scroll here */}
+      <div id="rc-draft-panel-anchor" style={{ position: "relative", top: -10 }} />
+
       {/* Drafting panel (voice-first core) */}
       <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
 
@@ -1158,15 +1263,14 @@ async function copyReviewToClipboard(review: Review) {
           flexWrap: "wrap",
           alignItems: "center",
           marginBottom: 16,
+          marginTop: 14,
         }}
       >
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersRating}</span>
           <select
             value={ratingFilter}
-            onChange={(e) =>
-              setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-            }
+            onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
             style={selectStyle}
           >
             <option value="all">All</option>
@@ -1178,19 +1282,25 @@ async function copyReviewToClipboard(review: Review) {
           </select>
         </div>
 
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersStatus}</span>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} style={selectStyle}>
+            <option value="all">{COPY.statusAll}</option>
+            <option value="needs_reply">{COPY.statusNeeds}</option>
+            <option value="drafted">{COPY.statusDrafted}</option>
+            <option value="handled">{COPY.statusHandled}</option>
+          </select>
+        </div>
+
         <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
           <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersSearch}</span>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Author, text, language…"
-            style={inputStyle}
-          />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Author, text, language, draft…" style={inputStyle} />
         </div>
 
         <button
           onClick={() => {
             setRatingFilter("all");
+            setStatusFilter("all");
             setQuery("");
           }}
           style={buttonStyle}
@@ -1199,12 +1309,14 @@ async function copyReviewToClipboard(review: Review) {
         </button>
       </div>
 
+      {/* List header */}
       {hasGoogleConnected ? (
-        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }} title={COPY.syncTooltipEnabled}>
-          {COPY.listLabel} • <span style={{ opacity: 0.75 }}>{COPY.listLabelNote}</span>
+        <div style={{ opacity: 0.78, fontSize: 12, marginBottom: 8 }}>
+          <strong style={{ opacity: 0.9 }}>{COPY.listLabel}</strong>{" "}
+          <span style={{ opacity: 0.75 }}>• {COPY.listLabelNote}</span>
         </div>
       ) : (
-        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>{COPY.listLabel}</div>
+        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>Reviews</div>
       )}
 
       {/* List */}
@@ -1228,9 +1340,7 @@ async function copyReviewToClipboard(review: Review) {
                 {!hasGoogleConnected ? COPY.emptyBodyNoGoogle : COPY.emptyBodyHasGoogle}
               </div>
 
-              <div style={{ marginTop: 10, opacity: 0.72 }}>
-                You’ll always choose what to post.
-              </div>
+              <div style={{ marginTop: 10, opacity: 0.72 }}>You’ll always choose what to post.</div>
             </>
           ) : (
             <>
@@ -1242,6 +1352,7 @@ async function copyReviewToClipboard(review: Review) {
                 <button
                   onClick={() => {
                     setRatingFilter("all");
+                    setStatusFilter("all");
                     setQuery("");
                   }}
                   style={{ ...buttonStyle, padding: "10px 14px", borderRadius: 10 }}
@@ -1254,94 +1365,266 @@ async function copyReviewToClipboard(review: Review) {
         </div>
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
-          {filteredReviews.map((r) => (
-            <div key={r.id} style={cardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <div style={{ fontSize: 14, fontWeight: 800 }}>
-                    {stars(r.rating)}
-                    <span style={{ opacity: 0.7, marginLeft: 8, fontWeight: 700 }}>
-                      {typeof r.rating === "number" ? r.rating.toFixed(0) : "—"}
-                    </span>
-                  </div>
+          {filteredReviews.map((r) => {
+            const local = getLocalState(r.id);
+            const isExpanded = expandedDraftId === r.id;
+            const isSelected = selectedReviewId === r.id;
 
-                  <div style={{ fontSize: 13, opacity: 0.92 }}>
-                    {r.author_url ? (
-                      <a
-                        href={r.author_url}
-                        target="_blank"
-                        rel="noreferrer"
+            return (
+              <div
+                key={r.id}
+                style={{
+                  ...cardStyle,
+                  border: isSelected ? "1px solid rgba(59,130,246,0.45)" : cardStyle.border,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 14, fontWeight: 800 }}>
+                      {stars(r.rating)}
+                      <span style={{ opacity: 0.7, marginLeft: 8, fontWeight: 700 }}>
+                        {typeof r.rating === "number" ? r.rating.toFixed(0) : "—"}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: 13, opacity: 0.92 }}>
+                      {r.author_url ? (
+                        <a
+                          href={r.author_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}
+                        >
+                          {r.author_name ?? "Anonymous"}
+                        </a>
+                      ) : (
+                        <span>{r.author_name ?? "Anonymous"}</span>
+                      )}
+                    </div>
+
+                    {r.detected_language && (
+                      <span
                         style={{
-                          color: "inherit",
-                          textDecoration: "underline",
-                          textUnderlineOffset: 3,
+                          fontSize: 11,
+                          opacity: 0.7,
+                          border: "1px solid rgba(148,163,184,0.25)",
+                          padding: "2px 8px",
+                          borderRadius: 999,
                         }}
                       >
-                        {r.author_name ?? "Anonymous"}
-                      </a>
-                    ) : (
-                      <span>{r.author_name ?? "Anonymous"}</span>
+                        {r.detected_language}
+                      </span>
                     )}
-                  </div>
 
-                  {r.detected_language && (
+                    {/* Status pill */}
                     <span
                       style={{
                         fontSize: 11,
-                        opacity: 0.7,
-                        border: "1px solid rgba(148,163,184,0.25)",
-                        padding: "2px 8px",
                         borderRadius: 999,
+                        padding: "3px 10px",
+                        background: statusColor(local.status),
+                        border: `1px solid ${statusBorder(local.status)}`,
+                        color: "rgba(226,232,240,0.95)",
+                        opacity: 0.95,
+                        fontWeight: 800,
                       }}
+                      title="This status is saved on this device"
                     >
-                      {r.detected_language}
+                      {statusLabel(local.status)}
                     </span>
-                  )}
+
+                    {local.updatedAt && <span style={{ fontSize: 11, opacity: 0.55 }}>updated {formatDate(local.updatedAt)}</span>}
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, minWidth: 170 }}>
+                    <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
+                      {formatDate(r.review_date ?? r.created_at)}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <button
+                        onClick={() => selectReviewForDraft(r)}
+                        disabled={!r.review_text}
+                        style={{
+                          ...buttonStyle,
+                          padding: "6px 10px",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          opacity: r.review_text ? 0.95 : 0.5,
+                        }}
+                        title={r.review_text ? "Send this review to the draft area" : "No review text"}
+                      >
+                        {COPY.actionDraftReply}
+                      </button>
+
+                      <button
+                        onClick={() => copyReviewToClipboard(r)}
+                        disabled={!r.review_text}
+                        style={{
+                          ...buttonStyle,
+                          padding: "6px 10px",
+                          borderRadius: 999,
+                          fontSize: 12,
+                          opacity: r.review_text ? 0.95 : 0.5,
+                        }}
+                        title={r.review_text ? "Copy review text" : "No review text to copy"}
+                      >
+                        {COPY.actionCopyReview}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
+                <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, opacity: 0.95 }}>
+                  {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
+                </div>
+
+                {/* Inline draft controls */}
                 <div
-  style={{
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-end",
-    gap: 8,
-    minWidth: 140,
-  }}
->
-  <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
-    {formatDate(r.review_date ?? r.created_at)}
-  </div>
+                  style={{
+                    marginTop: 12,
+                    borderTop: "1px solid rgba(148,163,184,0.18)",
+                    paddingTop: 12,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      onClick={() => {
+                        setExpandedDraftId((prev) => (prev === r.id ? null : r.id));
+                        setSelectedReviewId(r.id);
+                      }}
+                      style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                      title="Write/edit a draft for this review"
+                    >
+                      {local.draftText ? COPY.actionEditDraft : COPY.actionSaveDraft}
+                    </button>
 
-  <button
-    onClick={() => copyReviewToClipboard(r)}
-    disabled={!r.review_text}
-    style={{
-      ...buttonStyle,
-      padding: "6px 10px",
-      borderRadius: 999,
-      fontSize: 12,
-      opacity: r.review_text ? 0.95 : 0.5,
-    }}
-    title={r.review_text ? "Copy review text" : "No review text to copy"}
-  >
-    Copy review
-  </button>
-</div>
+                    {local.draftText ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setLocalState(r.id, { status: "handled" });
+                            showToast({ message: "Marked handled.", type: "success" }, 2000);
+                          }}
+                          style={{ ...buttonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                          title="Mark as handled after you’ve posted in Google"
+                        >
+                          {COPY.actionMarkHandled}
+                        </button>
 
-              </div>
+                        <button
+                          onClick={() => {
+                            setLocalState(r.id, { draftText: "", status: "needs_reply" });
+                            if (expandedDraftId === r.id) setExpandedDraftId(null);
+                            showToast({ message: "Draft cleared.", type: "success" }, 1800);
+                          }}
+                          style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                          title="Clear the saved draft"
+                        >
+                          {COPY.actionClearDraft}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setLocalState(r.id, { status: "handled" });
+                          showToast({ message: "Marked handled.", type: "success" }, 2000);
+                        }}
+                        style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                        title="If you already replied in Google, mark it handled"
+                      >
+                        {COPY.actionMarkHandled}
+                      </button>
+                    )}
 
-              <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, opacity: 0.95 }}>
-                {r.review_text ? r.review_text : (
-                  <span style={{ opacity: 0.6 }}>No review text.</span>
+                    {local.status === "handled" && (
+                      <button
+                        onClick={() => {
+                          setLocalState(r.id, { status: "needs_reply" });
+                          showToast({ message: "Moved back to needs reply.", type: "success" }, 2000);
+                        }}
+                        style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                        title="Move back if you still want to reply"
+                      >
+                        {COPY.actionMarkNeeds}
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ fontSize: 11, opacity: 0.65 }}>Saved on this device</div>
+                </div>
+
+                {isExpanded && (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      border: "1px solid rgba(148,163,184,0.18)",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "rgba(2,6,23,0.25)",
+                    }}
+                  >
+                    <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 800, marginBottom: 8 }}>{COPY.draftLabel}</div>
+
+                    <textarea
+                      value={local.draftText}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        // If user types, we treat as drafted
+                        setLocalState(r.id, { draftText: next, status: next.trim() ? "drafted" : "needs_reply" });
+                      }}
+                      placeholder={COPY.draftPlaceholder}
+                      style={{
+                        width: "100%",
+                        minHeight: 92,
+                        resize: "vertical",
+                        borderRadius: 10,
+                        padding: "10px 12px",
+                        border: "1px solid rgba(148,163,184,0.22)",
+                        background: "rgba(15,23,42,0.65)",
+                        color: "#e2e8f0",
+                        outline: "none",
+                        lineHeight: 1.45,
+                        fontSize: 13,
+                      }}
+                    />
+
+                    <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={{ fontSize: 12, opacity: 0.75 }}>{COPY.draftTip}</div>
+
+                      <button
+                        onClick={async () => {
+                          const t = (local.draftText ?? "").trim();
+                          if (!t) {
+                            showToast({ message: "No draft to copy.", type: "error" }, 2200);
+                            return;
+                          }
+                          try {
+                            await navigator.clipboard.writeText(t);
+                            showToast({ message: "Copied draft to clipboard.", type: "success" }, 2000);
+                          } catch {
+                            showToast({ message: "Couldn’t copy automatically — please copy manually.", type: "error" }, 3500);
+                          }
+                        }}
+                        style={{ ...buttonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                        title="Copy draft to clipboard"
+                      >
+                        Copy draft
+                      </button>
+                    </div>
+                  </div>
                 )}
-              </div>
 
-              {/* keep source metadata quiet */}
-              <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
-                Source: {r.source}
+                {/* keep source metadata quiet */}
+                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>Source: {r.source}</div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1361,6 +1644,15 @@ const buttonStyle: React.CSSProperties = {
   background: "#0f172a",
   cursor: "pointer",
   color: "#e2e8f0",
+};
+
+const ghostButtonStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  borderRadius: 10,
+  border: "1px solid rgba(148,163,184,0.25)",
+  background: "rgba(15,23,42,0.35)",
+  cursor: "pointer",
+  color: "rgba(226,232,240,0.92)",
 };
 
 const cardStyle: React.CSSProperties = {
