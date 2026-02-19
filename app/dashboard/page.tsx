@@ -54,7 +54,6 @@ type ReviewStatus = "needs_reply" | "drafted" | "handled";
 
 type ReviewLocalState = {
   status: ReviewStatus;
-  draftText: string;
   updatedAt: string;
 };
 
@@ -153,18 +152,12 @@ export default function DashboardPage() {
 
     // Per-review actions
     actionDraftReply: "Draft reply",
-    actionSaveDraft: "Save draft",
-    actionEditDraft: "Edit draft",
-    actionClearDraft: "Clear draft",
     actionMarkHandled: "Mark handled",
     actionMarkNeeds: "Mark needs reply",
     actionCopyReview: "Copy review",
-    draftLabel: "Owner draft (editable)",
-    draftPlaceholder: "Write or paste your draft here…",
-    draftTip:
-      "Tip: Copy your draft, then paste it into Google Reviews to post. Nothing is posted automatically.",
+
     selectHelp:
-      "Selected review copied into the draft area (if supported). If not, use “Copy review” and paste it into the draft box.",
+      "Selected review sent to the draft area above. You can tweak the reply before you post anywhere.",
   };
 
   // API data (reviews)
@@ -208,7 +201,7 @@ export default function DashboardPage() {
   const [placeSearchResults, setPlaceSearchResults] = useState<PlaceCandidate[]>([]);
   const [placeSearchError, setPlaceSearchError] = useState<string | null>(null);
 
-  // ✅ NEW: allow switching Place ID even when already connected
+  // ✅ allow switching Place ID even when already connected
   const [showChangePlaceId, setShowChangePlaceId] = useState(false);
 
   // Header
@@ -219,9 +212,8 @@ export default function DashboardPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ReviewStatus | "all">("all");
 
-  // Local per-review state (draft + status)
+  // Local per-review state (status only)
   const [reviewLocal, setReviewLocal] = useState<Record<string, ReviewLocalState>>({});
-  const [expandedDraftId, setExpandedDraftId] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
 
   // Selected review (for “Draft reply” button)
@@ -273,7 +265,7 @@ export default function DashboardPage() {
   function getLocalState(id: string): ReviewLocalState {
     const existing = reviewLocal[id];
     if (existing) return existing;
-    return { status: "needs_reply", draftText: "", updatedAt: new Date().toISOString() };
+    return { status: "needs_reply", updatedAt: new Date().toISOString() };
   }
 
   function setLocalState(id: string, patch: Partial<ReviewLocalState>) {
@@ -281,7 +273,6 @@ export default function DashboardPage() {
       const current = prev[id] ?? getLocalState(id);
       const next: ReviewLocalState = {
         status: patch.status ?? current.status,
-        draftText: patch.draftText ?? current.draftText,
         updatedAt: new Date().toISOString(),
       };
       return { ...prev, [id]: next };
@@ -629,7 +620,6 @@ export default function DashboardPage() {
         if (!next[r.id]) {
           next[r.id] = {
             status: "needs_reply",
-            draftText: "",
             updatedAt: new Date().toISOString(),
           };
           changed = true;
@@ -662,7 +652,7 @@ export default function DashboardPage() {
         r.review_text ?? "",
         r.source ?? "",
         r.detected_language ?? "",
-        local.draftText ?? "",
+        local.status ?? "",
       ]
         .join(" ")
         .toLowerCase();
@@ -746,25 +736,27 @@ export default function DashboardPage() {
 
     setSelectedReviewId(review.id);
 
-    // If DraftReplyPanel listens, it can prefill. If not, harmless.
+    // Mark as "drafted" when user begins drafting (saved locally)
+    setLocalState(review.id, { status: "drafted" });
+
+    // ✅ DraftReplyPanel expects: { reviewId, text, rating, authorName, createdAt, language, source }
     window.dispatchEvent(
       new CustomEvent("rc:select-review", {
         detail: {
           reviewId: review.id,
-          reviewText: text,
-          rating: review.rating ?? null,
+          text,
+          rating: review.rating ?? 0,
           authorName: review.author_name ?? null,
-          detectedLanguage: review.detected_language ?? null,
+          createdAt: review.review_date ?? review.created_at ?? null,
+          language: review.detected_language ?? null,
+          source: review.source ?? null,
         },
       })
     );
 
     // Also copy for convenience (fastest path)
     copyReviewToClipboard(review).catch(() => null);
-    showToast({ message: COPY.selectHelp, type: "success" }, 3500);
-
-    // Expand draft editor for this review
-    setExpandedDraftId((prev) => (prev === review.id ? prev : review.id));
+    showToast({ message: COPY.selectHelp, type: "success" }, 3000);
 
     // Scroll to drafting panel smoothly (best-effort)
     window.setTimeout(() => {
@@ -1461,7 +1453,7 @@ export default function DashboardPage() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Author, text, language, draft…"
+            placeholder="Author, text, language, status…"
             style={inputStyle}
           />
         </div>
@@ -1538,7 +1530,6 @@ export default function DashboardPage() {
         <div style={{ display: "grid", gap: 12 }}>
           {filteredReviews.map((r) => {
             const local = getLocalState(r.id);
-            const isExpanded = expandedDraftId === r.id;
             const isSelected = selectedReviewId === r.id;
 
             return (
@@ -1670,10 +1661,14 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, opacity: 0.95 }}>
-                  {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
+                  {r.review_text ? (
+                    r.review_text
+                  ) : (
+                    <span style={{ opacity: 0.6 }}>No review text.</span>
+                  )}
                 </div>
 
-                {/* Inline draft controls */}
+                {/* Minimal per-review status actions (no inline draft editor) */}
                 <div
                   style={{
                     marginTop: 12,
@@ -1689,8 +1684,8 @@ export default function DashboardPage() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
                       onClick={() => {
-                        setExpandedDraftId((prev) => (prev === r.id ? null : r.id));
-                        setSelectedReviewId(r.id);
+                        setLocalState(r.id, { status: "handled" });
+                        showToast({ message: "Marked handled.", type: "success" }, 2000);
                       }}
                       style={{
                         ...ghostButtonStyle,
@@ -1698,69 +1693,19 @@ export default function DashboardPage() {
                         borderRadius: 10,
                         fontSize: 12,
                       }}
-                      title="Write/edit a draft for this review"
+                      title="If you already replied in Google, mark it handled"
                     >
-                      {local.draftText ? COPY.actionEditDraft : COPY.actionSaveDraft}
+                      {COPY.actionMarkHandled}
                     </button>
-
-                    {local.draftText ? (
-                      <>
-                        <button
-                          onClick={() => {
-                            setLocalState(r.id, { status: "handled" });
-                            showToast({ message: "Marked handled.", type: "success" }, 2000);
-                          }}
-                          style={{
-                            ...buttonStyle,
-                            padding: "8px 10px",
-                            borderRadius: 10,
-                            fontSize: 12,
-                          }}
-                          title="Mark as handled after you’ve posted in Google"
-                        >
-                          {COPY.actionMarkHandled}
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setLocalState(r.id, { draftText: "", status: "needs_reply" });
-                            if (expandedDraftId === r.id) setExpandedDraftId(null);
-                            showToast({ message: "Draft cleared.", type: "success" }, 1800);
-                          }}
-                          style={{
-                            ...ghostButtonStyle,
-                            padding: "8px 10px",
-                            borderRadius: 10,
-                            fontSize: 12,
-                          }}
-                          title="Clear the saved draft"
-                        >
-                          {COPY.actionClearDraft}
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setLocalState(r.id, { status: "handled" });
-                          showToast({ message: "Marked handled.", type: "success" }, 2000);
-                        }}
-                        style={{
-                          ...ghostButtonStyle,
-                          padding: "8px 10px",
-                          borderRadius: 10,
-                          fontSize: 12,
-                        }}
-                        title="If you already replied in Google, mark it handled"
-                      >
-                        {COPY.actionMarkHandled}
-                      </button>
-                    )}
 
                     {local.status === "handled" && (
                       <button
                         onClick={() => {
                           setLocalState(r.id, { status: "needs_reply" });
-                          showToast({ message: "Moved back to needs reply.", type: "success" }, 2000);
+                          showToast(
+                            { message: "Moved back to needs reply.", type: "success" },
+                            2000
+                          );
                         }}
                         style={{
                           ...ghostButtonStyle,
@@ -1777,91 +1722,6 @@ export default function DashboardPage() {
 
                   <div style={{ fontSize: 11, opacity: 0.65 }}>Saved on this device</div>
                 </div>
-
-                {isExpanded && (
-                  <div
-                    style={{
-                      marginTop: 10,
-                      border: "1px solid rgba(148,163,184,0.18)",
-                      borderRadius: 12,
-                      padding: 12,
-                      background: "rgba(2,6,23,0.25)",
-                    }}
-                  >
-                    <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 800, marginBottom: 8 }}>
-                      {COPY.draftLabel}
-                    </div>
-
-                    <textarea
-                      value={local.draftText}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setLocalState(r.id, {
-                          draftText: next,
-                          status: next.trim() ? "drafted" : "needs_reply",
-                        });
-                      }}
-                      placeholder={COPY.draftPlaceholder}
-                      style={{
-                        width: "100%",
-                        minHeight: 92,
-                        resize: "vertical",
-                        borderRadius: 10,
-                        padding: "10px 12px",
-                        border: "1px solid rgba(148,163,184,0.22)",
-                        background: "rgba(15,23,42,0.65)",
-                        color: "#e2e8f0",
-                        outline: "none",
-                        lineHeight: 1.45,
-                        fontSize: 13,
-                      }}
-                    />
-
-                    <div
-                      style={{
-                        marginTop: 10,
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                      }}
-                    >
-                      <div style={{ fontSize: 12, opacity: 0.75 }}>{COPY.draftTip}</div>
-
-                      <button
-                        onClick={async () => {
-                          const t = (local.draftText ?? "").trim();
-                          if (!t) {
-                            showToast({ message: "No draft to copy.", type: "error" }, 2200);
-                            return;
-                          }
-                          try {
-                            await navigator.clipboard.writeText(t);
-                            showToast({ message: "Copied draft to clipboard.", type: "success" }, 2000);
-                          } catch {
-                            showToast(
-                              {
-                                message: "Couldn’t copy automatically — please copy manually.",
-                                type: "error",
-                              },
-                              3500
-                            );
-                          }
-                        }}
-                        style={{
-                          ...buttonStyle,
-                          padding: "8px 10px",
-                          borderRadius: 10,
-                          fontSize: 12,
-                        }}
-                        title="Copy draft to clipboard"
-                      >
-                        Copy draft
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 {/* keep source metadata quiet */}
                 <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
