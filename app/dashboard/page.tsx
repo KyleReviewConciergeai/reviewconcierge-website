@@ -112,9 +112,13 @@ export default function DashboardPage() {
     connectHeader: "Connect Google reviews",
     connectBody:
       "This links your business so we can bring in a small sample of your Google reviews for drafting replies. Nothing is posted on your behalf.",
+    connectBodyChange:
+      "Paste a different Google Place ID to switch which business/location you’re connected to. Nothing is posted on your behalf.",
     connectTip: "Tip: search “business name + city”.",
     connectBtn: "Verify & Connect",
     connectBtnLoading: "Verifying…",
+    changePlaceBtn: "Change Place ID",
+    cancelChangePlaceBtn: "Cancel",
 
     connectedLabel: "Google connected",
     connectedHelp:
@@ -127,7 +131,7 @@ export default function DashboardPage() {
     emptyBodyNoGoogle:
       "Connect your business, then refresh a sample of Google reviews to start drafting replies in your voice.",
     emptyBodyHasGoogle:
-      "Refresh a sample of Google reviews to start drafting replies in your voice.",
+      "Refresh a sample of Google reviews to start drafting a few replies in your voice.",
 
     filtersRating: "Rating",
     filtersSearch: "Search",
@@ -204,6 +208,9 @@ export default function DashboardPage() {
   const [placeSearchResults, setPlaceSearchResults] = useState<PlaceCandidate[]>([]);
   const [placeSearchError, setPlaceSearchError] = useState<string | null>(null);
 
+  // ✅ NEW: allow switching Place ID even when already connected
+  const [showChangePlaceId, setShowChangePlaceId] = useState(false);
+
   // Header
   const [userEmail, setUserEmail] = useState<string>("");
 
@@ -228,6 +235,9 @@ export default function DashboardPage() {
   // Derived flags
   const needsOnboarding = businessLoaded && (!business || !business.google_place_id);
   const hasGoogleConnected = !!business?.google_place_id;
+
+  // ✅ show connect UI if onboarding OR user toggled “Change Place ID”
+  const showConnectCard = needsOnboarding || showChangePlaceId;
 
   // single source of truth:
   // - subscriptionActive === false => show subscribe
@@ -318,7 +328,9 @@ export default function DashboardPage() {
       console.error("[dashboard] stripe sync failed", e);
     } finally {
       params.delete("session_id");
-      const clean = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+      const clean = `${window.location.pathname}${
+        params.toString() ? `?${params.toString()}` : ""
+      }`;
       window.history.replaceState({}, "", clean);
     }
   }
@@ -425,14 +437,18 @@ export default function DashboardPage() {
 
       if (!googleRes.ok || !googleJson?.ok) {
         console.error("Google refresh failed:", googleJson);
-        showToast({ message: "Couldn’t refresh right now. Please try again.", type: "error" }, 4500);
+        showToast(
+          { message: "Couldn’t refresh right now. Please try again.", type: "error" },
+          4500
+        );
         return;
       }
 
       const fetched = Number(googleJson?.fetched ?? 0);
       const inserted = Number(googleJson?.inserted ?? 0);
       const updated = Number(googleJson?.updated ?? 0);
-      const syncedAt = (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
+      const syncedAt =
+        (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
 
       const json = await loadReviews();
       setData(json);
@@ -503,6 +519,9 @@ export default function DashboardPage() {
       setPlaceSearchResults([]);
       setPlaceSearchError(null);
 
+      // ✅ auto-close “Change Place ID” mode after a successful connect
+      setShowChangePlaceId(false);
+
       const r = await loadReviews();
       setData(r);
     } catch (e: any) {
@@ -549,7 +568,10 @@ export default function DashboardPage() {
         return;
       }
 
-      const candidates = Array.isArray(json?.candidates) ? (json.candidates as PlaceCandidate[]) : [];
+      const candidates = Array.isArray(json?.candidates)
+        ? (json.candidates as PlaceCandidate[])
+        : [];
+
       setPlaceSearchResults(candidates);
     } catch (e: any) {
       console.error("[dashboard] places search error:", e);
@@ -623,7 +645,10 @@ export default function DashboardPage() {
 
     return reviews.filter((r) => {
       const matchesRating =
-        ratingFilter === "all" ? true : typeof r.rating === "number" && r.rating === ratingFilter;
+        ratingFilter === "all"
+          ? true
+          : typeof r.rating === "number" && r.rating === ratingFilter;
+
       if (!matchesRating) return false;
 
       const local = getLocalState(r.id);
@@ -668,7 +693,9 @@ export default function DashboardPage() {
   }, [reviews]);
 
   const displayBusinessName =
-    business?.business_name ?? data?.business?.business_name ?? (businessLoaded ? "Unknown" : "Loading…");
+    business?.business_name ??
+    data?.business?.business_name ??
+    (businessLoaded ? "Unknown" : "Loading…");
 
   const isPlaceConnectLoading = actionLoading === "connect" || placeIdStatus === "loading";
 
@@ -783,12 +810,21 @@ export default function DashboardPage() {
   if (!data?.ok) {
     return (
       <>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 14,
+            alignItems: "flex-start",
+          }}
+        >
           <div>
             <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
             <p style={{ opacity: 0.8, marginTop: 0 }}>{COPY.subtitle}</p>
             {userEmail && (
-              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 10 }}>Signed in as {userEmail}</div>
+              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 10 }}>
+                Signed in as {userEmail}
+              </div>
             )}
           </div>
 
@@ -848,17 +884,28 @@ export default function DashboardPage() {
   return (
     <>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 14,
+          alignItems: "flex-start",
+        }}
+      >
         <div>
           <h1 style={{ fontSize: 24, marginBottom: 10 }}>{COPY.title}</h1>
-          <p style={{ opacity: 0.82, marginTop: 0, maxWidth: 680, lineHeight: 1.45 }}>{COPY.subtitle}</p>
+          <p style={{ opacity: 0.82, marginTop: 0, maxWidth: 680, lineHeight: 1.45 }}>
+            {COPY.subtitle}
+          </p>
 
           <div style={{ opacity: 0.82, marginTop: 12 }}>
             <div>
               <strong>Business:</strong> {displayBusinessName}
             </div>
             {userEmail && (
-              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 6 }}>Signed in as {userEmail}</div>
+              <div style={{ opacity: 0.65, fontSize: 13, marginTop: 6 }}>
+                Signed in as {userEmail}
+              </div>
             )}
           </div>
         </div>
@@ -891,7 +938,12 @@ export default function DashboardPage() {
           <button
             onClick={refreshFromGoogleThenReload}
             disabled={actionLoading !== null || !business?.google_place_id}
-            style={{ ...buttonStyle, width: "100%", minWidth: 0, opacity: !business?.google_place_id ? 0.6 : 1 }}
+            style={{
+              ...buttonStyle,
+              width: "100%",
+              minWidth: 0,
+              opacity: !business?.google_place_id ? 0.6 : 1,
+            }}
             title={!business?.google_place_id ? COPY.syncTooltipDisabled : COPY.syncTooltipEnabled}
             aria-disabled={actionLoading !== null || !business?.google_place_id}
           >
@@ -902,7 +954,12 @@ export default function DashboardPage() {
             <button
               onClick={() => setWhyOpen((v) => !v)}
               disabled={actionLoading !== null}
-              style={{ ...ghostButtonStyle, width: "100%", minWidth: 0, textAlign: "center" }}
+              style={{
+                ...ghostButtonStyle,
+                width: "100%",
+                minWidth: 0,
+                textAlign: "center",
+              }}
               title={COPY.whyTitle}
             >
               {COPY.whyLink}
@@ -938,8 +995,131 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Onboarding card */}
-      {needsOnboarding && (
+      {/* Connected confirmation + plan status */}
+      {!needsOnboarding && hasGoogleConnected && (
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 16,
+            padding: 16,
+            background: "#0f172a",
+            color: "#e2e8f0",
+            marginTop: 16,
+            marginBottom: 16,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 14,
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ minWidth: 260, flex: "1 1 420px" }}>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 800,
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ color: "#22c55e" }}>●</span>
+              {COPY.connectedLabel}
+
+              <button
+                onClick={() => {
+                  setShowChangePlaceId((v) => !v);
+                  setShowPlaceSearch(false);
+                  setPlaceSearchQuery("");
+                  setPlaceSearchResults([]);
+                  setPlaceSearchError(null);
+
+                  window.setTimeout(() => {
+                    const el = document.getElementById("rc-connect-google-anchor");
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 30);
+                }}
+                disabled={actionLoading !== null}
+                style={{
+                  ...ghostButtonStyle,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  fontSize: 12,
+                  fontWeight: 800,
+                }}
+                title="Switch to a different Place ID"
+              >
+                {showChangePlaceId ? COPY.cancelChangePlaceBtn : COPY.changePlaceBtn}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.92 }}>
+              <div style={{ marginBottom: 6 }}>
+                <span style={{ opacity: 0.75 }}>Business:</span>{" "}
+                <strong>{displayBusinessName}</strong>
+              </div>
+
+              <div>
+                <span style={{ opacity: 0.75 }}>Place ID:</span>{" "}
+                <span style={{ fontFamily: "monospace", opacity: 0.95 }}>
+                  {maskPlaceId(business?.google_place_id)}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
+              {COPY.connectedHelp}
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
+              Nothing is posted automatically.
+            </div>
+          </div>
+
+          <div style={{ minWidth: 240, textAlign: "right" }}>
+            {subscriptionActive === null ? (
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+                Google sync: Checking…
+              </div>
+            ) : subscriptionActive ? (
+              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
+                Google sync:{" "}
+                <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
+                  Google sync:{" "}
+                  <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
+                </div>
+                <div
+                  style={{
+                    border: "1px solid rgba(148,163,184,0.18)",
+                    borderRadius: 12,
+                    padding: "10px 12px",
+                    background: "rgba(2,6,23,0.25)",
+                    fontSize: 12,
+                    opacity: 0.9,
+                    marginBottom: 10,
+                    textAlign: "left",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>{COPY.planLockedTitle}</div>
+                  <div style={{ lineHeight: 1.4 }}>{COPY.planLockedBody}</div>
+                </div>
+                <SubscribeButton />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Anchor so Change Place ID can scroll to connect UI */}
+      <div id="rc-connect-google-anchor" style={{ position: "relative", top: -10 }} />
+
+      {/* Connect/Change card (Onboarding OR Change Place ID) */}
+      {showConnectCard && (
         <div
           style={{
             border: "1px solid rgba(148,163,184,0.25)",
@@ -951,9 +1131,13 @@ export default function DashboardPage() {
             marginBottom: 16,
           }}
         >
-          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{COPY.connectHeader}</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+            {COPY.connectHeader}
+          </div>
 
-          <div style={{ opacity: 0.85, fontSize: 13, marginBottom: 12, lineHeight: 1.45 }}>{COPY.connectBody}</div>
+          <div style={{ opacity: 0.85, fontSize: 13, marginBottom: 12, lineHeight: 1.45 }}>
+            {needsOnboarding ? COPY.connectBody : COPY.connectBodyChange}
+          </div>
 
           {/* iPhone-friendly business search */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -974,6 +1158,23 @@ export default function DashboardPage() {
             </button>
 
             <div style={{ fontSize: 12, opacity: 0.75 }}>{COPY.connectTip}</div>
+
+            {!needsOnboarding && (
+              <button
+                onClick={() => {
+                  setShowChangePlaceId(false);
+                  setShowPlaceSearch(false);
+                  setPlaceSearchQuery("");
+                  setPlaceSearchResults([]);
+                  setPlaceSearchError(null);
+                  showToast({ message: "Canceled Place ID change.", type: "success" }, 1800);
+                }}
+                disabled={isPlaceConnectLoading}
+                style={{ ...ghostButtonStyle, minWidth: 120 }}
+              >
+                {COPY.cancelChangePlaceBtn}
+              </button>
+            )}
           </div>
 
           {showPlaceSearch && (
@@ -1015,7 +1216,9 @@ export default function DashboardPage() {
               </div>
 
               {placeSearchError && (
-                <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>{placeSearchError}</div>
+                <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>
+                  {placeSearchError}
+                </div>
               )}
 
               {placeSearchResults.length > 0 && (
@@ -1046,9 +1249,18 @@ export default function DashboardPage() {
                     >
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
                       {p.formatted_address && (
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>{p.formatted_address}</div>
+                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                          {p.formatted_address}
+                        </div>
                       )}
-                      <div style={{ fontSize: 11, opacity: 0.55, marginTop: 8, fontFamily: "monospace" }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          opacity: 0.55,
+                          marginTop: 8,
+                          fontFamily: "monospace",
+                        }}
+                      >
                         {p.place_id}
                       </div>
                     </button>
@@ -1056,16 +1268,27 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {placeSearchResults.length === 0 && !placeSearchLoading && placeSearchQuery.trim() && !placeSearchError && (
-                <div style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
-                  No results yet — try adding the city/neighborhood.
-                </div>
-              )}
+              {placeSearchResults.length === 0 &&
+                !placeSearchLoading &&
+                placeSearchQuery.trim() &&
+                !placeSearchError && (
+                  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
+                    No results yet — try adding the city/neighborhood.
+                  </div>
+                )}
             </div>
           )}
 
           {/* Place ID input + connect */}
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+              marginTop: 12,
+            }}
+          >
             <input
               value={placeIdInput}
               onChange={(e) => {
@@ -1099,99 +1322,32 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ marginTop: 10 }}>
-            {placeIdStatus === "loading" && <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>}
+            {placeIdStatus === "loading" && (
+              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>
+            )}
 
             {placeIdStatus === "error" && (
               <div style={{ fontSize: 13, color: "#f87171" }}>
-                {placeIdError ?? "We couldn’t verify this Place ID. Please double-check and try again."}
+                {placeIdError ??
+                  "We couldn’t verify this Place ID. Please double-check and try again."}
               </div>
             )}
 
             {placeIdStatus === "success" && (
-              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>Connected ✔</div>
+              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>
+                Connected ✔
+              </div>
             )}
           </div>
 
           {placeVerify?.name && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
               Connected to <strong>{placeVerify.name}</strong>.
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>Next: refresh a sample of reviews above.</div>
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                Next: refresh a sample of reviews above.
+              </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Connected confirmation + plan status */}
-      {!needsOnboarding && hasGoogleConnected && (
-        <div
-          style={{
-            border: "1px solid rgba(148,163,184,0.25)",
-            borderRadius: 16,
-            padding: 16,
-            background: "#0f172a",
-            color: "#e2e8f0",
-            marginTop: 16,
-            marginBottom: 16,
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 14,
-            alignItems: "flex-start",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ minWidth: 260, flex: "1 1 420px" }}>
-            <div style={{ fontSize: 14, fontWeight: 800, display: "flex", gap: 10, alignItems: "center" }}>
-              <span style={{ color: "#22c55e" }}>●</span>
-              {COPY.connectedLabel}
-            </div>
-
-            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.92 }}>
-              <div style={{ marginBottom: 6 }}>
-                <span style={{ opacity: 0.75 }}>Business:</span> <strong>{displayBusinessName}</strong>
-              </div>
-
-              <div>
-                <span style={{ opacity: 0.75 }}>Place ID:</span>{" "}
-                <span style={{ fontFamily: "monospace", opacity: 0.95 }}>{maskPlaceId(business?.google_place_id)}</span>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>{COPY.connectedHelp}</div>
-
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>Nothing is posted automatically.</div>
-          </div>
-
-          <div style={{ minWidth: 240, textAlign: "right" }}>
-            {subscriptionActive === null ? (
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>Google sync: Checking…</div>
-            ) : subscriptionActive ? (
-              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                Google sync: <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
-              </div>
-            ) : (
-              <>
-                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                  Google sync: <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
-                </div>
-                <div
-                  style={{
-                    border: "1px solid rgba(148,163,184,0.18)",
-                    borderRadius: 12,
-                    padding: "10px 12px",
-                    background: "rgba(2,6,23,0.25)",
-                    fontSize: 12,
-                    opacity: 0.9,
-                    marginBottom: 10,
-                    textAlign: "left",
-                  }}
-                >
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>{COPY.planLockedTitle}</div>
-                  <div style={{ lineHeight: 1.4 }}>{COPY.planLockedBody}</div>
-                </div>
-                <SubscribeButton />
-              </>
-            )}
-          </div>
         </div>
       )}
 
@@ -1223,7 +1379,9 @@ export default function DashboardPage() {
 
           <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>
             {totalReviews ?? data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>• showing {filteredReviews.length}</span>
+            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
+              • showing {filteredReviews.length}
+            </span>
           </div>
         </div>
 
@@ -1270,7 +1428,9 @@ export default function DashboardPage() {
           <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersRating}</span>
           <select
             value={ratingFilter}
-            onChange={(e) => setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+            onChange={(e) =>
+              setRatingFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+            }
             style={selectStyle}
           >
             <option value="all">All</option>
@@ -1284,7 +1444,11 @@ export default function DashboardPage() {
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersStatus}</span>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} style={selectStyle}>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+            style={selectStyle}
+          >
             <option value="all">{COPY.statusAll}</option>
             <option value="needs_reply">{COPY.statusNeeds}</option>
             <option value="drafted">{COPY.statusDrafted}</option>
@@ -1294,7 +1458,12 @@ export default function DashboardPage() {
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
           <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersSearch}</span>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Author, text, language, draft…" style={inputStyle} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Author, text, language, draft…"
+            style={inputStyle}
+          />
         </div>
 
         <button
@@ -1340,7 +1509,9 @@ export default function DashboardPage() {
                 {!hasGoogleConnected ? COPY.emptyBodyNoGoogle : COPY.emptyBodyHasGoogle}
               </div>
 
-              <div style={{ marginTop: 10, opacity: 0.72 }}>You’ll always choose what to post.</div>
+              <div style={{ marginTop: 10, opacity: 0.72 }}>
+                You’ll always choose what to post.
+              </div>
             </>
           ) : (
             <>
@@ -1393,7 +1564,11 @@ export default function DashboardPage() {
                           href={r.author_url}
                           target="_blank"
                           rel="noreferrer"
-                          style={{ color: "inherit", textDecoration: "underline", textUnderlineOffset: 3 }}
+                          style={{
+                            color: "inherit",
+                            textDecoration: "underline",
+                            textUnderlineOffset: 3,
+                          }}
                         >
                           {r.author_name ?? "Anonymous"}
                         </a>
@@ -1433,15 +1608,34 @@ export default function DashboardPage() {
                       {statusLabel(local.status)}
                     </span>
 
-                    {local.updatedAt && <span style={{ fontSize: 11, opacity: 0.55 }}>updated {formatDate(local.updatedAt)}</span>}
+                    {local.updatedAt && (
+                      <span style={{ fontSize: 11, opacity: 0.55 }}>
+                        updated {formatDate(local.updatedAt)}
+                      </span>
+                    )}
                   </div>
 
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, minWidth: 170 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-end",
+                      gap: 8,
+                      minWidth: 170,
+                    }}
+                  >
                     <div style={{ fontSize: 12, opacity: 0.65, whiteSpace: "nowrap" }}>
                       {formatDate(r.review_date ?? r.created_at)}
                     </div>
 
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        justifyContent: "flex-end",
+                      }}
+                    >
                       <button
                         onClick={() => selectReviewForDraft(r)}
                         disabled={!r.review_text}
@@ -1498,7 +1692,12 @@ export default function DashboardPage() {
                         setExpandedDraftId((prev) => (prev === r.id ? null : r.id));
                         setSelectedReviewId(r.id);
                       }}
-                      style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                      style={{
+                        ...ghostButtonStyle,
+                        padding: "8px 10px",
+                        borderRadius: 10,
+                        fontSize: 12,
+                      }}
                       title="Write/edit a draft for this review"
                     >
                       {local.draftText ? COPY.actionEditDraft : COPY.actionSaveDraft}
@@ -1511,7 +1710,12 @@ export default function DashboardPage() {
                             setLocalState(r.id, { status: "handled" });
                             showToast({ message: "Marked handled.", type: "success" }, 2000);
                           }}
-                          style={{ ...buttonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                          style={{
+                            ...buttonStyle,
+                            padding: "8px 10px",
+                            borderRadius: 10,
+                            fontSize: 12,
+                          }}
                           title="Mark as handled after you’ve posted in Google"
                         >
                           {COPY.actionMarkHandled}
@@ -1523,7 +1727,12 @@ export default function DashboardPage() {
                             if (expandedDraftId === r.id) setExpandedDraftId(null);
                             showToast({ message: "Draft cleared.", type: "success" }, 1800);
                           }}
-                          style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                          style={{
+                            ...ghostButtonStyle,
+                            padding: "8px 10px",
+                            borderRadius: 10,
+                            fontSize: 12,
+                          }}
                           title="Clear the saved draft"
                         >
                           {COPY.actionClearDraft}
@@ -1535,7 +1744,12 @@ export default function DashboardPage() {
                           setLocalState(r.id, { status: "handled" });
                           showToast({ message: "Marked handled.", type: "success" }, 2000);
                         }}
-                        style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                        style={{
+                          ...ghostButtonStyle,
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          fontSize: 12,
+                        }}
                         title="If you already replied in Google, mark it handled"
                       >
                         {COPY.actionMarkHandled}
@@ -1548,7 +1762,12 @@ export default function DashboardPage() {
                           setLocalState(r.id, { status: "needs_reply" });
                           showToast({ message: "Moved back to needs reply.", type: "success" }, 2000);
                         }}
-                        style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                        style={{
+                          ...ghostButtonStyle,
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          fontSize: 12,
+                        }}
                         title="Move back if you still want to reply"
                       >
                         {COPY.actionMarkNeeds}
@@ -1569,14 +1788,18 @@ export default function DashboardPage() {
                       background: "rgba(2,6,23,0.25)",
                     }}
                   >
-                    <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 800, marginBottom: 8 }}>{COPY.draftLabel}</div>
+                    <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 800, marginBottom: 8 }}>
+                      {COPY.draftLabel}
+                    </div>
 
                     <textarea
                       value={local.draftText}
                       onChange={(e) => {
                         const next = e.target.value;
-                        // If user types, we treat as drafted
-                        setLocalState(r.id, { draftText: next, status: next.trim() ? "drafted" : "needs_reply" });
+                        setLocalState(r.id, {
+                          draftText: next,
+                          status: next.trim() ? "drafted" : "needs_reply",
+                        });
                       }}
                       placeholder={COPY.draftPlaceholder}
                       style={{
@@ -1594,7 +1817,16 @@ export default function DashboardPage() {
                       }}
                     />
 
-                    <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <div
+                      style={{
+                        marginTop: 10,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                      }}
+                    >
                       <div style={{ fontSize: 12, opacity: 0.75 }}>{COPY.draftTip}</div>
 
                       <button
@@ -1608,10 +1840,21 @@ export default function DashboardPage() {
                             await navigator.clipboard.writeText(t);
                             showToast({ message: "Copied draft to clipboard.", type: "success" }, 2000);
                           } catch {
-                            showToast({ message: "Couldn’t copy automatically — please copy manually.", type: "error" }, 3500);
+                            showToast(
+                              {
+                                message: "Couldn’t copy automatically — please copy manually.",
+                                type: "error",
+                              },
+                              3500
+                            );
                           }
                         }}
-                        style={{ ...buttonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                        style={{
+                          ...buttonStyle,
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          fontSize: 12,
+                        }}
                         title="Copy draft to clipboard"
                       >
                         Copy draft
@@ -1621,7 +1864,9 @@ export default function DashboardPage() {
                 )}
 
                 {/* keep source metadata quiet */}
-                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>Source: {r.source}</div>
+                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
+                  Source: {r.source}
+                </div>
               </div>
             );
           })}
