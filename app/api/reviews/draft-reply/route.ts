@@ -1,3 +1,4 @@
+// app/api/reviews/draft-reply/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -118,6 +119,7 @@ const DEFAULT_VOICE = {
     "it's concerning to hear",
     "we'll keep that in mind",
     "refine our",
+    "enhance our", // common corp tell
 
     // AI-ish tells / faux empathy openers
     "we're sorry to hear",
@@ -178,8 +180,7 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
 }
 
 /**
- * NEW: load voice samples (org_voice_samples)
- * We use these as style reference only (never copy verbatim).
+ * Load voice samples (org_voice_samples) as style reference only.
  */
 type VoiceSampleRow = {
   id: string;
@@ -224,7 +225,6 @@ async function loadVoiceSamplesForOrg(opts?: {
       const normalized = collapseWhitespace(removeQuotations(stripEmojis(text)));
       if (!normalized) continue;
 
-      // keep within total budget
       const nextLen = normalized.length + 10;
       if (total + nextLen > maxTotalChars) break;
 
@@ -263,8 +263,7 @@ function normalizeToneFromOrg(tone: string): VoiceProfile["tone"] {
 }
 
 /**
- * NEW: tone coming from client UI
- * Accepts: "warm" | "neutral" | "direct" | "playful"
+ * tone coming from client UI
  */
 function parseClientTone(v: unknown): VoiceProfile["tone"] | null {
   const t = cleanString(v, 24).toLowerCase().trim();
@@ -274,8 +273,7 @@ function parseClientTone(v: unknown): VoiceProfile["tone"] | null {
 }
 
 /**
- * NEW: rules coming from client UI
- * Safely accept small list of strings.
+ * rules coming from client UI
  */
 function parseClientRules(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
@@ -294,11 +292,8 @@ function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoicePr
 }
 
 function sentencePolicyForRating(rating: number) {
-  if (rating >= 5) return 4; // allow a touch more when praise is detailed
-  if (rating === 4) return 3;
-  if (rating === 3) return 3;
-  if (rating === 2) return 3;
-  return 3; // 1-star also 3 max (calm + direct)
+  if (rating >= 5) return 4;
+  return 3;
 }
 
 function mustDoForRating(rating: number) {
@@ -313,43 +308,18 @@ function mustDoForRating(rating: number) {
   ];
 
   if (rating >= 5) {
-    return [
-      ...base,
-      "Be appreciative but grounded (no hype, no marketing).",
-      "Close with a simple, low-pressure welcome back (not salesy).",
-    ];
+    return [...base, "Close with a simple, low-pressure welcome back (not salesy)."];
   }
 
-  if (rating === 4) {
+  if (rating <= 2) {
     return [
       ...base,
-      "If there’s a small issue hinted, acknowledge it briefly in plain language (no corporate phrasing).",
-      "Close with a simple welcome back.",
-    ];
-  }
-
-  if (rating === 3) {
-    return [
-      ...base,
-      "Reflect the mixed experience plainly (not PR language).",
-      "Acknowledge the miss without over-apologizing or promising fixes.",
-    ];
-  }
-
-  if (rating === 2) {
-    return [
-      ...base,
-      "Acknowledge disappointment calmly (no defensiveness).",
+      "Acknowledge the issue calmly in one sentence (no long apology).",
       "If inviting follow-up, keep it ONE short human line (no corporate framing).",
     ];
   }
 
-  // 1-star
-  return [
-    ...base,
-    "Be calm and direct. Avoid long apologies and PR language.",
-    "If inviting follow-up, keep it ONE short line (email/phone), not legalistic.",
-  ];
+  return base;
 }
 
 function mustNotForRating(rating: number) {
@@ -363,12 +333,7 @@ function mustNotForRating(rating: number) {
   ];
 
   if (rating <= 2) {
-    return [
-      ...base,
-      "Do NOT be playful or joking.",
-      "Do NOT argue with the reviewer.",
-      "Do NOT blame the customer.",
-    ];
+    return [...base, "Do NOT be playful or joking.", "Do NOT argue with the reviewer."];
   }
 
   return base;
@@ -437,7 +402,7 @@ function styleLines(params: {
 
 function buildAvoidList(voice: ReturnType<typeof normalizeVoice>) {
   const avoid = Array.isArray(voice.things_to_avoid) ? voice.things_to_avoid : [];
-  const list = avoid.map((s) => cleanString(s, 80)).filter(Boolean).slice(0, 40);
+  const list = avoid.map((s) => cleanString(s, 80)).filter(Boolean).slice(0, 60);
   if (!list.length) return "";
   return list.join(" | ");
 }
@@ -445,7 +410,6 @@ function buildAvoidList(voice: ReturnType<typeof normalizeVoice>) {
 function buildVoiceSamplesBlock(samples: string[]) {
   if (!samples || samples.length === 0) return "";
 
-  // Important: “style only” instruction to avoid verbatim copying
   const lines = samples.map((s, i) => `SAMPLE ${i + 1}: ${s}`);
   return `
 VOICE SAMPLES (STYLE REFERENCE ONLY):
@@ -481,7 +445,6 @@ function buildPrompt(params: {
   } = params;
 
   const maxSentences = sentencePolicyForRating(rating);
-
   const mustDo = mustDoForRating(rating);
   const mustNot = mustNotForRating(rating);
 
@@ -501,7 +464,6 @@ function buildPrompt(params: {
 
   const voiceSamplesBlock = buildVoiceSamplesBlock(voice_samples ?? []);
 
-  // Important: repeated, crisp constraints reduce “AI feel”
   return `
 You are writing a public reply to a Google review.
 
@@ -556,8 +518,7 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
 }
 
 /**
- * Extra post-clean to remove common templated openers if they slip through.
- * Keep this conservative so we don’t accidentally destroy good content.
+ * Conservative cleanup: remove common templated openers only.
  */
 function stripTemplatedOpeners(text: string) {
   let t = text.trim();
@@ -569,11 +530,92 @@ function stripTemplatedOpeners(text: string) {
     /^\s*(we('?| a)re glad( you)?)[,!.]\s*/i,
   ];
 
-  for (const re of patterns) {
-    t = t.replace(re, "");
+  for (const re of patterns) t = t.replace(re, "");
+  return t.trim();
+}
+
+/**
+ * Hard enforcement: if banned phrases appear, we retry once.
+ * This catches exact phrases and also partial AI-tells like "we strive" / "we appreciate".
+ */
+function buildBannedMatchers(voice: ReturnType<typeof normalizeVoice>): Array<{ label: string; re: RegExp }> {
+  const avoid = Array.isArray(voice.things_to_avoid) ? voice.things_to_avoid : [];
+
+  const matchers: Array<{ label: string; re: RegExp }> = [];
+
+  // Exact-ish phrases (case-insensitive substring)
+  for (const p of avoid) {
+    const phrase = cleanString(p, 120);
+    if (!phrase) continue;
+    // Escape regex special chars for safe matching as substring
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    matchers.push({ label: phrase, re: new RegExp(escaped, "i") });
   }
 
-  return t.trim();
+  // Extra lightweight generic corp tells (these show up a lot even when phrased differently)
+  matchers.push({ label: "we appreciate", re: /\bwe\s+appreciate\b/i });
+  matchers.push({ label: "we strive", re: /\bwe\s+strive\b/i });
+  matchers.push({ label: "enhance our", re: /\benhance\s+our\b/i });
+  matchers.push({ label: "valued (customer|guest)", re: /\bvalued\s+(customer|guest)\b/i });
+
+  return matchers;
+}
+
+function findBannedHits(text: string, matchers: Array<{ label: string; re: RegExp }>) {
+  const hits: string[] = [];
+  const t = text || "";
+  for (const m of matchers) {
+    if (m.re.test(t)) hits.push(m.label);
+    if (hits.length >= 6) break;
+  }
+  return hits;
+}
+
+async function callOpenAI(args: {
+  apiKey: string;
+  prompt: string;
+  rating: number;
+  correction?: { hits: string[] };
+}) {
+  const { apiKey, prompt, rating, correction } = args;
+
+  const baseSystem =
+    "You write short, human-sounding public review replies for local businesses. Follow constraints exactly. Output only the reply text.";
+
+  const correctionMsg = correction?.hits?.length
+    ? `Your last reply violated the banned phrases list. It included: ${correction.hits
+        .map((h) => `"${h}"`)
+        .join(", ")}. Rewrite the reply to be compliant. Do not include any of those phrases (or close variants). Keep it natural and short. Output ONLY the reply text.`
+    : null;
+
+  const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: rating <= 2 ? 0.15 : 0.22,
+      frequency_penalty: 0.25,
+      presence_penalty: 0.1,
+      messages: [
+        { role: "system", content: baseSystem },
+        { role: "user", content: prompt },
+        ...(correctionMsg ? [{ role: "user", content: correctionMsg }] : []),
+      ],
+      max_tokens: 260,
+    }),
+    cache: "no-store",
+  });
+
+  const rawText = await upstream.text();
+  let upstreamJson: any = null;
+  try {
+    upstreamJson = JSON.parse(rawText);
+  } catch {}
+
+  return { upstream, rawText, upstreamJson };
 }
 
 export async function POST(req: Request) {
@@ -625,7 +667,7 @@ export async function POST(req: Request) {
     const org_reply_tone_raw = orgSettings.reply_tone || "warm";
     const reply_signature = orgSettings.reply_signature ?? null;
 
-    // NEW: Voice samples
+    // Voice samples
     const voiceSamples = await loadVoiceSamplesForOrg({
       maxItems: 7,
       maxCharsEach: 420,
@@ -655,36 +697,10 @@ export async function POST(req: Request) {
       voice_samples: voiceSamples,
     });
 
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: rating <= 2 ? 0.15 : 0.25,
-        // Mild repetition control can reduce “templated feel”
-        frequency_penalty: 0.2,
-        presence_penalty: 0.1,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You write short, human-sounding public review replies for local businesses. Follow constraints exactly. Output only the reply text.",
-          },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 260,
-      }),
-      cache: "no-store",
-    });
+    const bannedMatchers = buildBannedMatchers(voice);
 
-    const rawText = await upstream.text();
-    let upstreamJson: any = null;
-    try {
-      upstreamJson = JSON.parse(rawText);
-    } catch {}
+    // ---- Attempt 1
+    let { upstream, rawText, upstreamJson } = await callOpenAI({ apiKey, prompt, rating });
 
     if (!upstream.ok) {
       return NextResponse.json(
@@ -698,17 +714,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const contentRaw = upstreamJson?.choices?.[0]?.message?.content ?? "";
-    let content = safeTrimReply(String(contentRaw));
+    const contentRaw1 = upstreamJson?.choices?.[0]?.message?.content ?? "";
+    let content = safeTrimReply(String(contentRaw1));
 
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
-
-    // Remove templated opener phrases if model still sneaks them in
     content = stripTemplatedOpeners(content);
-
-    // Sentence enforcement
     content = limitSentences(content, sentencePolicyForRating(rating));
 
     // Exclamation enforcement (also removes Spanish inverted ¡)
@@ -716,10 +728,8 @@ export async function POST(req: Request) {
       content = content.replace(/[!¡]/g, ".");
       content = content.replace(/\.\.+/g, ".").trim();
     } else {
-      // If allowed, still keep it sane: max 1 exclamation.
       const exCount = (content.match(/[!¡]/g) ?? []).length;
       if (exCount > 1) {
-        // Replace extras with periods, keep first
         let seen = 0;
         content = content.replace(/[!¡]/g, (m) => {
           seen += 1;
@@ -732,9 +742,56 @@ export async function POST(req: Request) {
     // Signature enforcement
     content = appendSignatureIfMissing(content, reply_signature);
 
+    // ---- Validate banned phrases; if violated, retry once
+    let hits = findBannedHits(content, bannedMatchers);
+
+    if (hits.length > 0) {
+      const retry = await callOpenAI({
+        apiKey,
+        prompt,
+        rating,
+        correction: { hits },
+      });
+
+      if (retry.upstream.ok) {
+        const retryJson = retry.upstreamJson;
+        const contentRaw2 = retryJson?.choices?.[0]?.message?.content ?? "";
+        let retryContent = safeTrimReply(String(contentRaw2));
+
+        retryContent = removeQuotations(retryContent);
+        retryContent = stripEmojis(retryContent);
+        retryContent = collapseWhitespace(retryContent);
+        retryContent = stripTemplatedOpeners(retryContent);
+        retryContent = limitSentences(retryContent, sentencePolicyForRating(rating));
+
+        if (!voice.allow_exclamation) {
+          retryContent = retryContent.replace(/[!¡]/g, ".");
+          retryContent = retryContent.replace(/\.\.+/g, ".").trim();
+        } else {
+          const exCount = (retryContent.match(/[!¡]/g) ?? []).length;
+          if (exCount > 1) {
+            let seen = 0;
+            retryContent = retryContent.replace(/[!¡]/g, (m) => {
+              seen += 1;
+              return seen === 1 ? m : ".";
+            });
+            retryContent = retryContent.replace(/\.\.+/g, ".").trim();
+          }
+        }
+
+        retryContent = appendSignatureIfMissing(retryContent, reply_signature);
+
+        // If retry is clean, take it. If still violates, we keep original (but this is rare).
+        const retryHits = findBannedHits(retryContent, bannedMatchers);
+        if (retryContent && retryHits.length === 0) {
+          content = retryContent;
+        }
+      }
+    }
+
     if (!content) {
       return NextResponse.json(
-        { ok: false, error: "No reply content returned from OpenAI", upstreamBody: upstreamJson },
+        { ok: false, error: "No reply content returned from OpenAI" },
         { status: 502 }
       );
     }
