@@ -748,7 +748,6 @@ export async function POST(req: Request) {
           reviewer_language,
           reply_tone: org_reply_tone_raw,
           reply_signature: reply_signature ?? null,
-          voice_samples_used: voiceSamples.length,
         },
       },
       { status: 200 }
