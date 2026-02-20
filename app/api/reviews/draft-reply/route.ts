@@ -127,6 +127,7 @@ const DEFAULT_VOICE = {
     "it sounds like",
     "we're glad you",
     "we are glad you",
+    "We regret",
 
     // “mission statement” phrasing
     "we aim to",
@@ -554,28 +555,61 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
  * Removes template-y openers that make replies sound corporate.
  * Updated to catch cases like: "We're sorry to hear about..." (no comma/period after)
  */
-function stripTemplatedOpeners(text: string) {
-  let t = text.trim();
+function fixLeadInAfterStrip(text: string) {
+  let t = (text ?? "").trim();
+  if (!t) return t;
 
-  // Remove common leading “apology/thanks” clauses even without punctuation.
-  // We keep it conservative: only affects the very beginning.
-  const leadingPatterns: RegExp[] = [
-    // Thank you ... (optionally followed by "for ...")
-    /^\s*thank you(?:\s+so\s+much)?(?:\s+for(?:\s+your|\s+the)?(?:\s+review|\s+feedback|\s+kind\s+words)?)?(?:\s+and)?\s*/i,
-    // We appreciate ...
-    /^\s*we\s+(?:really\s+)?appreciate(?:\s+you|\s+your)?(?:\s+taking\s+the\s+time)?(?:\s+to)?\s*/i,
-    // We're sorry (to hear) (about/that) ...
-    /^\s*we(?:'| a)?re\s+sorry(?:\s+to\s+hear)?(?:\s+about)?(?:\s+that)?\s*/i,
-    // We are glad ...
-    /^\s*we\s+are\s+glad(?:\s+you)?\s*/i,
-  ];
+  // If it starts mid-sentence with a lowercase word, make it feel intentional.
+  // Common leftovers: "your experience...", "the long wait...", "it’s disappointing..."
+  const startsLower = /^[a-z]/.test(t);
+  const startsWithAwkward =
+    /^(your|the|it|this|that|overall|honestly|unfortunately)\b/i.test(t);
 
-  for (const re of leadingPatterns) {
-    t = t.replace(re, "");
+  if (startsLower) {
+    t = t.charAt(0).toUpperCase() + t.slice(1);
   }
 
-  // If we removed a clause but left a dangling comma/period at the front
-  t = t.replace(/^\s*[,.;:—-]+\s*/g, "").trim();
+  // If it still starts awkwardly, add a tiny human lead-in.
+  if (startsWithAwkward) {
+    // Keep it neutral and non-corporate.
+    t = `Hi — ${t}`;
+  }
+
+  return t.trim();
+}
+
+function stripTemplatedOpeners(text: string) {
+  let t = (text ?? "").trim();
+
+  const patterns: RegExp[] = [
+    // thank-you openers
+    /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words|note))?)[,!.]\s*/i,
+    /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
+
+    // sorry/apology openers
+    /^\s*(we('?| a)re (sorry|sorry to hear|sorry that))[,!.]\s*/i,
+    /^\s*(we (would like to )?apologize( for| that)?)[,!.]\s*/i,
+
+    // "we regret" (corporate)
+    /^\s*(we regret( that)?)[,!.]\s*/i,
+
+    // glad openers
+    /^\s*(we('?| a)re glad( you)?)[,!.]\s*/i,
+  ];
+
+  let changed = false;
+  for (const re of patterns) {
+    const next = t.replace(re, "");
+    if (next !== t) {
+      t = next.trim();
+      changed = true;
+    }
+  }
+
+  // If we stripped something, repair the start so we don't end up mid-sentence.
+  if (changed) {
+    t = fixLeadInAfterStrip(t);
+  }
 
   return t.trim();
 }
@@ -753,6 +787,7 @@ export async function POST(req: Request) {
 
     // Remove templated opener phrases if model still sneaks them in
     content = stripTemplatedOpeners(content);
+    content = fixLeadInAfterStrip(content); // safe to run even if nothing stripped
 
     // Strip corporate filler phrases anywhere (especially helpful for 1–2★)
     content = stripCorporateFillers(content);
