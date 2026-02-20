@@ -144,7 +144,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   // Version count is okay if framed as "another option" (not automation)
   const [version, setVersion] = useState<number>(0);
 
-  // NEW: track the DB record for the most recent draft (so Copy can mark it)
+  // Track the DB record for the most recent draft (so Copy can mark it)
   const [replyRecordId, setReplyRecordId] = useState<string | null>(null);
 
   const isNarrow = useIsNarrow(720);
@@ -225,17 +225,20 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       setSelectedReview(next);
 
+      // Prefill core inputs
       setReviewText(next.text);
 
       if (typeof next.rating === "number" && next.rating >= 1 && next.rating <= 5) {
         setRating(next.rating);
       }
 
+      // If caller provides a language hint, set the copy-ready language dropdown
       if (typeof next.language === "string" && next.language.trim()) {
         const lang = normLang(next.language);
         if (lang) setReplyLanguage(lang);
       }
 
+      // Reset prior draft UI so it feels "fresh" for the selected review
       setDraft("");
       setFinalReply("");
       setOwnerLanguage("en");
@@ -244,14 +247,19 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       setErrorMessage("");
       setReplyRecordId(null);
 
+      // Bring panel into view and focus the review textarea for quick action
       try {
         panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } catch {}
+      } catch {
+        // ignore
+      }
 
       window.setTimeout(() => {
         try {
           reviewTextareaRef.current?.focus();
-        } catch {}
+        } catch {
+          // ignore
+        }
       }, 50);
     };
 
@@ -259,6 +267,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return () => window.removeEventListener("rc:select-review", handler as EventListener);
   }, []);
 
+  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (copiedTimer.current) {
@@ -303,43 +312,52 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return data.translated;
   }
 
-  // NEW: save a draft record in Supabase (via API)
-  async function saveDraftRecord(params: {
+  // Save a reply record (draft/copy/post) in Supabase (via API)
+  async function createReplyRecord(params: {
     review_id: string;
     business_id: string;
     draft_text: string;
     owner_language: string;
     reviewer_language: string;
     rating: number;
+    status: "draft" | "copied" | "posted";
   }) {
-    const res = await fetch("/api/reviews/replies", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
+    try {
+      const res = await fetch("/api/reviews/replies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data?.ok === false) {
-      // Don’t break UX if saving fails — log and continue
-      console.warn("Failed to save reply record:", data?.error ?? data);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        console.warn("Failed to create reply record:", data?.error ?? data);
+        return null;
+      }
+
+      const id = data?.reply_record?.id;
+      return typeof id === "string" && id ? id : null;
+    } catch (e) {
+      console.warn("Failed to create reply record:", e);
       return null;
     }
-
-    const id = data?.reply_record?.id;
-    return typeof id === "string" && id ? id : null;
   }
 
-  // NEW: mark a reply record copied
-  async function markReplyCopied(id: string) {
-    const res = await fetch("/api/reviews/replies", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status: "copied" }),
-    });
+  // Mark an existing reply record copied/posted
+  async function updateReplyRecordStatus(id: string, nextStatus: "copied" | "posted") {
+    try {
+      const res = await fetch("/api/reviews/replies", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: nextStatus }),
+      });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data?.ok === false) {
-      console.warn("Failed to mark reply copied:", data?.error ?? data);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) {
+        console.warn("Failed to update reply record status:", data?.error ?? data);
+      }
+    } catch (e) {
+      console.warn("Failed to update reply record status:", e);
     }
   }
 
@@ -347,6 +365,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     setStatus("loading");
     setErrorMessage("");
 
+    // Step 8: compute tone right before request
     const tone = toneFromRating(rating);
 
     try {
@@ -356,8 +375,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         body: JSON.stringify({
           business_name: businessNameState.trim(),
           rating,
+          /**
+           * We send the *reviewer language* as "language" so the server can echo/track it.
+           * Server drafts in OWNER language (from org settings).
+           */
           language: replyLanguage,
           review_text: reviewText.trim(),
+
+          // Step 8 payload additions (server can use these to improve human-ness)
           tone,
           rules: DRAFT_RULES,
         }),
@@ -386,36 +411,41 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         return { ok: false as const };
       }
 
+      // Owner-language draft
       const ownerDraft = data.reply.trim();
       setDraft(ownerDraft);
 
+      // Use meta owner language if provided (may be "es-ES", etc.)
       const ownerLangRaw = data.meta?.owner_language || "en";
       setOwnerLanguage(ownerLangRaw);
 
+      // Reviewer language is the dropdown selection (copy-ready)
       const reviewerLangRaw = replyLanguage || data.meta?.reviewer_language || "en";
 
+      // ✅ Translate ONLY if different language (using normalized compare)
       if (normLang(ownerLangRaw) !== normLang(reviewerLangRaw)) {
         const translated = await requestTranslate(ownerDraft, reviewerLangRaw);
         setFinalReply(translated);
       } else {
+        // Same language — no translation and no separate copy-ready UI needed
         setFinalReply("");
       }
 
-      // NEW: persist this draft (if we have the IDs)
-      // We require review_id + business_id. If they’re missing, we just skip saving.
+      // Persist the draft row (best-effort) ONLY if we have IDs
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
 
       if (review_id && business_id) {
-        const savedId = await saveDraftRecord({
+        const id = await createReplyRecord({
           review_id,
           business_id,
           draft_text: ownerDraft,
           owner_language: ownerLangRaw,
           reviewer_language: reviewerLangRaw,
           rating,
+          status: "draft",
         });
-        setReplyRecordId(savedId);
+        setReplyRecordId(id);
       } else {
         setReplyRecordId(null);
       }
@@ -448,38 +478,35 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   }
 
   async function onCopy() {
+    // ✅ Copy the right thing:
+    // - If same language: copy the owner draft
+    // - If different: copy the translated (copy-ready) reply
     const textToCopy = (sameLang ? draft : finalReply || draft).trim();
     if (!textToCopy) return;
 
     try {
       await navigator.clipboard.writeText(textToCopy);
 
-      // After: await navigator.clipboard.writeText(textToCopy);
+      // ✅ Log copy to DB (best-effort)
+      // Prefer PATCH on existing draft record; fallback to creating a copied record.
+      const review_id = selectedReview?.reviewId?.trim() || "";
+      const business_id = selectedReview?.businessId?.trim() || "";
 
-try {
-  // Only save when we have a selected review (so we have ids)
-  if (selectedReview?.reviewId && (selectedReview as any).businessId) {
-    await fetch("/api/reviews/replies", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        review_id: selectedReview.reviewId,
-        business_id: (selectedReview as any).businessId,
-        draft_text: textToCopy,
-        owner_language: ownerLanguage,
-        reviewer_language: replyLanguage,
-        rating,
-        status: "copied",
-      }),
-    });
-  }
-} catch {
-  // Don’t block UX if logging fails
-}
-
-      // NEW: mark copied (best-effort)
       if (replyRecordId) {
-        markReplyCopied(replyRecordId);
+        // This will also log into review_reply_events (after we update the API route below)
+        updateReplyRecordStatus(replyRecordId, "copied");
+      } else if (review_id && business_id) {
+        // If for some reason we didn't save the draft row, create a "copied" row now.
+        const id = await createReplyRecord({
+          review_id,
+          business_id,
+          draft_text: textToCopy,
+          owner_language: ownerLanguage,
+          reviewer_language: replyLanguage,
+          rating,
+          status: "copied",
+        });
+        setReplyRecordId(id);
       }
 
       setCopied(true);
@@ -530,6 +557,7 @@ try {
     [isNarrow]
   );
 
+  // ✅ Hide the copy-ready block when languages are the same
   const showFinalBox = !sameLang;
 
   return (
@@ -671,6 +699,7 @@ try {
         </div>
       </div>
 
+      {/* Step 6 helper text moved BELOW the entire row so inputs align */}
       <div style={{ fontSize: 12, color: "rgba(226,232,240,0.62)", marginTop: 6 }}>
         Helps tailor the reply tone to a 1★ vs 5★ experience.
       </div>
@@ -821,7 +850,7 @@ try {
       </div>
 
       {/* Copy-ready output (ONLY when different language) */}
-      {!sameLang ? (
+      {showFinalBox ? (
         <div style={{ marginTop: 14 }}>
           <div style={labelStyle}>{COPY.finalLabel}</div>
 

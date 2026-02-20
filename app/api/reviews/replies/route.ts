@@ -27,6 +27,10 @@ function parseStatus(v: unknown): Status | null {
   return null;
 }
 
+function asIsoNow() {
+  return new Date().toISOString();
+}
+
 /**
  * POST /api/reviews/replies
  * Create a reply record (draft/copy/post)
@@ -59,7 +63,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "draft_text is required" }, { status: 400 });
     }
 
-    const nowIso = new Date().toISOString();
+    const nowIso = asIsoNow();
 
     const insertRow: any = {
       organization_id: organizationId,
@@ -75,12 +79,13 @@ export async function POST(req: Request) {
     if (status === "copied") insertRow.copied_at = nowIso;
     if (status === "posted") insertRow.posted_at = nowIso;
 
-    // Note: no UNIQUE constraint on review_id, so this creates a new row each time.
-    // That’s fine for MVP (gives you history).
+    // Create a new row each time (history-friendly)
     const { data, error } = await supabase
       .from("review_replies")
       .insert(insertRow)
-      .select("id,created_at,status,copied_at,posted_at")
+      .select(
+        "id,organization_id,business_id,review_id,draft_text,owner_language,reviewer_language,rating,status,copied_at,posted_at,created_at,updated_at"
+      )
       .single();
 
     if (error) {
@@ -121,6 +126,8 @@ export async function POST(req: Request) {
 /**
  * PATCH /api/reviews/replies
  * Update status for a reply record (copied/posted)
+ *
+ * NOTE: This now ALSO inserts an event into review_reply_events for copied/posted.
  */
 export async function PATCH(req: Request) {
   try {
@@ -141,20 +148,44 @@ export async function PATCH(req: Request) {
     }
 
     const updates: any = { status };
+    const nowIso = asIsoNow();
 
-    if (status === "copied") updates.copied_at = new Date().toISOString();
-    if (status === "posted") updates.posted_at = new Date().toISOString();
+    if (status === "copied") updates.copied_at = nowIso;
+    if (status === "posted") updates.posted_at = nowIso;
 
     const { data, error } = await supabase
       .from("review_replies")
       .update(updates)
       .eq("id", id)
       .eq("organization_id", organizationId)
-      .select("id,status,copied_at,posted_at,updated_at")
+      .select(
+        "id,organization_id,business_id,review_id,draft_text,owner_language,reviewer_language,rating,status,copied_at,posted_at,created_at,updated_at"
+      )
       .single();
 
     if (error) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    }
+
+    // Event log on copied/posted
+    if (status === "copied" || status === "posted") {
+      const { error: evErr } = await supabase.from("review_reply_events").insert({
+        organization_id: organizationId,
+        review_id: data.review_id,
+        source: "app",
+        rating: data.rating,
+        reviewer_language: data.reviewer_language,
+        owner_language: data.owner_language,
+        event_type: status,
+        reply_text: data.draft_text,
+      });
+
+      if (evErr) {
+        return NextResponse.json(
+          { ok: true, reply_record: data, warning: `Event log failed: ${evErr.message}` },
+          { status: 200 }
+        );
+      }
     }
 
     return NextResponse.json({ ok: true, reply_record: data }, { status: 200 });
