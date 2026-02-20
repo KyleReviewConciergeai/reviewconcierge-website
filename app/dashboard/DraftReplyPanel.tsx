@@ -383,6 +383,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     owner_language: string;
     reviewer_language: string;
     rating: number;
+    google_location_id?: string;
   }) {
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "POST",
@@ -520,6 +521,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       // best-effort logging
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
+      const google_location_id = selectedReview?.google_location_id?.trim() || "";
+
 
       if (review_id && business_id) {
         if (replyRecordId) {
@@ -528,6 +531,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           const fallbackId = await createCopiedReplyRecordFallback({
             review_id,
             business_id,
+            google_location_id,
             draft_text: textToCopy,
             owner_language: ownerLanguage,
             reviewer_language: replyLanguage,
