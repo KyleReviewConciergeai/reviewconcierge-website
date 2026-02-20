@@ -111,6 +111,37 @@ const DRAFT_RULES = [
   "Do not promise refunds, policy changes, or future guarantees.",
 ];
 
+// --- tiny fetch helper: logs status + raw text if JSON parse fails ---
+async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promise<{
+  ok: boolean;
+  status: number;
+  json: T | null;
+  rawText: string;
+}> {
+  const res = await fetch(input, init);
+  const status = res.status;
+  const rawText = await res.text().catch(() => "");
+  let json: T | null = null;
+
+  try {
+    json = rawText ? (JSON.parse(rawText) as T) : null;
+  } catch {
+    // non-JSON response (404 HTML etc)
+    json = null;
+  }
+
+  if (!res.ok) {
+    console.warn("[fetchJson] request failed", {
+      url: typeof input === "string" ? input : "Request",
+      status,
+      rawPreview: rawText.slice(0, 300),
+      json,
+    });
+  }
+
+  return { ok: res.ok, status, json, rawText };
+}
+
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
   const panelRef = useRef<HTMLElement | null>(null);
   const reviewTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -120,9 +151,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const [businessNameState, setBusinessNameState] = useState<string>(businessName?.trim() ?? "");
   const [rating, setRating] = useState<number>(5);
 
-  /**
-   * ✅ This dropdown represents the REVIEWER language (copy-ready output).
-   */
+  /** ✅ This dropdown represents the REVIEWER language (copy-ready output). */
   const [replyLanguage, setReplyLanguage] = useState<string>("en");
 
   const [reviewText, setReviewText] = useState("");
@@ -141,10 +170,9 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number | null>(null);
 
-  // Version count is okay if framed as "another option" (not automation)
   const [version, setVersion] = useState<number>(0);
 
-  // Track the DB record for the most recent draft (so Copy can mark it)
+  // Track DB record created on draft (so copy can PATCH it)
   const [replyRecordId, setReplyRecordId] = useState<string | null>(null);
 
   const isNarrow = useIsNarrow(720);
@@ -186,7 +214,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessName]);
 
-  // ✅ Listen for review selection from dashboard list (rc:select-review)
+  // ✅ Listen for rc:select-review
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -225,20 +253,17 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       setSelectedReview(next);
 
-      // Prefill core inputs
       setReviewText(next.text);
 
       if (typeof next.rating === "number" && next.rating >= 1 && next.rating <= 5) {
         setRating(next.rating);
       }
 
-      // If caller provides a language hint, set the copy-ready language dropdown
       if (typeof next.language === "string" && next.language.trim()) {
         const lang = normLang(next.language);
         if (lang) setReplyLanguage(lang);
       }
 
-      // Reset prior draft UI so it feels "fresh" for the selected review
       setDraft("");
       setFinalReply("");
       setOwnerLanguage("en");
@@ -247,19 +272,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       setErrorMessage("");
       setReplyRecordId(null);
 
-      // Bring panel into view and focus the review textarea for quick action
       try {
         panelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       window.setTimeout(() => {
         try {
           reviewTextareaRef.current?.focus();
-        } catch {
-          // ignore
-        }
+        } catch {}
       }, 50);
     };
 
@@ -267,7 +287,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return () => window.removeEventListener("rc:select-review", handler as EventListener);
   }, []);
 
-  // Cleanup timer on unmount
   useEffect(() => {
     return () => {
       if (copiedTimer.current) {
@@ -286,113 +305,130 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   }, [ownerLanguage, replyLanguage]);
 
   async function requestTranslate(text: string, targetLanguage: string) {
-    const res = await fetch("/api/reviews/translate-reply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text,
-        target_language: targetLanguage,
-      }),
-    });
+    const { ok, json, status, rawText } = await fetchJson<TranslateReplyResponse>(
+      "/api/reviews/translate-reply",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, target_language: targetLanguage }),
+      }
+    );
 
-    const data = (await res.json().catch(() => ({}))) as Partial<TranslateReplyResponse>;
-
-    if (!res.ok || data.ok === false) {
+    if (!ok || !json || json.ok === false) {
       const msg =
-        typeof data.error === "string" && data.error.trim()
-          ? data.error
-          : "Could not translate the reply.";
+        (json as any)?.error ||
+        `Could not translate the reply. (status ${status}) ${rawText.slice(0, 120)}`;
       throw new Error(msg);
     }
 
-    if (typeof data.translated !== "string" || !data.translated.trim()) {
+    if (typeof json.translated !== "string" || !json.translated.trim()) {
       throw new Error("No translated reply was returned.");
     }
 
-    return data.translated;
+    return json.translated;
   }
 
-  // Save a reply record (draft/copy/post) in Supabase (via API)
-  async function createReplyRecord(params: {
+  async function createReplyRecordDraft(params: {
     review_id: string;
     business_id: string;
     draft_text: string;
     owner_language: string;
     reviewer_language: string;
     rating: number;
-    status: "draft" | "copied" | "posted";
   }) {
-    try {
-      const res = await fetch("/api/reviews/replies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
+    const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...params, status: "draft" }),
+    });
+
+    if (!ok || !json?.ok) {
+      console.warn("Failed to create reply record (draft).", {
+        status,
+        json,
+        rawPreview: rawText.slice(0, 300),
       });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.ok === false) {
-        console.warn("Failed to create reply record:", data?.error ?? data);
-        return null;
-      }
-
-      const id = data?.reply_record?.id;
-      return typeof id === "string" && id ? id : null;
-    } catch (e) {
-      console.warn("Failed to create reply record:", e);
       return null;
     }
+
+    const id = json?.reply_record?.id;
+    return typeof id === "string" && id ? id : null;
   }
 
-  // Mark an existing reply record copied/posted
-  async function updateReplyRecordStatus(id: string, nextStatus: "copied" | "posted") {
-    try {
-      const res = await fetch("/api/reviews/replies", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status: nextStatus }),
-      });
+  async function patchReplyRecord(id: string, statusValue: "copied" | "posted") {
+    const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status: statusValue }),
+    });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.ok === false) {
-        console.warn("Failed to update reply record status:", data?.error ?? data);
-      }
-    } catch (e) {
-      console.warn("Failed to update reply record status:", e);
+    if (!ok || !json?.ok) {
+      console.warn("Failed to PATCH reply record.", {
+        status,
+        json,
+        rawPreview: rawText.slice(0, 300),
+      });
+      return false;
     }
+
+    return true;
+  }
+
+  // fallback: if no replyRecordId exists for any reason, create a copied record on copy
+  async function createCopiedReplyRecordFallback(params: {
+    review_id: string;
+    business_id: string;
+    draft_text: string;
+    owner_language: string;
+    reviewer_language: string;
+    rating: number;
+  }) {
+    const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...params, status: "copied" }),
+    });
+
+    if (!ok || !json?.ok) {
+      console.warn("Failed to create reply record (copied fallback).", {
+        status,
+        json,
+        rawPreview: rawText.slice(0, 300),
+      });
+      return null;
+    }
+
+    const id = json?.reply_record?.id;
+    return typeof id === "string" && id ? id : null;
   }
 
   async function requestDraft() {
     setStatus("loading");
     setErrorMessage("");
 
-    // Step 8: compute tone right before request
     const tone = toneFromRating(rating);
 
     try {
-      const res = await fetch("/api/reviews/draft-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          business_name: businessNameState.trim(),
-          rating,
-          /**
-           * We send the *reviewer language* as "language" so the server can echo/track it.
-           * Server drafts in OWNER language (from org settings).
-           */
-          language: replyLanguage,
-          review_text: reviewText.trim(),
+      const { ok, json, status: httpStatus, rawText } = await fetchJson<DraftReplyResponse>(
+        "/api/reviews/draft-reply",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            business_name: businessNameState.trim(),
+            rating,
+            language: replyLanguage,
+            review_text: reviewText.trim(),
+            tone,
+            rules: DRAFT_RULES,
+          }),
+        }
+      );
 
-          // Step 8 payload additions (server can use these to improve human-ness)
-          tone,
-          rules: DRAFT_RULES,
-        }),
-      });
-
-      const data = (await res.json().catch(() => ({}))) as Partial<DraftReplyResponse>;
-
-      if (!res.ok || data.ok === false) {
+      if (!ok || !json || json.ok === false) {
         const msg =
-          typeof data.error === "string" && data.error.trim() ? data.error : COPY.errorDefault;
+          (json as any)?.error ||
+          `${COPY.errorDefault} (status ${httpStatus}) ${rawText.slice(0, 120)}`;
 
         setDraft("");
         setFinalReply("");
@@ -402,7 +438,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         return { ok: false as const };
       }
 
-      if (typeof data.reply !== "string" || !data.reply.trim()) {
+      if (typeof json.reply !== "string" || !json.reply.trim()) {
         setDraft("");
         setFinalReply("");
         setStatus("error");
@@ -411,41 +447,35 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         return { ok: false as const };
       }
 
-      // Owner-language draft
-      const ownerDraft = data.reply.trim();
+      const ownerDraft = json.reply.trim();
       setDraft(ownerDraft);
 
-      // Use meta owner language if provided (may be "es-ES", etc.)
-      const ownerLangRaw = data.meta?.owner_language || "en";
+      const ownerLangRaw = json.meta?.owner_language || "en";
       setOwnerLanguage(ownerLangRaw);
 
-      // Reviewer language is the dropdown selection (copy-ready)
-      const reviewerLangRaw = replyLanguage || data.meta?.reviewer_language || "en";
+      const reviewerLangRaw = replyLanguage || json.meta?.reviewer_language || "en";
 
-      // ✅ Translate ONLY if different language (using normalized compare)
       if (normLang(ownerLangRaw) !== normLang(reviewerLangRaw)) {
         const translated = await requestTranslate(ownerDraft, reviewerLangRaw);
         setFinalReply(translated);
       } else {
-        // Same language — no translation and no separate copy-ready UI needed
         setFinalReply("");
       }
 
-      // Persist the draft row (best-effort) ONLY if we have IDs
+      // create a draft record (best-effort)
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
 
       if (review_id && business_id) {
-        const id = await createReplyRecord({
+        const recId = await createReplyRecordDraft({
           review_id,
           business_id,
           draft_text: ownerDraft,
           owner_language: ownerLangRaw,
           reviewer_language: reviewerLangRaw,
           rating,
-          status: "draft",
         });
-        setReplyRecordId(id);
+        setReplyRecordId(recId);
       } else {
         setReplyRecordId(null);
       }
@@ -478,35 +508,30 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   }
 
   async function onCopy() {
-    // ✅ Copy the right thing:
-    // - If same language: copy the owner draft
-    // - If different: copy the translated (copy-ready) reply
     const textToCopy = (sameLang ? draft : finalReply || draft).trim();
     if (!textToCopy) return;
 
     try {
       await navigator.clipboard.writeText(textToCopy);
 
-      // ✅ Log copy to DB (best-effort)
-      // Prefer PATCH on existing draft record; fallback to creating a copied record.
+      // best-effort logging
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
 
-      if (replyRecordId) {
-        // This will also log into review_reply_events (after we update the API route below)
-        updateReplyRecordStatus(replyRecordId, "copied");
-      } else if (review_id && business_id) {
-        // If for some reason we didn't save the draft row, create a "copied" row now.
-        const id = await createReplyRecord({
-          review_id,
-          business_id,
-          draft_text: textToCopy,
-          owner_language: ownerLanguage,
-          reviewer_language: replyLanguage,
-          rating,
-          status: "copied",
-        });
-        setReplyRecordId(id);
+      if (review_id && business_id) {
+        if (replyRecordId) {
+          await patchReplyRecord(replyRecordId, "copied");
+        } else {
+          const fallbackId = await createCopiedReplyRecordFallback({
+            review_id,
+            business_id,
+            draft_text: textToCopy,
+            owner_language: ownerLanguage,
+            reviewer_language: replyLanguage,
+            rating,
+          });
+          setReplyRecordId(fallbackId);
+        }
       }
 
       setCopied(true);
@@ -516,7 +541,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         setCopied(false);
         copiedTimer.current = null;
       }, 1200);
-    } catch {
+    } catch (e) {
+      console.error("copy failed:", e);
       setStatus("error");
       setErrorMessage("Could not copy to clipboard.");
     }
@@ -556,9 +582,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     }),
     [isNarrow]
   );
-
-  // ✅ Hide the copy-ready block when languages are the same
-  const showFinalBox = !sameLang;
 
   return (
     <section style={panelStyle} ref={panelRef as any}>
@@ -658,7 +681,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       {/* Controls */}
       <div style={controlsGridStyle}>
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={labelStyle}>{COPY.businessLabel}</div>
+          <div style={labelStyle}>Business name</div>
           <input
             value={businessNameState}
             onChange={(e) => setBusinessNameState(e.target.value)}
@@ -668,7 +691,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         </div>
 
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={labelStyle}>{COPY.ratingLabel}</div>
+          <div style={labelStyle}>Review rating</div>
           <select
             value={String(rating)}
             onChange={(e) => setRating(Number(e.target.value))}
@@ -683,7 +706,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         </div>
 
         <div style={{ display: "grid", gap: 6 }}>
-          <div style={labelStyle}>{COPY.replyLanguageLabel}</div>
+          <div style={labelStyle}>Reviewer language (copy-ready)</div>
           <select
             value={replyLanguage}
             onChange={(e) => setReplyLanguage(e.target.value)}
@@ -699,7 +722,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         </div>
       </div>
 
-      {/* Step 6 helper text moved BELOW the entire row so inputs align */}
       <div style={{ fontSize: 12, color: "rgba(226,232,240,0.62)", marginTop: 6 }}>
         Helps tailor the reply tone to a 1★ vs 5★ experience.
       </div>
@@ -714,9 +736,9 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             alignItems: "baseline",
           }}
         >
-          <div style={labelStyle}>{COPY.reviewLabel}</div>
+          <div style={labelStyle}>Guest review</div>
           <div style={{ fontSize: 12, color: "rgba(226,232,240,0.6)" }}>
-            {reviewText.trim().length}/{COPY.reviewCountHint}
+            {reviewText.trim().length}/10+
           </div>
         </div>
 
@@ -728,7 +750,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             lineHeight: 1.35,
           }}
         >
-          {COPY.reviewHelp}
+          Paste the review text exactly as the guest wrote it.
         </div>
 
         <textarea
@@ -758,7 +780,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             style={primaryButtonStyle(!canSubmit || isLoading)}
             title="Create a suggested reply you can edit"
           >
-            {isLoading ? COPY.btnDraftLoading : COPY.btnDraft}
+            {isLoading ? "Drafting…" : "Draft a reply"}
           </button>
         ) : (
           <>
@@ -768,11 +790,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               style={primaryButtonStyle(!canSubmit || isLoading)}
               title="Create another suggested option"
             >
-              {isLoading ? COPY.btnAnotherLoading : COPY.btnAnother}
+              {isLoading ? "Drafting…" : "Draft another option"}
             </button>
 
             <button onClick={onCopy} disabled={!canCopy} style={secondaryButtonStyle(!canCopy)}>
-              {copied ? COPY.btnCopied : COPY.btnCopy}
+              {copied ? "Copied" : "Copy reply"}
             </button>
           </>
         )}
@@ -780,28 +802,21 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         {status === "error" ? (
           <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span>
         ) : null}
-
-        {isLoading && hasDraft ? (
-          <span style={{ color: "rgba(226,232,240,0.65)", fontSize: 13 }}>
-            Drafting another option…
-          </span>
-        ) : null}
       </div>
 
       {/* Owner Draft output */}
-      <div style={{ marginTop: 14, position: "relative" }}>
-        <div style={labelStyle}>{COPY.draftLabel}</div>
+      <div style={{ marginTop: 14 }}>
+        <div style={labelStyle}>Owner draft (editable)</div>
 
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={COPY.draftPlaceholder}
+          placeholder="A suggested reply will appear here…"
           rows={7}
           style={{
             ...textareaStyle,
             marginTop: 6,
             opacity: hasDraft ? 1 : 0.9,
-            filter: isLoading && hasDraft ? "blur(0.2px)" : undefined,
           }}
         />
 
@@ -814,50 +829,20 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               lineHeight: 1.35,
             }}
           >
-            {COPY.draftHelp}
-          </div>
-        ) : null}
-
-        {isLoading && hasDraft ? (
-          <div
-            aria-label="Drafting overlay"
-            style={{
-              position: "absolute",
-              inset: 0,
-              borderRadius: 12,
-              background: "rgba(2,6,23,0.40)",
-              border: "1px solid rgba(148,163,184,0.20)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "none",
-            }}
-          >
-            <div
-              style={{
-                padding: "8px 12px",
-                borderRadius: 999,
-                border: "1px solid rgba(148,163,184,0.28)",
-                background: "rgba(15,23,42,0.75)",
-                fontSize: 13,
-                color: "#e2e8f0",
-              }}
-            >
-              Drafting…
-            </div>
+            This is a starting point. Edit it freely so it feels like you.
           </div>
         ) : null}
       </div>
 
       {/* Copy-ready output (ONLY when different language) */}
-      {showFinalBox ? (
+      {!sameLang ? (
         <div style={{ marginTop: 14 }}>
-          <div style={labelStyle}>{COPY.finalLabel}</div>
+          <div style={labelStyle}>Copy-ready reply</div>
 
           <textarea
             value={finalReply}
             onChange={(e) => setFinalReply(e.target.value)}
-            placeholder={COPY.finalPlaceholder}
+            placeholder="Copy-ready reply will appear here…"
             rows={7}
             style={{
               ...textareaStyle,
@@ -874,7 +859,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               lineHeight: 1.35,
             }}
           >
-            {COPY.finalHelp}
+            This is what you’ll paste into Google Reviews. It matches the reviewer’s language.
           </div>
         </div>
       ) : null}
@@ -888,7 +873,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           lineHeight: 1.45,
         }}
       >
-        {COPY.tip}
+        Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.
       </div>
     </section>
   );
