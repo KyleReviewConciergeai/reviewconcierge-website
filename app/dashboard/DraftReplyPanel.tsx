@@ -55,6 +55,7 @@ type SelectedReview = {
   reviewId: string;
   businessId: string | null;
   text: string;
+  google_location_id?: string;
   rating: number | null;
   authorName: string | null;
   createdAt: string | null;
@@ -415,12 +416,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            business_name: businessNameState.trim(),
-            rating,
-            language: replyLanguage,
-            review_text: reviewText.trim(),
-            tone,
-            rules: DRAFT_RULES,
+          business_name: businessNameState.trim(),
+          rating,
+          language: replyLanguage,
+          review_text: reviewText.trim(),
+          google_location_id: selectedReview?.google_location_id?.trim() || "",
+          location_id: selectedReview?.google_location_id?.trim() || "", // optional safety for audit logging
+          tone, 
+          rules: DRAFT_RULES,
           }),
         }
       );
