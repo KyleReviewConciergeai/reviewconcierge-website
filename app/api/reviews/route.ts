@@ -9,6 +9,10 @@ import { requireOrgContext } from "@/lib/orgServer";
  * - Minimal, calm errors
  * - Org-safe + business-safe queries
  * - Stable ordering (newest first), with sane fallback if review_date is null
+ *
+ * C1:
+ * - Adds google_location_id to each returned review.
+ * - For Places MVP (single place per business), we default google_location_id to business.google_place_id.
  */
 
 export async function GET(req: Request) {
@@ -34,18 +38,18 @@ export async function GET(req: Request) {
 
     // No business yet → normal state (onboarding)
     if (!biz?.id) {
-      return NextResponse.json({ ok: true, business: null, count: 0, reviews: [] }, { status: 200 });
+      return NextResponse.json(
+        { ok: true, business: null, count: 0, reviews: [] },
+        { status: 200 }
+      );
     }
 
     // Reviews for this business + org
-    // Order:
-    // - review_date desc (most meaningful)
-    // - created_at desc as a fallback when review_date is null/duplicate
     const { data: reviews, error: revErr } = await supabase
       .from("reviews")
       .select(
-  "id, business_id, source, google_review_id, rating, author_name, author_url, review_text, review_date, detected_language, created_at"
-)
+        "id, business_id, source, google_review_id, rating, author_name, author_url, review_text, review_date, detected_language, created_at"
+      )
       .eq("organization_id", organizationId)
       .eq("business_id", biz.id)
       .order("review_date", { ascending: false, nullsFirst: false })
@@ -56,12 +60,21 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "Failed to load reviews." }, { status: 500 });
     }
 
+    // C1: attach a canonical location id for downstream logging/persistence.
+    // For Places MVP, treat the connected place as the location.
+    const googleLocationId = biz.google_place_id ? String(biz.google_place_id) : null;
+
+    const reviewsWithLocation = (reviews ?? []).map((r: any) => ({
+      ...r,
+      google_location_id: r?.google_location_id ?? r?.location_id ?? googleLocationId,
+    }));
+
     return NextResponse.json(
       {
         ok: true,
         business: biz,
-        count: reviews?.length ?? 0,
-        reviews: reviews ?? [],
+        count: reviewsWithLocation.length,
+        reviews: reviewsWithLocation,
       },
       { status: 200 }
     );

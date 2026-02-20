@@ -694,6 +694,10 @@ export default function DashboardPage() {
         detail: {
           reviewId: review.id,
           businessId: review.business_id,
+          google_location_id:
+            (review as any).google_location_id ??
+            (review as any).location_id ??
+            (business?.google_place_id ?? null),
           text,
           rating: typeof review.rating === "number" ? review.rating : null,
           authorName: review.author_name ?? null,
