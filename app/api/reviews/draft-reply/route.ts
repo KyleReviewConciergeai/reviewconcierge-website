@@ -1,4 +1,5 @@
 // app/api/reviews/draft-reply/route.ts
+
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -47,6 +48,7 @@ function limitSentences(text: string, maxSentences: number) {
   const t = text.trim();
   if (!t) return t;
 
+  // Split on sentence end punctuation; works reasonably across Latin languages
   const parts = t
     .split(/(?<=[.!?])\s+/)
     .map((p) => p.trim())
@@ -117,16 +119,22 @@ const DEFAULT_VOICE = {
     "it's disappointing to hear",
     "it's concerning to hear",
     "we'll keep that in mind",
+    "keep your feedback in mind",
     "refine our",
     "enhance our",
 
-    // Mission-statement vibe
-    "our goal is to",
+    // AI-ish tells (keep these banned; we’ll ALSO enforce post-clean)
+    "it sounds like",
+    "it seems like",
+
+    // “mission statement” phrasing
     "we aim to",
+    "we aim for",
+    "we strive to",
+    "our goal is to",
     "we work hard to",
 
-    // Stiff opener that reads robotic
-    "We regret",
+    // “we regret” is awkward/template-y; ban it
     "we regret",
   ],
   allow_exclamation: false,
@@ -181,7 +189,8 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
 }
 
 /**
- * Load voice samples (org_voice_samples) as style reference only.
+ * load voice samples (org_voice_samples)
+ * We use these as style reference only (never copy verbatim).
  */
 type VoiceSampleRow = {
   id: string;
@@ -263,9 +272,6 @@ function normalizeToneFromOrg(tone: string): VoiceProfile["tone"] {
   return "warm";
 }
 
-/**
- * Tone coming from client UI
- */
 function parseClientTone(v: unknown): VoiceProfile["tone"] | null {
   const t = cleanString(v, 24).toLowerCase().trim();
   if (!t) return null;
@@ -275,11 +281,12 @@ function parseClientTone(v: unknown): VoiceProfile["tone"] | null {
 
 function parseClientRules(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
-  return v
+  const cleaned = v
     .map((x) => cleanString(x, 180))
     .map((s) => s.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .slice(0, 12);
+  return cleaned;
 }
 
 function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoiceProfile["tone"] {
@@ -291,15 +298,11 @@ function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoicePr
 function sentencePolicyForRating(rating: number) {
   if (rating >= 5) return 4;
   if (rating === 4) return 3;
-  return 3; // 1–3 keep tight
+  if (rating === 3) return 3;
+  if (rating === 2) return 3;
+  return 3;
 }
 
-/**
- * Updated to align with research:
- * - 1–2★: empathy/apology is allowed and often helpful, but keep it short + human.
- * - 3★: balanced, solution-oriented.
- * - 4–5★: appreciative + specific.
- */
 function mustDoForRating(rating: number) {
   const base = [
     "Write 2–4 short sentences max (follow sentence limit below).",
@@ -309,21 +312,20 @@ function mustDoForRating(rating: number) {
     "Do NOT invent details. Only reference what the reviewer actually wrote.",
     "Do NOT quote the review text.",
     "No emojis.",
-    "Never include placeholders like [email/phone].",
   ];
 
   if (rating >= 5) {
     return [
       ...base,
-      "Be short and sincere.",
-      "Close with a simple welcome back (not salesy).",
+      "Be appreciative but grounded (no hype, no marketing).",
+      "Close with a simple, low-pressure welcome back (not salesy).",
     ];
   }
 
   if (rating === 4) {
     return [
       ...base,
-      "If there’s a small critique, acknowledge it plainly in one short clause.",
+      "If there’s a small issue hinted, acknowledge it briefly in plain language (no corporate phrasing).",
       "Close with a simple welcome back.",
     ];
   }
@@ -331,17 +333,26 @@ function mustDoForRating(rating: number) {
   if (rating === 3) {
     return [
       ...base,
-      "Match the mixed experience: one line of appreciation + one line acknowledging the miss.",
-      "If inviting follow-up, keep it one short human line (no corporate framing).",
+      "Reflect the mixed experience plainly (not PR language).",
+      "Acknowledge the miss without over-apologizing or promising fixes.",
     ];
   }
 
-  // 1–2★
+  if (rating === 2) {
+    return [
+      ...base,
+      "Open with a short, human apology or acknowledgment (OK to use “Sorry about…” / “We’re sorry to hear…”).",
+      "Acknowledge disappointment calmly (no defensiveness).",
+      "If inviting follow-up, keep it ONE short human line (no corporate framing).",
+    ];
+  }
+
+  // 1-star
   return [
     ...base,
-    "Open with a brief, human acknowledgement/apology (short clause, not a paragraph).",
-    "Stay calm and direct. No defensiveness. No arguing.",
-    "If inviting follow-up, keep it one short line (e.g., 'Reach out to us directly so we can talk it through.').",
+    "Open with a short, human apology or acknowledgment (OK to use “Sorry about…” / “We’re sorry to hear…”).",
+    "Be calm and direct. Avoid long apologies and PR language.",
+    "If inviting follow-up, keep it ONE short line (email/phone), not legalistic.",
   ];
 }
 
@@ -349,14 +360,26 @@ function mustNotForRating(rating: number) {
   const base = [
     "Do NOT mention AI, automation, internal processes, investigations, or policies.",
     "Do NOT offer refunds/discounts/compensation.",
+    "Do NOT promise future changes or guarantees (no 'we will make sure', 'we will improve').",
     "Do NOT admit legal fault.",
-    "Do NOT use corporate filler or templated PR language.",
+    "Do NOT use corporate filler or templated empathy.",
     "Do NOT use exclamation points unless explicitly allowed (rule below).",
-    "Do NOT include placeholders like [email/phone].",
   ];
 
+  if (rating >= 4) {
+    return [
+      ...base,
+      "Do NOT over-apologize. Only apologize if the guest clearly had a problem.",
+    ];
+  }
+
   if (rating <= 2) {
-    return [...base, "Do NOT be playful or joking.", "Do NOT argue with the reviewer.", "Do NOT blame the customer."];
+    return [
+      ...base,
+      "Do NOT be playful or joking.",
+      "Do NOT argue with the reviewer.",
+      "Do NOT blame the customer.",
+    ];
   }
 
   return base;
@@ -408,7 +431,9 @@ function styleLines(params: {
       ? "Formality: casual (still respectful)."
       : "Formality: professional (not stiff).";
 
-  const signatureLine = reply_signature ? `Signature: end with “— ${reply_signature}”.` : "Signature: none.";
+  const signatureLine = reply_signature
+    ? `Signature: end with “— ${reply_signature}”.`
+    : "Signature: none.";
 
   const exclamationLine = voice.allow_exclamation
     ? rating >= 5
@@ -421,36 +446,11 @@ function styleLines(params: {
     .join("\n- ");
 }
 
-/**
- * Rating-aware banned list:
- * - For 1–2★, allow short apology language ("sorry") BUT keep banning PR-y phrases.
- * - Always ban stiff "We regret" opener.
- */
-function buildAvoidListLinesForRating(voice: ReturnType<typeof normalizeVoice>, rating: number) {
+function buildAvoidList(voice: ReturnType<typeof normalizeVoice>) {
   const avoid = Array.isArray(voice.things_to_avoid) ? voice.things_to_avoid : [];
-
-  // For low stars, we *allow* brief apology language, so we should NOT ban "sorry" variants here.
-  const allowApologyForLowStars = rating <= 2;
-
-  const cleaned = avoid
-    .map((s) => cleanString(s, 140).trim())
-    .filter(Boolean)
-    .filter((s) => {
-      if (!allowApologyForLowStars) return true;
-      const t = s.toLowerCase();
-      // allow "sorry" openers on 1–2★, but still block corporate ones
-      if (t.includes("we're sorry to hear")) return false;
-      if (t.includes("we are sorry to hear")) return false;
-      return true;
-    })
-    .slice(0, 70);
-
-  // Also hard-block placeholder artifacts
-  cleaned.push("[email/phone]");
-  cleaned.push("[email]");
-  cleaned.push("[phone]");
-
-  return Array.from(new Set(cleaned));
+  const list = avoid.map((s) => cleanString(s, 80)).filter(Boolean).slice(0, 40);
+  if (!list.length) return "";
+  return list.join(" | ");
 }
 
 function buildVoiceSamplesBlock(samples: string[]) {
@@ -494,7 +494,7 @@ function buildPrompt(params: {
   const mustDo = mustDoForRating(rating);
   const mustNot = mustNotForRating(rating);
 
-  const avoidLines = buildAvoidListLinesForRating(voice, rating);
+  const avoidList = buildAvoidList(voice);
   const voiceProfile = styleLines({
     voice,
     org_reply_tone_raw,
@@ -510,35 +510,6 @@ function buildPrompt(params: {
 
   const voiceSamplesBlock = buildVoiceSamplesBlock(voice_samples ?? []);
 
-  const ratingStrategy =
-    rating <= 2
-      ? [
-          "RATING STRATEGY (1–2★):",
-          "- Start with a brief, human apology/acknowledgement (short clause).",
-          "- Mention exactly one concrete detail from the review.",
-          "- One short line inviting them to reach out (no placeholders, no corporate framing).",
-          "- Do NOT argue. Do NOT make big promises.",
-        ].join("\n")
-      : rating === 3
-        ? [
-            "RATING STRATEGY (3★):",
-            "- One short appreciation line + one short acknowledgement of what missed.",
-            "- Invite more detail in one short line if helpful.",
-            "- Stay non-salesy and non-defensive.",
-          ].join("\n")
-        : rating === 4
-          ? [
-              "RATING STRATEGY (4★):",
-              "- Appreciative and forward-looking.",
-              "- If a small critique exists, acknowledge it briefly.",
-              "- Close with a simple welcome back.",
-            ].join("\n")
-          : [
-              "RATING STRATEGY (5★):",
-              "- Short, sincere, specific.",
-              "- Close with a simple welcome back.",
-            ].join("\n");
-
   return `
 You are writing a public reply to a Google review.
 
@@ -551,10 +522,6 @@ HARD CONSTRAINTS (follow exactly):
 - No quotes from the review
 - Do not invent details
 - Output ONLY the reply text (no labels, no bullet points)
-- Never include placeholders like [email/phone]
-- Do NOT start with "We regret" (it reads corporate/stiff)
-
-${ratingStrategy}
 
 MUST DO:
 ${mustDo.map((x) => `- ${x}`).join("\n")}
@@ -563,7 +530,7 @@ MUST NOT DO:
 ${mustNot.map((x) => `- ${x}`).join("\n")}
 
 BANNED PHRASES / AI-TELLS (do not use any of these, even partially):
-${avoidLines.length ? avoidLines.map((l) => `- ${l}`).join("\n") : "- (none)"}
+${avoidList ? `- ${avoidList}` : "- (none)"}
 
 ${voiceSamplesBlock ? `${voiceSamplesBlock}\n` : ""}
 
@@ -597,65 +564,80 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
 }
 
 /**
- * Rating-aware post-clean:
- * - For 1–2★: do NOT strip short apology openers (they’re useful).
- * - For 3–5★: strip corporate openers if they slip in.
+ * Strip templated openers. (Start-of-reply only.)
+ * We intentionally do NOT strip “we’re sorry…” because low stars benefit from it.
  */
-function stripTemplatedOpeners(text: string, rating: number) {
+function stripTemplatedOpeners(text: string) {
   let t = text.trim();
 
-  // Always remove stiff "We regret..." opener if it happens
-  t = t.replace(/^\s*we\s+regret\b[^a-z0-9]+/i, "");
-  t = t.replace(/^\s*we\s+regret\b/i, "");
+  const patterns: RegExp[] = [
+    // Keep these (do not remove):
+    // - we're sorry to hear...
+    // - we apologize for...
 
-  // For 3–5★, strip common template-y openers
-  if (rating >= 3) {
-    const patterns: RegExp[] = [
-      /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words))?)[,!.]\s*/i,
-      /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
-      /^\s*(we take (your )?(concerns|feedback) very seriously)[,!.]\s*/i,
-      /^\s*(we strive to|we aim to)[^.!?]*[.!?]\s*/i,
-    ];
-    for (const re of patterns) t = t.replace(re, "");
+    // Remove corporate openers / AI-ish tells
+    /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words))?)[,!.]\s*/i,
+    /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
+
+    // Remove “it sounds like …” / “it seems like …” openers (AI tell)
+    /^\s*(it\s+(sounds|seems)\s+like)[,!.]?\s*/i,
+
+    // Remove “we regret …” opener (awkward + template-y)
+    /^\s*(we\s+regret(\s+that)?)[,!.]?\s*/i,
+  ];
+
+  for (const re of patterns) {
+    t = t.replace(re, "");
   }
 
-  // Never allow bracket placeholders
-  t = t.replace(/\[(email\/phone|email|phone)\]/gi, "");
   return t.trim();
 }
 
 /**
- * If the model still starts with "We regret...", rewrite the opener into something human.
- * Keep it minimal and preserve the rest of the content.
+ * Mission-statement / corporate phrasing tends to leak mid-sentence.
+ * This makes it deterministic by rewriting/stripping common patterns anywhere.
  */
-function rewriteLeadingWeRegret(reply: string, rating: number) {
-  const t = reply.trim();
-  if (!/^we\s+regret\b/i.test(t)) return reply;
+function sanitizeCorporatePhrases(text: string) {
+  let t = text;
 
-  // Remove the "We regret ..." clause up to first punctuation, if present
-  const stripped = t.replace(/^we\s+regret\b[^.!?]*[.!?]\s*/i, "");
+  // 1) Remove/neutralize “it sounds like …” anywhere (not only opener)
+  t = t.replace(/\b(it\s+(sounds|seems)\s+like)\b[, ]*/gi, "");
 
-  // Replace with a more natural opener. Keep it calm.
-  const opener = rating <= 2 ? "Sorry about that — " : "Appreciate you flagging this — ";
-  return (opener + stripped).trim();
-}
+  // 2) Rewrite mission-statement phrasing (anywhere)
+  // Keep meaning but make it human.
+  t = t.replace(/\bwe\s+aim\s+to\b/gi, "we want to");
+  t = t.replace(/\bwe\s+aim\s+for\b/gi, "we want");
+  t = t.replace(/\bwe\s+strive\s+to\b/gi, "we try to");
+  t = t.replace(/\bour\s+goal\s+is\s+to\b/gi, "we want to");
+  t = t.replace(/\bwe\s+work\s+hard\s+to\b/gi, "we try to");
 
-/**
- * Prevent placeholder-y contact language and overly corporate "make it right" claims.
- */
-function sanitizePlaceholdersAndClaims(reply: string) {
-  let t = reply;
+  // 3) Remove corporate “we take X seriously” phrasing
+  // (Often reads like a template.)
+  t = t.replace(
+    /\bwe\s+take\s+(your\s+)?(feedback|concerns|complaint|complaints|comments)\s+(very\s+)?seriously\b[, ]*/gi,
+    ""
+  );
 
-  // Remove bracket placeholders
-  t = t.replace(/\[(email\/phone|email|phone)\]/gi, "");
+  // 4) Remove “we regret…” anywhere (not just opener).
+  // Replace with a softer human clause.
+  t = t.replace(/\bwe\s+regret(\s+that)?\b/gi, "sorry");
 
-  // Replace "make it right" with softer, safer phrasing
-  t = t.replace(/\bmake it right\b/gi, "talk it through");
-
-  // Avoid grand promises like "we'll improve based on your feedback" (swap to lighter)
-  t = t.replace(/\bwe('?| a)ll improve based on your feedback\b/gi, "we’ll take your note on board");
+  // Cleanup punctuation spacing after removals
+  t = t.replace(/\s+,/g, ",");
+  t = t.replace(/\s+\./g, ".");
+  t = t.replace(/\s+!/g, "!");
+  t = t.replace(/\s+\?/g, "?");
+  t = collapseWhitespace(t);
 
   return t.trim();
+}
+
+function capitalizeIfNeeded(text: string) {
+  const t = (text ?? "").trim();
+  if (!t) return t;
+  const first = t.charAt(0);
+  if (first >= "a" && first <= "z") return first.toUpperCase() + t.slice(1);
+  return t;
 }
 
 export async function POST(req: Request) {
@@ -744,7 +726,7 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: rating <= 2 ? 0.2 : rating === 3 ? 0.22 : 0.25,
+        temperature: rating <= 2 ? 0.15 : 0.25,
         frequency_penalty: 0.2,
         presence_penalty: 0.1,
         messages: [
@@ -781,18 +763,15 @@ export async function POST(req: Request) {
     const contentRaw = upstreamJson?.choices?.[0]?.message?.content ?? "";
     let content = safeTrimReply(String(contentRaw));
 
+    // Basic cleanup
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
 
-    // Rating-aware opener cleanup
-    content = stripTemplatedOpeners(content, rating);
-
-    // Rewrite stiff "We regret..." opener if it slips through
-    content = rewriteLeadingWeRegret(content, rating);
-
-    // Prevent placeholders + soften risky claims
-    content = sanitizePlaceholdersAndClaims(content);
+    // Deterministic “no-template” enforcement
+    content = stripTemplatedOpeners(content);
+    content = sanitizeCorporatePhrases(content);
+    content = capitalizeIfNeeded(content);
 
     // Sentence enforcement
     content = limitSentences(content, sentencePolicyForRating(rating));
@@ -832,7 +811,6 @@ export async function POST(req: Request) {
           reviewer_language,
           reply_tone: org_reply_tone_raw,
           reply_signature: reply_signature ?? null,
-          voice_samples_used: voiceSamples.length,
         },
       },
       { status: 200 }
