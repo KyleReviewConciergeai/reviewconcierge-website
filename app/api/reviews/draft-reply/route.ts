@@ -37,7 +37,6 @@ function safeTrimReply(s: string, maxLen = 900) {
 }
 
 function stripEmojis(text: string) {
-  // Broad emoji/pictograph ranges; safe for EN/ES/PT/FR/IT/DE
   return text.replace(
     /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/gu,
     ""
@@ -107,7 +106,6 @@ const DEFAULT_VOICE = {
   brevity: "short" as const,
   formality: "professional" as const,
   things_to_avoid: [
-    // Corporate / template-y
     "Thank you for your feedback",
     "We appreciate your feedback",
     "We appreciate your thoughts",
@@ -134,22 +132,14 @@ const DEFAULT_VOICE = {
     "keep your feedback in mind",
     "refine our",
     "enhance our",
-
-    // AI-ish tells (keep these banned; we’ll ALSO enforce post-clean)
     "it sounds like",
     "it seems like",
-
-    // “mission statement” phrasing
     "we aim to",
     "we aim for",
     "we strive to",
     "our goal is to",
     "we work hard to",
-
-    // “we regret” is awkward/template-y; ban it
     "we regret",
-
-    // Excuse-y / invented context (ban common patterns, not single words)
     "we were busy",
     "we're busy",
     "we are busy",
@@ -201,7 +191,6 @@ async function loadOrgReplySettings(): Promise<OrgReplySettings> {
   }
 }
 
-// Legacy optional voice profile table (safe fallback)
 async function loadVoiceProfile(): Promise<VoiceProfile> {
   try {
     const { supabase, organizationId } = await requireOrgContext();
@@ -220,15 +209,11 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
 }
 
 /**
- * load voice samples (org_voice_samples)
- * We use these as style reference only (never copy verbatim).
+ * Voice samples (A4 selection already incorporated in your current file).
+ * NOTE: Keeping your existing implementation from the version you deployed previously.
+ * This file replacement assumes your current A4 version is present.
  *
- * A4:
- * - Fetch a wider pool
- * - Deterministically sanitize
- * - Score for usefulness (length window, specificity, anti-template)
- * - Select top N with diversity + token/char budget
- * - Return sample IDs for audit logging
+ * If you ever want me to rebase A4 code again, paste your current file and I’ll merge cleanly.
  */
 type VoiceSampleRow = {
   id: string;
@@ -271,7 +256,6 @@ function jaccard(a: Set<string>, b: Set<string>) {
 }
 
 function scoreLength(text: string) {
-  // Ideal window: ~110–420 chars. Penalize very short / very long.
   const L = (text || "").length;
   if (!L) return 0;
 
@@ -280,9 +264,9 @@ function scoreLength(text: string) {
   const idealHi = 420;
   const hardMax = 700;
 
-  if (L < min) return clamp01(L / min) * 0.4; // too short
-  if (L >= idealLo && L <= idealHi) return 1.0; // great
-  if (L > hardMax) return 0.2; // too long
+  if (L < min) return clamp01(L / min) * 0.4;
+  if (L >= idealLo && L <= idealHi) return 1.0;
+  if (L > hardMax) return 0.2;
 
   const decay = 1 - (L - idealHi) / (hardMax - idealHi);
   return clamp01(decay);
@@ -386,13 +370,7 @@ async function loadVoiceSamplesForOrg(opts?: {
         const score = scoreSample(cleaned, avoidPhrases);
         const tokenSet = new Set(tokenize(cleaned));
 
-        return {
-          id: r.id,
-          cleaned,
-          score,
-          tokenSet,
-          created_at: r.created_at ?? "",
-        };
+        return { id: r.id, cleaned, score, tokenSet, created_at: r.created_at ?? "" };
       })
       .filter(Boolean) as Array<{
       id: string;
@@ -420,8 +398,7 @@ async function loadVoiceSamplesForOrg(opts?: {
 
       let tooSimilar = false;
       for (const s of selected) {
-        const sim = jaccard(c.tokenSet, s.tokenSet);
-        if (sim >= 0.78) {
+        if (jaccard(c.tokenSet, s.tokenSet) >= 0.78) {
           tooSimilar = true;
           break;
         }
@@ -487,12 +464,11 @@ function parseClientTone(v: unknown): VoiceProfile["tone"] | null {
 
 function parseClientRules(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
-  const cleaned = v
+  return v
     .map((x) => cleanString(x, 180))
     .map((s) => s.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .slice(0, 12);
-  return cleaned;
 }
 
 function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoiceProfile["tone"] {
@@ -508,6 +484,9 @@ function sentencePolicyForRating(rating: number) {
   if (rating === 2) return 3;
   return 3;
 }
+
+// --- (mustDo/mustNot/styleLines/buildAvoidList/buildVoiceSamplesBlock/buildPrompt etc.) ---
+// Keeping unchanged from your current working version:
 
 function mustDoForRating(rating: number) {
   const base = [
@@ -603,8 +582,8 @@ function styleLines(params: {
     voice.reply_as === "owner"
       ? 'Reply as the owner using "I".'
       : voice.reply_as === "manager"
-        ? 'Reply as the manager using "I".'
-        : 'Reply as the business using "we".';
+      ? 'Reply as the manager using "I".'
+      : 'Reply as the business using "we".';
 
   const orgTone = (org_reply_tone_raw || "").toLowerCase().trim();
   const effectiveFormality = orgTone === "professional" ? "professional" : voice.formality;
@@ -613,21 +592,21 @@ function styleLines(params: {
     voice.tone === "warm"
       ? "Default tone: warm, real, calm."
       : voice.tone === "neutral"
-        ? "Default tone: steady, human, not overly emotional."
-        : voice.tone === "direct"
-          ? "Default tone: direct, respectful, concise."
-          : "Default tone: lightly playful but still respectful.";
+      ? "Default tone: steady, human, not overly emotional."
+      : voice.tone === "direct"
+      ? "Default tone: direct, respectful, concise."
+      : "Default tone: lightly playful but still respectful.";
 
   const clientToneLine =
     clientTone === "warm"
       ? "User tone override: warm, human, not salesy."
       : clientTone === "neutral"
-        ? "User tone override: neutral, calm, straightforward."
-        : clientTone === "direct"
-          ? "User tone override: direct, concise, respectful."
-          : clientTone === "playful"
-            ? "User tone override: lightly playful (ONLY if appropriate)."
-            : "";
+      ? "User tone override: neutral, calm, straightforward."
+      : clientTone === "direct"
+      ? "User tone override: direct, concise, respectful."
+      : clientTone === "playful"
+      ? "User tone override: lightly playful (ONLY if appropriate)."
+      : "";
 
   const brevityLine = voice.brevity === "short" ? "Brevity: short." : "Brevity: medium-short.";
 
@@ -636,9 +615,7 @@ function styleLines(params: {
       ? "Formality: casual (still respectful)."
       : "Formality: professional (not stiff).";
 
-  const signatureLine = reply_signature
-    ? `Signature: end with “— ${reply_signature}”.`
-    : "Signature: none.";
+  const signatureLine = reply_signature ? `Signature: end with “— ${reply_signature}”.` : "Signature: none.";
 
   const exclamationLine = voice.allow_exclamation
     ? rating >= 5
@@ -782,45 +759,34 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
 
 function stripTemplatedOpeners(text: string) {
   let t = text.trim();
-
   const patterns: RegExp[] = [
     /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words))?)[,!.]\s*/i,
     /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
     /^\s*(it\s+(sounds|seems)\s+like)[,!.]?\s*/i,
     /^\s*(we\s+regret(\s+that)?)[,!.]?\s*/i,
   ];
-
-  for (const re of patterns) {
-    t = t.replace(re, "");
-  }
-
+  for (const re of patterns) t = t.replace(re, "");
   return t.trim();
 }
 
 function sanitizeCorporatePhrases(text: string) {
   let t = text;
-
   t = t.replace(/\b(it\s+(sounds|seems)\s+like)\b[, ]*/gi, "");
-
   t = t.replace(/\bwe\s+aim\s+to\b/gi, "we want to");
   t = t.replace(/\bwe\s+aim\s+for\b/gi, "we want");
   t = t.replace(/\bwe\s+strive\s+to\b/gi, "we try to");
   t = t.replace(/\bour\s+goal\s+is\s+to\b/gi, "we want to");
   t = t.replace(/\bwe\s+work\s+hard\s+to\b/gi, "we try to");
-
   t = t.replace(
     /\bwe\s+take\s+(your\s+)?(feedback|concerns|complaint|complaints|comments)\s+(very\s+)?seriously\b[, ]*/gi,
     ""
   );
-
   t = t.replace(/\bwe\s+regret(\s+that)?\b/gi, "sorry");
-
   t = t.replace(/\s+,/g, ",");
   t = t.replace(/\s+\./g, ".");
   t = t.replace(/\s+!/g, "!");
   t = t.replace(/\s+\?/g, "?");
   t = collapseWhitespace(t);
-
   return t.trim();
 }
 
@@ -839,27 +805,18 @@ function reviewerMentionsCapacityExcuse(reviewText: string) {
   );
 }
 
-function removeExcuseSentencesIfInvented(params: {
-  reply: string;
-  rating: number;
-  review_text: string;
-}) {
+function removeExcuseSentencesIfInvented(params: { reply: string; rating: number; review_text: string }) {
   const { reply, rating, review_text } = params;
   const t = (reply ?? "").trim();
   if (!t) return t;
-
   if (rating > 2) return t;
 
-  const allow = reviewerMentionsCapacityExcuse(review_text);
-  if (allow) return t;
+  if (reviewerMentionsCapacityExcuse(review_text)) return t;
 
   const excuseRe = /\b(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped)\b/i;
-
   const parts = splitSentences(t);
   const kept = parts.filter((s) => !excuseRe.test(s));
-  if (kept.length === 0) return t;
-
-  return kept.join(" ").trim();
+  return kept.length === 0 ? t : kept.join(" ").trim();
 }
 
 export async function POST(req: Request) {
@@ -884,10 +841,15 @@ export async function POST(req: Request) {
     const reviewer_language = cleanLanguage((body as any)?.language);
     const rating = parseRating((body as any)?.rating);
 
-    // future-proof identifiers (optional)
+    // Future-proof identifiers (optional)
     const review_id = cleanString((body as any)?.review_id, 80) || null;
     const google_review_id = cleanString((body as any)?.google_review_id, 140) || null;
-    const location_id = cleanString((body as any)?.location_id, 180) || null;
+
+    // ✅ C1: accept google_location_id or location_id
+    const google_location_id =
+      cleanString((body as any)?.google_location_id, 240) ||
+      cleanString((body as any)?.location_id, 240) ||
+      null;
 
     if (!review_text) {
       return NextResponse.json({ ok: false, error: "review_text is required" }, { status: 400 });
@@ -993,23 +955,18 @@ export async function POST(req: Request) {
     const contentRaw = upstreamJson?.choices?.[0]?.message?.content ?? "";
     let content = safeTrimReply(String(contentRaw));
 
-    // Basic cleanup
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
 
-    // Deterministic “no-template” enforcement
     content = stripTemplatedOpeners(content);
     content = sanitizeCorporatePhrases(content);
     content = capitalizeIfNeeded(content);
 
-    // HARD: remove invented excuse sentences for 1–2★ unless reviewer said it
     content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
 
-    // Sentence enforcement
     content = limitSentences(content, sentencePolicyForRating(rating));
 
-    // Exclamation enforcement (also removes Spanish inverted ¡)
     if (!voice.allow_exclamation) {
       content = content.replace(/[!¡]/g, ".");
       content = content.replace(/\.\.+/g, ".").trim();
@@ -1025,7 +982,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Signature enforcement
     content = appendSignatureIfMissing(content, reply_signature);
 
     if (!content) {
@@ -1035,19 +991,13 @@ export async function POST(req: Request) {
       );
     }
 
-    // B1: audit log insert (non-blocking; draft should still return even if logging fails)
+    // ✅ B1/C1: audit log insert (best-effort)
     try {
       const { supabase, organizationId } = await requireOrgContext();
 
       const reviewHash = sha256Hex(review_text);
       const promptFingerprint = sha256Hex(
-        [
-          PROMPT_VERSION,
-          BANNED_LIST_VERSION,
-          model,
-          String(temperature),
-          voiceSampleIds.join(","),
-        ].join("|")
+        [PROMPT_VERSION, BANNED_LIST_VERSION, model, String(temperature), voiceSampleIds.join(",")].join("|")
       );
 
       const auditRow: any = {
@@ -1061,13 +1011,24 @@ export async function POST(req: Request) {
         temperature,
         voice_sample_count: voiceSampleIds.length,
         voice_sample_ids: voiceSampleIds,
+
+        // future-proof identifiers
         review_id: review_id,
         google_review_id: google_review_id,
-        location_id: location_id,
+
+        // ✅ store canonical location column
+        google_location_id: google_location_id,
+        // keep legacy too (if the column exists)
+        location_id: google_location_id,
       };
 
       // If review_id isn't a UUID, keep it null (don't fail insert)
-      if (auditRow.review_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(auditRow.review_id)) {
+      if (
+        auditRow.review_id &&
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          auditRow.review_id
+        )
+      ) {
         auditRow.review_id = null;
       }
 
@@ -1088,6 +1049,7 @@ export async function POST(req: Request) {
           reviewer_language,
           reply_tone: org_reply_tone_raw,
           reply_signature: reply_signature ?? null,
+          google_location_id: google_location_id ?? null,
         },
       },
       { status: 200 }
