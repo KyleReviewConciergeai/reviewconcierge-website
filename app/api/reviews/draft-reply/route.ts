@@ -224,7 +224,6 @@ async function loadVoiceSamplesForOrg(opts?: {
       const normalized = collapseWhitespace(removeQuotations(stripEmojis(text)));
       if (!normalized) continue;
 
-      // keep within total budget
       const nextLen = normalized.length + 10;
       if (total + nextLen > maxTotalChars) break;
 
@@ -501,7 +500,6 @@ function buildPrompt(params: {
 
   const voiceSamplesBlock = buildVoiceSamplesBlock(voice_samples ?? []);
 
-  // Important: repeated, crisp constraints reduce “AI feel”
   return `
 You are writing a public reply to a Google review.
 
@@ -555,10 +553,6 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
   return `${reply.trim()}\n— ${sig}`.trim();
 }
 
-/**
- * Extra post-clean to remove common templated openers if they slip through.
- * Keep this conservative so we don’t accidentally destroy good content.
- */
 function stripTemplatedOpeners(text: string) {
   let t = text.trim();
 
@@ -625,12 +619,17 @@ export async function POST(req: Request) {
     const org_reply_tone_raw = orgSettings.reply_tone || "warm";
     const reply_signature = orgSettings.reply_signature ?? null;
 
-    // NEW: Voice samples
+    // Voice samples (style reference)
     const voiceSamples = await loadVoiceSamplesForOrg({
       maxItems: 7,
       maxCharsEach: 420,
       maxTotalChars: 2400,
     });
+
+    // TEMP DEBUG: quick validation fields
+    const debugVoiceSamplesLoaded = voiceSamples.length;
+    const debugVoiceSamplesChars = voiceSamples.reduce((sum, s) => sum + (s?.length ?? 0), 0);
+    const debugVoiceSamplesInPrompt = voiceSamples.length > 0;
 
     const orgVoice = await loadVoiceProfile();
     const merged = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
@@ -664,7 +663,6 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: rating <= 2 ? 0.15 : 0.25,
-        // Mild repetition control can reduce “templated feel”
         frequency_penalty: 0.2,
         presence_penalty: 0.1,
         messages: [
@@ -705,21 +703,16 @@ export async function POST(req: Request) {
     content = stripEmojis(content);
     content = collapseWhitespace(content);
 
-    // Remove templated opener phrases if model still sneaks them in
     content = stripTemplatedOpeners(content);
 
-    // Sentence enforcement
     content = limitSentences(content, sentencePolicyForRating(rating));
 
-    // Exclamation enforcement (also removes Spanish inverted ¡)
     if (!voice.allow_exclamation) {
       content = content.replace(/[!¡]/g, ".");
       content = content.replace(/\.\.+/g, ".").trim();
     } else {
-      // If allowed, still keep it sane: max 1 exclamation.
       const exCount = (content.match(/[!¡]/g) ?? []).length;
       if (exCount > 1) {
-        // Replace extras with periods, keep first
         let seen = 0;
         content = content.replace(/[!¡]/g, (m) => {
           seen += 1;
@@ -729,7 +722,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Signature enforcement
     content = appendSignatureIfMissing(content, reply_signature);
 
     if (!content) {
@@ -748,7 +740,11 @@ export async function POST(req: Request) {
           reviewer_language,
           reply_tone: org_reply_tone_raw,
           reply_signature: reply_signature ?? null,
-          voice_samples_used: voiceSamples.length,
+
+          // ✅ TEMP DEBUG (remove after confirming)
+          debug_voice_samples_loaded: debugVoiceSamplesLoaded,
+          debug_voice_samples_chars: debugVoiceSamplesChars,
+          debug_voice_samples_in_prompt: debugVoiceSamplesInPrompt,
         },
       },
       { status: 200 }
