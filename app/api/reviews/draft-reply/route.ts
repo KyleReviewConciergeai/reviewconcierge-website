@@ -150,9 +150,9 @@ async function loadOrgReplySettings(): Promise<OrgReplySettings> {
     }
 
     return {
-      owner_language: cleanLanguage(data.owner_language),
-      reply_tone: cleanString(data.reply_tone, 40) || "warm",
-      reply_signature: cleanString(data.reply_signature, 80) || null,
+      owner_language: cleanLanguage((data as any).owner_language),
+      reply_tone: cleanString((data as any).reply_tone, 40) || "warm",
+      reply_signature: cleanString((data as any).reply_signature, 80) || null,
     };
   } catch {
     return { owner_language: "en", reply_tone: "warm", reply_signature: null };
@@ -174,6 +174,67 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
     return (data ?? {}) as VoiceProfile;
   } catch {
     return {};
+  }
+}
+
+/**
+ * NEW: load voice samples (org_voice_samples)
+ * We use these as style reference only (never copy verbatim).
+ */
+type VoiceSampleRow = {
+  id: string;
+  sample_text: string;
+  created_at?: string;
+};
+
+function truncateForPrompt(s: string, maxLen: number) {
+  const t = (s ?? "").trim();
+  if (!t) return "";
+  if (t.length <= maxLen) return t;
+  return t.slice(0, maxLen - 1).trimEnd() + "…";
+}
+
+async function loadVoiceSamplesForOrg(opts?: {
+  maxItems?: number;
+  maxCharsEach?: number;
+  maxTotalChars?: number;
+}): Promise<string[]> {
+  const maxItems = opts?.maxItems ?? 7;
+  const maxCharsEach = opts?.maxCharsEach ?? 420;
+  const maxTotalChars = opts?.maxTotalChars ?? 2400;
+
+  try {
+    const { supabase, organizationId } = await requireOrgContext();
+
+    const { data, error } = await supabase
+      .from("org_voice_samples")
+      .select("id,sample_text,created_at")
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(1, Math.min(maxItems, 12)));
+
+    if (error) return [];
+
+    const rows = (data ?? []) as VoiceSampleRow[];
+    const cleaned: string[] = [];
+
+    let total = 0;
+    for (const r of rows) {
+      const text = truncateForPrompt(cleanString(r.sample_text, 5000), maxCharsEach);
+      const normalized = collapseWhitespace(removeQuotations(stripEmojis(text)));
+      if (!normalized) continue;
+
+      // keep within total budget
+      const nextLen = normalized.length + 10;
+      if (total + nextLen > maxTotalChars) break;
+
+      cleaned.push(normalized);
+      total += nextLen;
+    }
+
+    return cleaned;
+  } catch {
+    return [];
   }
 }
 
@@ -381,6 +442,19 @@ function buildAvoidList(voice: ReturnType<typeof normalizeVoice>) {
   return list.join(" | ");
 }
 
+function buildVoiceSamplesBlock(samples: string[]) {
+  if (!samples || samples.length === 0) return "";
+
+  // Important: “style only” instruction to avoid verbatim copying
+  const lines = samples.map((s, i) => `SAMPLE ${i + 1}: ${s}`);
+  return `
+VOICE SAMPLES (STYLE REFERENCE ONLY):
+- These are examples of how the owner writes. Use them to match cadence, word choice, and vibe.
+- Do NOT copy any sentence verbatim. Do NOT reuse unique phrases. Use as inspiration only.
+${lines.map((l) => `- ${l}`).join("\n")}
+`.trim();
+}
+
 function buildPrompt(params: {
   business_name: string;
   rating: number;
@@ -391,6 +465,7 @@ function buildPrompt(params: {
   reply_signature: string | null;
   client_tone?: VoiceProfile["tone"] | null;
   client_rules?: string[];
+  voice_samples?: string[];
 }) {
   const {
     business_name,
@@ -402,6 +477,7 @@ function buildPrompt(params: {
     reply_signature,
     client_tone,
     client_rules,
+    voice_samples,
   } = params;
 
   const maxSentences = sentencePolicyForRating(rating);
@@ -422,6 +498,8 @@ function buildPrompt(params: {
     client_rules && client_rules.length
       ? ["USER RULES (highest priority):", ...client_rules.map((r) => `- ${r}`)].join("\n")
       : "";
+
+  const voiceSamplesBlock = buildVoiceSamplesBlock(voice_samples ?? []);
 
   // Important: repeated, crisp constraints reduce “AI feel”
   return `
@@ -445,6 +523,8 @@ ${mustNot.map((x) => `- ${x}`).join("\n")}
 
 BANNED PHRASES / AI-TELLS (do not use any of these, even partially):
 ${avoidList ? `- ${avoidList}` : "- (none)"}
+
+${voiceSamplesBlock ? `${voiceSamplesBlock}\n` : ""}
 
 ${userRules ? `${userRules}\n` : ""}
 
@@ -513,10 +593,10 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
 
-    const review_text = cleanString(body?.review_text, 5000);
-    const business_name = cleanString(body?.business_name, 200);
-    const reviewer_language = cleanLanguage(body?.language); // kept for meta
-    const rating = parseRating(body?.rating);
+    const review_text = cleanString((body as any)?.review_text, 5000);
+    const business_name = cleanString((body as any)?.business_name, 200);
+    const reviewer_language = cleanLanguage((body as any)?.language); // kept for meta
+    const rating = parseRating((body as any)?.rating);
 
     if (!review_text) {
       return NextResponse.json({ ok: false, error: "review_text is required" }, { status: 400 });
@@ -528,9 +608,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "rating must be 1–5" }, { status: 400 });
     }
 
-    const clientToneRaw = parseClientTone(body?.tone);
+    const clientToneRaw = parseClientTone((body as any)?.tone);
     const clientTone = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
-    const clientRules = parseClientRules(body?.rules);
+    const clientRules = parseClientRules((body as any)?.rules);
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -545,14 +625,21 @@ export async function POST(req: Request) {
     const org_reply_tone_raw = orgSettings.reply_tone || "warm";
     const reply_signature = orgSettings.reply_signature ?? null;
 
+    // NEW: Voice samples
+    const voiceSamples = await loadVoiceSamplesForOrg({
+      maxItems: 7,
+      maxCharsEach: 420,
+      maxTotalChars: 2400,
+    });
+
     const orgVoice = await loadVoiceProfile();
-    const merged = { ...orgVoice, ...(body?.voice ?? {}) };
+    const merged = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
 
     const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
 
     const voice = normalizeVoice({
       ...merged,
-      tone: merged?.tone ? merged.tone : toneFromOrg,
+      tone: (merged as any)?.tone ? (merged as any).tone : toneFromOrg,
     });
 
     const prompt = buildPrompt({
@@ -565,6 +652,7 @@ export async function POST(req: Request) {
       reply_signature,
       client_tone: clientTone,
       client_rules: clientRules,
+      voice_samples: voiceSamples,
     });
 
     const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -660,6 +748,7 @@ export async function POST(req: Request) {
           reviewer_language,
           reply_tone: org_reply_tone_raw,
           reply_signature: reply_signature ?? null,
+          voice_samples_used: voiceSamples.length,
         },
       },
       { status: 200 }
