@@ -44,8 +44,8 @@ export async function GET(req: Request) {
     const { data: reviews, error: revErr } = await supabase
       .from("reviews")
       .select(
-        "id, source, google_review_id, rating, author_name, author_url, review_text, review_date, detected_language, created_at"
-      )
+  "id, business_id, source, google_review_id, rating, author_name, author_url, review_text, review_date, detected_language, created_at"
+)
       .eq("organization_id", organizationId)
       .eq("business_id", biz.id)
       .order("review_date", { ascending: false, nullsFirst: false })

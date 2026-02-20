@@ -8,6 +8,7 @@ import { startCheckout } from "@/lib/startCheckout";
 
 type Review = {
   id: string;
+  business_id: string;
   source: string;
   google_review_id: string;
   rating: number | null;
@@ -744,6 +745,7 @@ export default function DashboardPage() {
       new CustomEvent("rc:select-review", {
         detail: {
           reviewId: review.id,
+          businessId: review.business_id,
           text,
           rating: review.rating ?? 0,
           authorName: review.author_name ?? null,
