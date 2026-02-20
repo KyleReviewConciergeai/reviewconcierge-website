@@ -1,3 +1,4 @@
+// app/dashboard/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -89,12 +90,6 @@ function safeJsonParse<T>(value: string | null): T | null {
 export default function DashboardPage() {
   const sb = supabaseBrowser();
 
-  /**
-   * Pre-Mendoza doctrine alignment:
-   * - This space is for reading guest feedback and drafting replies in the owner’s voice.
-   * - RC drafts. The owner edits and posts.
-   * - No automation language. No “Phase 2” promises. No “workflow” framing.
-   */
   const COPY = {
     title: "Your reviews",
     subtitle:
@@ -102,7 +97,6 @@ export default function DashboardPage() {
     reloadBtn: "Reload",
     reloadBtnLoading: "Reloading…",
 
-    // ✅ Make “sample” explicit (Places limitation)
     syncBtn: "Refresh sample (Google Places)",
     syncBtnLoading: "Refreshing…",
     syncTooltipDisabled: "Connect your Google business first",
@@ -151,7 +145,6 @@ export default function DashboardPage() {
     whyFooter:
       "Full “latest reviews inbox” syncing is enabled when the Google Business Profile (GBP) API is approved.",
 
-    // Per-review actions
     actionDraftReply: "Draft reply",
     actionMarkHandled: "Mark handled",
     actionMarkNeeds: "Mark needs reply",
@@ -161,29 +154,22 @@ export default function DashboardPage() {
       "Selected review sent to the draft area above. You can tweak the reply before you post anywhere.",
   };
 
-  // API data (reviews)
   const [data, setData] = useState<ReviewsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // UI state
   const [actionLoading, setActionLoading] = useState<
     "reload" | "google" | "logout" | "connect" | null
   >(null);
 
-  // "Last fetched from Google" (only set on Google fetch success)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
-
   const [toast, setToast] = useState<Toast | null>(null);
 
-  // Current business (org-scoped)
   const [business, setBusiness] = useState<CurrentBusiness | null>(null);
   const [businessLoaded, setBusinessLoaded] = useState(false);
 
-  // subscription gating UI
   const [upgradeRequired, setUpgradeRequired] = useState(false);
   const [subscriptionActive, setSubscriptionActive] = useState<boolean | null>(null);
 
-  // Place ID onboarding
   const [placeIdInput, setPlaceIdInput] = useState("");
   const [placeVerify, setPlaceVerify] = useState<{
     name?: string;
@@ -191,51 +177,36 @@ export default function DashboardPage() {
     user_ratings_total?: number;
   } | null>(null);
 
-  // explicit onboarding UI states
   const [placeIdStatus, setPlaceIdStatus] = useState<PlaceIdStatus>("idle");
   const [placeIdError, setPlaceIdError] = useState<string | null>(null);
 
-  // iPhone-friendly search flow for Place ID
   const [showPlaceSearch, setShowPlaceSearch] = useState(false);
   const [placeSearchQuery, setPlaceSearchQuery] = useState("");
   const [placeSearchLoading, setPlaceSearchLoading] = useState(false);
   const [placeSearchResults, setPlaceSearchResults] = useState<PlaceCandidate[]>([]);
   const [placeSearchError, setPlaceSearchError] = useState<string | null>(null);
 
-  // ✅ allow switching Place ID even when already connected
   const [showChangePlaceId, setShowChangePlaceId] = useState(false);
 
-  // Header
   const [userEmail, setUserEmail] = useState<string>("");
 
-  // Filters
   const [ratingFilter, setRatingFilter] = useState<number | "all">("all");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ReviewStatus | "all">("all");
 
-  // Local per-review state (status only)
   const [reviewLocal, setReviewLocal] = useState<Record<string, ReviewLocalState>>({});
   const [whyOpen, setWhyOpen] = useState(false);
 
-  // Selected review (for “Draft reply” button)
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
 
   const storageKey = useMemo(() => {
-    // business scope helps prevent cross-business collisions on same browser
     return `rc_review_state:${business?.id ?? "unknown"}`;
   }, [business?.id]);
 
-  // Derived flags
   const needsOnboarding = businessLoaded && (!business || !business.google_place_id);
   const hasGoogleConnected = !!business?.google_place_id;
-
-  // ✅ show connect UI if onboarding OR user toggled “Change Place ID”
   const showConnectCard = needsOnboarding || showChangePlaceId;
 
-  // single source of truth:
-  // - subscriptionActive === false => show subscribe
-  // - upgradeRequired === true => also show subscribe (fallback)
-  // - null => unknown yet (first load), do not show
   const showSubscribe = subscriptionActive === false || upgradeRequired === true;
 
   function showToast(t: Toast, ms = 3000) {
@@ -243,7 +214,6 @@ export default function DashboardPage() {
     window.setTimeout(() => setToast(null), ms);
   }
 
-  // Load local state once business is known (or changes)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -254,7 +224,6 @@ export default function DashboardPage() {
     }
   }, [storageKey]);
 
-  // Persist local state
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(reviewLocal));
@@ -281,12 +250,10 @@ export default function DashboardPage() {
   }
 
   async function redirectToCheckout() {
-    // keep UI consistent immediately
     setUpgradeRequired(true);
     setSubscriptionActive(false);
 
     try {
-      // After Stripe, route them to connect Google (not back to dashboard)
       await startCheckout("/connect/google");
     } catch (e: any) {
       console.error("startCheckout failed:", e);
@@ -300,11 +267,6 @@ export default function DashboardPage() {
     }
   }
 
-  /**
-   * After Stripe success redirect back to /dashboard?session_id=...
-   * - sync the Stripe session server-side
-   * - then clean the URL so refresh doesn't re-sync
-   */
   async function syncStripeIfNeeded() {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get("session_id");
@@ -331,7 +293,6 @@ export default function DashboardPage() {
     const res = await fetch("/api/reviews", { cache: "no-store" });
     const json = (await res.json()) as ReviewsApiResponse;
 
-    // If backend explicitly says gated, honor it.
     if (res.status === 402 || json?.upgradeRequired) {
       setUpgradeRequired(true);
       setSubscriptionActive(false);
@@ -372,7 +333,6 @@ export default function DashboardPage() {
       const res = await fetch("/api/subscription/status", { cache: "no-store" });
       const json = await res.json();
 
-      // expects: { ok: true, isActive: boolean, status: string|null }
       if (res.ok && json?.ok) {
         const isActive = !!json?.isActive;
         setSubscriptionActive(isActive);
@@ -380,7 +340,6 @@ export default function DashboardPage() {
         return;
       }
 
-      // If endpoint fails, don't hard-block UI
       setSubscriptionActive(null);
       setUpgradeRequired(false);
     } catch {
@@ -410,7 +369,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // If we already know they're locked, don't bother calling Google sync.
     if (subscriptionActive === false || upgradeRequired === true) {
       await redirectToCheckout();
       return;
@@ -439,8 +397,7 @@ export default function DashboardPage() {
       const fetched = Number(googleJson?.fetched ?? 0);
       const inserted = Number(googleJson?.inserted ?? 0);
       const updated = Number(googleJson?.updated ?? 0);
-      const syncedAt =
-        (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
+      const syncedAt = (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
 
       const json = await loadReviews();
       setData(json);
@@ -505,13 +462,11 @@ export default function DashboardPage() {
         2800
       );
 
-      // clear search UI after success (nice on mobile)
       setShowPlaceSearch(false);
       setPlaceSearchQuery("");
       setPlaceSearchResults([]);
       setPlaceSearchError(null);
 
-      // ✅ auto-close “Change Place ID” mode after a successful connect
       setShowChangePlaceId(false);
 
       const r = await loadReviews();
@@ -526,7 +481,6 @@ export default function DashboardPage() {
     }
   }
 
-  // server-side Places search (iPhone-friendly)
   async function searchPlaces() {
     const q = placeSearchQuery.trim();
     if (!q || actionLoading) return;
@@ -610,7 +564,6 @@ export default function DashboardPage() {
 
   const reviews = data?.reviews ?? [];
 
-  // Ensure we have a local state entry for reviews we see (non-destructive)
   useEffect(() => {
     if (!reviews?.length) return;
 
@@ -619,10 +572,7 @@ export default function DashboardPage() {
       const next = { ...prev };
       for (const r of reviews) {
         if (!next[r.id]) {
-          next[r.id] = {
-            status: "needs_reply",
-            updatedAt: new Date().toISOString(),
-          };
+          next[r.id] = { status: "needs_reply", updatedAt: new Date().toISOString() };
           changed = true;
         }
       }
@@ -707,7 +657,6 @@ export default function DashboardPage() {
     try {
       await navigator.clipboard.writeText(text);
 
-      // Existing event (kept)
       window.dispatchEvent(
         new CustomEvent("rc:copy-review", {
           detail: {
@@ -737,17 +686,16 @@ export default function DashboardPage() {
 
     setSelectedReviewId(review.id);
 
-    // Mark as "drafted" when user begins drafting (saved locally)
     setLocalState(review.id, { status: "drafted" });
 
-    // ✅ DraftReplyPanel expects: { reviewId, text, rating, authorName, createdAt, language, source }
+    // ✅ Payload shape matches DraftReplyPanel (new shape)
     window.dispatchEvent(
       new CustomEvent("rc:select-review", {
         detail: {
           reviewId: review.id,
           businessId: review.business_id,
           text,
-          rating: review.rating ?? 0,
+          rating: typeof review.rating === "number" ? review.rating : null,
           authorName: review.author_name ?? null,
           createdAt: review.review_date ?? review.created_at ?? null,
           language: review.detected_language ?? null,
@@ -756,11 +704,10 @@ export default function DashboardPage() {
       })
     );
 
-    // Also copy for convenience (fastest path)
+    // Optional convenience
     copyReviewToClipboard(review).catch(() => null);
     showToast({ message: COPY.selectHelp, type: "success" }, 3000);
 
-    // Scroll to drafting panel smoothly (best-effort)
     window.setTimeout(() => {
       const el = document.getElementById("rc-draft-panel-anchor");
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -800,7 +747,6 @@ export default function DashboardPage() {
     );
   }
 
-  // Error view
   if (!data?.ok) {
     return (
       <>
@@ -1062,9 +1008,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
-              {COPY.connectedHelp}
-            </div>
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>{COPY.connectedHelp}</div>
 
             <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
               Nothing is posted automatically.
@@ -1078,14 +1022,12 @@ export default function DashboardPage() {
               </div>
             ) : subscriptionActive ? (
               <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                Google sync:{" "}
-                <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
+                Google sync: <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
               </div>
             ) : (
               <>
                 <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                  Google sync:{" "}
-                  <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
+                  Google sync: <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
                 </div>
                 <div
                   style={{
@@ -1109,10 +1051,9 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Anchor so Change Place ID can scroll to connect UI */}
       <div id="rc-connect-google-anchor" style={{ position: "relative", top: -10 }} />
 
-      {/* Connect/Change card (Onboarding OR Change Place ID) */}
+      {/* Connect/Change card */}
       {showConnectCard && (
         <div
           style={{
@@ -1125,15 +1066,12 @@ export default function DashboardPage() {
             marginBottom: 16,
           }}
         >
-          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-            {COPY.connectHeader}
-          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{COPY.connectHeader}</div>
 
           <div style={{ opacity: 0.85, fontSize: 13, marginBottom: 12, lineHeight: 1.45 }}>
             {needsOnboarding ? COPY.connectBody : COPY.connectBodyChange}
           </div>
 
-          {/* iPhone-friendly business search */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <button
               onClick={async () => {
@@ -1273,7 +1211,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Place ID input + connect */}
           <div
             style={{
               display: "flex",
@@ -1401,10 +1338,8 @@ export default function DashboardPage() {
         }
       `}</style>
 
-      {/* Anchor so “Draft reply” can scroll here */}
       <div id="rc-draft-panel-anchor" style={{ position: "relative", top: -10 }} />
 
-      {/* Drafting panel (voice-first core) */}
       <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
 
       {/* Filters */}
@@ -1584,7 +1519,6 @@ export default function DashboardPage() {
                       </span>
                     )}
 
-                    {/* Status pill */}
                     <span
                       style={{
                         fontSize: 11,
@@ -1663,14 +1597,9 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.55, opacity: 0.95 }}>
-                  {r.review_text ? (
-                    r.review_text
-                  ) : (
-                    <span style={{ opacity: 0.6 }}>No review text.</span>
-                  )}
+                  {r.review_text ? r.review_text : <span style={{ opacity: 0.6 }}>No review text.</span>}
                 </div>
 
-                {/* Minimal per-review status actions (no inline draft editor) */}
                 <div
                   style={{
                     marginTop: 12,
@@ -1704,10 +1633,7 @@ export default function DashboardPage() {
                       <button
                         onClick={() => {
                           setLocalState(r.id, { status: "needs_reply" });
-                          showToast(
-                            { message: "Moved back to needs reply.", type: "success" },
-                            2000
-                          );
+                          showToast({ message: "Moved back to needs reply.", type: "success" }, 2000);
                         }}
                         style={{
                           ...ghostButtonStyle,
@@ -1725,10 +1651,7 @@ export default function DashboardPage() {
                   <div style={{ fontSize: 11, opacity: 0.65 }}>Saved on this device</div>
                 </div>
 
-                {/* keep source metadata quiet */}
-                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
-                  Source: {r.source}
-                </div>
+                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>Source: {r.source}</div>
               </div>
             );
           })}
