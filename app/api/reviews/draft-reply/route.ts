@@ -44,16 +44,20 @@ function collapseWhitespace(text: string) {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function splitSentences(text: string) {
+  const t = (text ?? "").trim();
+  if (!t) return [];
+  return t
+    .split(/(?<=[.!?])\s+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
 function limitSentences(text: string, maxSentences: number) {
   const t = text.trim();
   if (!t) return t;
 
-  // Split on sentence end punctuation; works reasonably across Latin languages
-  const parts = t
-    .split(/(?<=[.!?])\s+/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-
+  const parts = splitSentences(t);
   if (parts.length <= maxSentences) return t;
   return parts.slice(0, maxSentences).join(" ");
 }
@@ -136,6 +140,25 @@ const DEFAULT_VOICE = {
 
     // “we regret” is awkward/template-y; ban it
     "we regret",
+
+    // Excuse-y / invented context (ban common patterns, not single words)
+    "we were busy",
+    "we're busy",
+    "we are busy",
+    "our team was busy",
+    "it was a busy night",
+    "it was a busy day",
+    "we were overwhelmed",
+    "we're overwhelmed",
+    "we are overwhelmed",
+    "our team was overwhelmed",
+    "we were slammed",
+    "we were swamped",
+    "we were short-staffed",
+    "we were short staffed",
+    "we were understaffed",
+    "short-staffed",
+    "understaffed",
   ],
   allow_exclamation: false,
 };
@@ -303,6 +326,12 @@ function sentencePolicyForRating(rating: number) {
   return 3;
 }
 
+/**
+ * Evidence-informed guidance:
+ * - 1–2★: empathy up front is OK/effective, but NEVER invent "why" it happened.
+ * - 3★: balanced, invite details
+ * - 4–5★: appreciative, short, avoid over-apologizing
+ */
 function mustDoForRating(rating: number) {
   const base = [
     "Write 2–4 short sentences max (follow sentence limit below).",
@@ -333,8 +362,9 @@ function mustDoForRating(rating: number) {
   if (rating === 3) {
     return [
       ...base,
-      "Reflect the mixed experience plainly (not PR language).",
-      "Acknowledge the miss without over-apologizing or promising fixes.",
+      "Thank them plainly for the honest review (no corporate phrasing).",
+      "Reflect the mixed experience in a solution-oriented way.",
+      "Invite one detail if helpful (short).",
     ];
   }
 
@@ -379,6 +409,9 @@ function mustNotForRating(rating: number) {
       "Do NOT be playful or joking.",
       "Do NOT argue with the reviewer.",
       "Do NOT blame the customer.",
+      // Critical: stop invented excuses
+      "Do NOT explain the cause (busy/overwhelmed/short-staffed/etc.) unless the reviewer explicitly mentioned it.",
+      "Do NOT justify or excuse the issue with operational context.",
     ];
   }
 
@@ -448,7 +481,7 @@ function styleLines(params: {
 
 function buildAvoidList(voice: ReturnType<typeof normalizeVoice>) {
   const avoid = Array.isArray(voice.things_to_avoid) ? voice.things_to_avoid : [];
-  const list = avoid.map((s) => cleanString(s, 80)).filter(Boolean).slice(0, 40);
+  const list = avoid.map((s) => cleanString(s, 80)).filter(Boolean).slice(0, 60);
   if (!list.length) return "";
   return list.join(" | ");
 }
@@ -510,6 +543,17 @@ function buildPrompt(params: {
 
   const voiceSamplesBlock = buildVoiceSamplesBlock(voice_samples ?? []);
 
+  // Extra hard rule for low ratings: apology OK, but NO invented reasons
+  const lowStarExtra =
+    rating <= 2
+      ? [
+          "LOW-STAR RULE (critical):",
+          "- You MAY apologize up front.",
+          "- You MUST NOT explain 'why it happened' (busy/overwhelmed/short-staffed/etc.) unless the reviewer explicitly said that.",
+          "- Never justify with operational constraints.",
+        ].join("\n")
+      : "";
+
   return `
 You are writing a public reply to a Google review.
 
@@ -522,6 +566,8 @@ HARD CONSTRAINTS (follow exactly):
 - No quotes from the review
 - Do not invent details
 - Output ONLY the reply text (no labels, no bullet points)
+
+${lowStarExtra ? `${lowStarExtra}\n` : ""}
 
 MUST DO:
 ${mustDo.map((x) => `- ${x}`).join("\n")}
@@ -638,6 +684,45 @@ function capitalizeIfNeeded(text: string) {
   const first = t.charAt(0);
   if (first >= "a" && first <= "z") return first.toUpperCase() + t.slice(1);
   return t;
+}
+
+/**
+ * Remove “excuse” / invented operational context for low-star replies,
+ * UNLESS the reviewer explicitly mentioned it.
+ */
+function reviewerMentionsCapacityExcuse(reviewText: string) {
+  const r = (reviewText ?? "").toLowerCase();
+  // Only allow if reviewer explicitly mentions these concepts.
+  return /(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped|packed|crowded)/i.test(
+    r
+  );
+}
+
+function removeExcuseSentencesIfInvented(params: {
+  reply: string;
+  rating: number;
+  review_text: string;
+}) {
+  const { reply, rating, review_text } = params;
+  const t = (reply ?? "").trim();
+  if (!t) return t;
+
+  if (rating > 2) return t; // we only enforce this hard on 1–2★
+
+  const allow = reviewerMentionsCapacityExcuse(review_text);
+  if (allow) return t;
+
+  const excuseRe = /\b(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped)\b/i;
+
+  const parts = splitSentences(t);
+
+  // Filter out any sentence that contains excuse language.
+  const kept = parts.filter((s) => !excuseRe.test(s));
+
+  // If we removed everything (unlikely), fall back to original.
+  if (kept.length === 0) return t;
+
+  return kept.join(" ").trim();
 }
 
 export async function POST(req: Request) {
@@ -772,6 +857,9 @@ export async function POST(req: Request) {
     content = stripTemplatedOpeners(content);
     content = sanitizeCorporatePhrases(content);
     content = capitalizeIfNeeded(content);
+
+    // HARD: remove invented excuse sentences for 1–2★ unless reviewer said it
+    content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
 
     // Sentence enforcement
     content = limitSentences(content, sentencePolicyForRating(rating));
