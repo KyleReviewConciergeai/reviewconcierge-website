@@ -6,14 +6,30 @@ type VoiceSample = {
   id: string;
   sample_text: string;
   created_at?: string;
+  updated_at?: string;
 };
 
 type ApiResp =
   | { ok: true; samples: VoiceSample[] }
   | { ok: false; error: string };
 
+type ApiSingleResp =
+  | { ok: true; sample: VoiceSample }
+  | { ok: false; error: string };
+
 const MIN_CHARS = 40;
 const MAX_CHARS = 1200;
+
+// Keep these “human” guidance phrases out of voice samples (helps later A4 scoring too)
+const SAMPLE_BAD_PATTERNS: Array<{ label: string; re: RegExp }> = [
+  { label: "Too corporate/templated", re: /\bwe (?:strive|aim|endeavor)\b/i },
+  { label: "Too corporate/templated", re: /\bwe take (?:your )?feedback seriously\b/i },
+  { label: "Too corporate/templated", re: /\bthank you for (?:your )?feedback\b/i },
+  { label: "Too corporate/templated", re: /\bwe regret\b/i },
+  { label: "AI-y/robotic", re: /\bas an ai\b/i },
+  { label: "Sales/marketing", re: /\b(check out|visit our|follow us|book now|special offer)\b/i },
+  { label: "Emojis", re: /[\u{1F300}-\u{1FAFF}]/u },
+];
 
 function clampText(raw: string) {
   const t = (raw ?? "").replace(/\r\n/g, "\n"); // normalize newlines
@@ -21,25 +37,55 @@ function clampText(raw: string) {
   return t.slice(0, MAX_CHARS);
 }
 
+function validateSampleText(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: false, msg: "" };
+  if (trimmed.length < MIN_CHARS) {
+    return { ok: false, msg: `Too short — aim for at least ${MIN_CHARS} characters.` };
+  }
+  if (trimmed.length > MAX_CHARS) {
+    return { ok: false, msg: `Too long — keep it under ${MAX_CHARS} characters.` };
+  }
+  return { ok: true, msg: "" };
+}
+
+function analyzeSample(text: string) {
+  const issues: string[] = [];
+  for (const p of SAMPLE_BAD_PATTERNS) {
+    if (p.re.test(text)) issues.push(p.label);
+  }
+  // de-dupe labels
+  return Array.from(new Set(issues));
+}
+
 export default function VoiceSamplesCard() {
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
   const [samples, setSamples] = useState<VoiceSample[]>([]);
   const [newSample, setNewSample] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const trimmed = useMemo(() => newSample.trim(), [newSample]);
-  const charCount = useMemo(() => newSample.length, [newSample]);
+  // Create state
+  const [creating, setCreating] = useState(false);
 
-  const validation = useMemo(() => {
-    if (!trimmed) return { ok: false, msg: "" };
-    if (trimmed.length < MIN_CHARS)
-      return { ok: false, msg: `Too short — aim for at least ${MIN_CHARS} characters.` };
-    if (trimmed.length > MAX_CHARS)
-      return { ok: false, msg: `Too long — keep it under ${MAX_CHARS} characters.` };
-    return { ok: true, msg: "" };
-  }, [trimmed]);
+  // Inline edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  // Delete confirm state
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const trimmedNew = useMemo(() => newSample.trim(), [newSample]);
+  const newCharCount = useMemo(() => newSample.length, [newSample]);
+  const newValidation = useMemo(() => validateSampleText(newSample), [newSample]);
+  const newIssues = useMemo(() => (trimmedNew ? analyzeSample(trimmedNew) : []), [trimmedNew]);
+
+  const editTrimmed = useMemo(() => editText.trim(), [editText]);
+  const editCharCount = useMemo(() => editText.length, [editText]);
+  const editValidation = useMemo(() => validateSampleText(editText), [editText]);
+  const editIssues = useMemo(() => (editTrimmed ? analyzeSample(editTrimmed) : []), [editTrimmed]);
 
   async function loadSamples() {
     setLoading(true);
@@ -65,11 +111,13 @@ export default function VoiceSamplesCard() {
   }
 
   async function addSample() {
-    const text = trimmed;
-    if (!text || saving) return;
-    if (text.length < MIN_CHARS || text.length > MAX_CHARS) return;
+    const text = trimmedNew;
+    if (!text || creating) return;
 
-    setSaving(true);
+    const v = validateSampleText(text);
+    if (!v.ok) return;
+
+    setCreating(true);
     setError(null);
 
     try {
@@ -91,20 +139,87 @@ export default function VoiceSamplesCard() {
     } catch (e: any) {
       setError(e?.message ?? "Couldn’t add sample.");
     } finally {
-      setSaving(false);
+      setCreating(false);
     }
   }
 
-  async function deleteSample(id: string) {
-    if (!id) return;
+  function beginEdit(s: VoiceSample) {
+    setError(null);
+    setConfirmDeleteId(null);
+    setEditingId(s.id);
+    setEditText(s.sample_text ?? "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditText("");
+    setSavingId(null);
+  }
+
+  async function saveEdit(id: string) {
+    if (!id || savingId) return;
+
+    const text = editTrimmed;
+    const v = validateSampleText(text);
+    if (!v.ok) return;
+
+    setSavingId(id);
     setError(null);
 
     // optimistic UI
     const prev = samples;
-    setSamples((s) => s.filter((x) => x.id !== id));
+    setSamples((xs) => xs.map((x) => (x.id === id ? { ...x, sample_text: text } : x)));
 
     try {
-      const res = await fetch(`/api/org/voice-samples?id=${encodeURIComponent(id)}`, {
+      // preferred REST endpoint
+      const res = await fetch(`/api/org/voice-samples/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sample_text: text }),
+      });
+
+      const json = (await res.json()) as ApiSingleResp;
+
+      if (!res.ok || !json.ok) {
+        setSamples(prev);
+        setError((json as any)?.error ?? "Couldn’t update sample.");
+        return;
+      }
+
+      // keep server-truth (updated_at, any normalization)
+      setSamples((xs) => xs.map((x) => (x.id === id ? json.sample : x)));
+      cancelEdit();
+    } catch (e: any) {
+      setSamples(prev);
+      setError(e?.message ?? "Couldn’t update sample.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  function askDelete(id: string) {
+    setError(null);
+    // if currently editing this one, exit edit mode to avoid confusion
+    if (editingId === id) cancelEdit();
+    setConfirmDeleteId(id);
+  }
+
+  function cancelDelete() {
+    setConfirmDeleteId(null);
+    setDeletingId(null);
+  }
+
+  async function confirmDelete(id: string) {
+    if (!id || deletingId) return;
+    setDeletingId(id);
+    setError(null);
+
+    // optimistic UI
+    const prev = samples;
+    setSamples((xs) => xs.filter((x) => x.id !== id));
+
+    try {
+      const res = await fetch(`/api/org/voice-samples/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
 
@@ -112,10 +227,15 @@ export default function VoiceSamplesCard() {
       if (!res.ok || !json?.ok) {
         setSamples(prev);
         setError(json?.error ?? "Couldn’t delete sample.");
+        return;
       }
+
+      cancelDelete();
     } catch (e: any) {
       setSamples(prev);
       setError(e?.message ?? "Couldn’t delete sample.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -143,20 +263,20 @@ export default function VoiceSamplesCard() {
       </div>
 
       <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+        {/* Create new */}
         <textarea
           value={newSample}
           onChange={(e) => setNewSample(clampText(e.target.value))}
           placeholder={`Example:\n“Thanks for coming in — really appreciate you taking the time to leave a note. Hope to see you again soon.”`}
           style={textareaStyle}
+          disabled={creating}
         />
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={{ fontSize: 12, opacity: 0.7 }}>
-            {charCount}/{MAX_CHARS} characters{" "}
-            {trimmed && trimmed.length < MIN_CHARS ? (
-              <span style={{ color: "#fbbf24", marginLeft: 8 }}>
-                (min {MIN_CHARS})
-              </span>
+            {newCharCount}/{MAX_CHARS} characters{" "}
+            {trimmedNew && trimmedNew.length < MIN_CHARS ? (
+              <span style={{ color: "#fbbf24", marginLeft: 8 }}>(min {MIN_CHARS})</span>
             ) : null}
           </div>
 
@@ -165,29 +285,36 @@ export default function VoiceSamplesCard() {
           </div>
         </div>
 
-        {validation.msg ? (
-          <div style={{ fontSize: 13, color: "#fbbf24" }}>{validation.msg}</div>
+        {newValidation.msg ? (
+          <div style={{ fontSize: 13, color: "#fbbf24" }}>{newValidation.msg}</div>
+        ) : null}
+
+        {!newValidation.msg && newIssues.length > 0 ? (
+          <div style={{ fontSize: 13, color: "#fbbf24" }}>
+            Quick tweak: consider removing <span style={{ fontWeight: 700 }}>{newIssues.join(", ")}</span>.
+          </div>
         ) : null}
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button
             onClick={addSample}
-            disabled={saving || !validation.ok}
+            disabled={creating || !newValidation.ok}
             style={{
               ...buttonStyle,
-              opacity: saving || !validation.ok ? 0.6 : 1,
+              opacity: creating || !newValidation.ok ? 0.6 : 1,
             }}
           >
-            {saving ? "Adding…" : "Add sample"}
+            {creating ? "Adding…" : "Add sample"}
           </button>
 
-          <button onClick={loadSamples} disabled={saving} style={ghostButtonStyle}>
+          <button onClick={loadSamples} disabled={creating || !!savingId || !!deletingId} style={ghostButtonStyle}>
             Refresh
           </button>
         </div>
 
         {error && <div style={{ fontSize: 13, color: "#f87171", marginTop: 2 }}>{error}</div>}
 
+        {/* List */}
         <div
           style={{
             borderTop: "1px solid rgba(148,163,184,0.18)",
@@ -200,68 +327,176 @@ export default function VoiceSamplesCard() {
           {loading ? (
             <div style={{ fontSize: 13, opacity: 0.75 }}>Loading…</div>
           ) : samples.length === 0 ? (
-            <div style={{ fontSize: 13, opacity: 0.7 }}>
-              No samples yet. Add one above.
-            </div>
+            <div style={{ fontSize: 13, opacity: 0.7 }}>No samples yet. Add one above.</div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {samples.map((s) => (
-                <div
-                  key={s.id}
-                  style={{
-                    border: "1px solid rgba(148,163,184,0.20)",
-                    borderRadius: 12,
-                    padding: 12,
-                    background: "rgba(2,6,23,0.25)",
-                  }}
-                >
+              {samples.map((s) => {
+                const isEditing = editingId === s.id;
+                const isSavingThis = savingId === s.id;
+                const isConfirmDelete = confirmDeleteId === s.id;
+                const isDeletingThis = deletingId === s.id;
+
+                return (
                   <div
+                    key={s.id}
                     style={{
-                      fontSize: 13,
-                      lineHeight: 1.55,
-                      opacity: 0.95,
-                      whiteSpace: "pre-wrap",
+                      border: "1px solid rgba(148,163,184,0.20)",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "rgba(2,6,23,0.25)",
                     }}
                   >
-                    {s.sample_text}
-                  </div>
+                    {!isEditing ? (
+                      <div
+                        style={{
+                          fontSize: 13,
+                          lineHeight: 1.55,
+                          opacity: 0.95,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {s.sample_text}
+                      </div>
+                    ) : (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <textarea
+                          value={editText}
+                          onChange={(e) => setEditText(clampText(e.target.value))}
+                          style={{ ...textareaStyle, minHeight: 120 }}
+                          disabled={isSavingThis || isDeletingThis}
+                        />
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ fontSize: 12, opacity: 0.7 }}>
+                            {editCharCount}/{MAX_CHARS} characters
+                          </div>
+                          <div style={{ fontSize: 12, opacity: 0.65 }}>
+                            Keep it real: 1–3 sentences, detail, simple close.
+                          </div>
+                        </div>
 
-                  <div
-                    style={{
-                      marginTop: 10,
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div style={{ fontSize: 11, opacity: 0.55 }}>
-                      {s.created_at ? new Date(s.created_at).toLocaleString() : ""}
-                    </div>
+                        {editValidation.msg ? (
+                          <div style={{ fontSize: 13, color: "#fbbf24" }}>{editValidation.msg}</div>
+                        ) : editIssues.length > 0 ? (
+                          <div style={{ fontSize: 13, color: "#fbbf24" }}>
+                            Quick tweak: consider removing{" "}
+                            <span style={{ fontWeight: 700 }}>{editIssues.join(", ")}</span>.
+                          </div>
+                        ) : null}
 
-                    <button
-                      onClick={() => deleteSample(s.id)}
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          <button
+                            onClick={() => saveEdit(s.id)}
+                            disabled={isSavingThis || !editValidation.ok}
+                            style={{
+                              ...buttonStyle,
+                              opacity: isSavingThis || !editValidation.ok ? 0.6 : 1,
+                            }}
+                          >
+                            {isSavingThis ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            disabled={isSavingThis}
+                            style={ghostButtonStyle}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div
                       style={{
-                        ...ghostButtonStyle,
-                        padding: "8px 10px",
-                        borderRadius: 10,
-                        fontSize: 12,
+                        marginTop: 10,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        alignItems: "center",
+                        flexWrap: "wrap",
                       }}
-                      title="Delete this sample"
                     >
-                      Delete
-                    </button>
+                      <div style={{ fontSize: 11, opacity: 0.55 }}>
+                        {s.updated_at
+                          ? `Updated ${new Date(s.updated_at).toLocaleString()}`
+                          : s.created_at
+                          ? `Created ${new Date(s.created_at).toLocaleString()}`
+                          : ""}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        {!isEditing ? (
+                          <button
+                            onClick={() => beginEdit(s)}
+                            disabled={!!savingId || !!deletingId || creating}
+                            style={{
+                              ...ghostButtonStyle,
+                              padding: "8px 10px",
+                              borderRadius: 10,
+                              fontSize: 12,
+                              opacity: !!savingId || !!deletingId || creating ? 0.6 : 1,
+                            }}
+                            title="Edit this sample"
+                          >
+                            Edit
+                          </button>
+                        ) : null}
+
+                        {!isConfirmDelete ? (
+                          <button
+                            onClick={() => askDelete(s.id)}
+                            disabled={!!savingId || !!deletingId || creating}
+                            style={{
+                              ...ghostButtonStyle,
+                              padding: "8px 10px",
+                              borderRadius: 10,
+                              fontSize: 12,
+                              opacity: !!savingId || !!deletingId || creating ? 0.6 : 1,
+                            }}
+                            title="Delete this sample"
+                          >
+                            Delete
+                          </button>
+                        ) : (
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <div style={{ fontSize: 12, opacity: 0.8 }}>Delete?</div>
+                            <button
+                              onClick={() => confirmDelete(s.id)}
+                              disabled={isDeletingThis}
+                              style={{
+                                ...buttonStyle,
+                                padding: "8px 10px",
+                                borderRadius: 10,
+                                fontSize: 12,
+                                opacity: isDeletingThis ? 0.6 : 1,
+                              }}
+                            >
+                              {isDeletingThis ? "Deleting…" : "Yes"}
+                            </button>
+                            <button
+                              onClick={cancelDelete}
+                              disabled={isDeletingThis}
+                              style={{
+                                ...ghostButtonStyle,
+                                padding: "8px 10px",
+                                borderRadius: 10,
+                                fontSize: 12,
+                                opacity: isDeletingThis ? 0.6 : 1,
+                              }}
+                            >
+                              No
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
           <div style={{ marginTop: 12, fontSize: 12, opacity: 0.6, lineHeight: 1.45 }}>
-            <div style={{ fontWeight: 700, opacity: 0.9, marginBottom: 6 }}>
-              What makes a good sample?
-            </div>
+            <div style={{ fontWeight: 700, opacity: 0.9, marginBottom: 6 }}>What makes a good sample?</div>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               <li>1–3 sentences</li>
               <li>References one detail (dish, staff moment, vibe, timing)</li>

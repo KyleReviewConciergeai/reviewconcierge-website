@@ -214,6 +214,12 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
 /**
  * load voice samples (org_voice_samples)
  * We use these as style reference only (never copy verbatim).
+ *
+ * A4 update:
+ * - Fetch a wider set
+ * - Sanitize deterministically
+ * - Score for usefulness (length window, specificity, anti-template)
+ * - Select "best N" with diversity + token/char budget
  */
 type VoiceSampleRow = {
   id: string;
@@ -228,6 +234,121 @@ function truncateForPrompt(s: string, maxLen: number) {
   return t.slice(0, maxLen - 1).trimEnd() + "…";
 }
 
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function clamp01(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function tokenize(s: string) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9áéíóúüñçàèìòùâêîôûãõäëïöüß\s]/gi, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 250);
+}
+
+function jaccard(a: Set<string>, b: Set<string>) {
+  if (a.size === 0 && b.size === 0) return 1;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter += 1;
+  const union = a.size + b.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+function scoreLength(text: string) {
+  // Ideal window: ~110–420 chars. Penalize very short / very long.
+  const L = (text || "").length;
+  if (!L) return 0;
+
+  const min = 80;
+  const idealLo = 110;
+  const idealHi = 420;
+  const hardMax = 700;
+
+  if (L < min) return clamp01(L / min) * 0.4; // too short
+  if (L >= idealLo && L <= idealHi) return 1.0; // great
+  if (L > hardMax) return 0.2; // too long
+  // Between idealHi and hardMax: linearly decay
+  const decay = 1 - (L - idealHi) / (hardMax - idealHi);
+  return clamp01(decay);
+}
+
+function scoreSpecificity(text: string) {
+  // Heuristic: reward concrete-ish content without being a template.
+  // - reward: presence of digits (times/dates), named items (capitalized words), or descriptive adjectives.
+  // - reward: higher unique token ratio (but clamp)
+  const raw = text || "";
+  const tokens = tokenize(raw);
+  if (tokens.length === 0) return 0;
+
+  const unique = new Set(tokens);
+  const uniqRatio = unique.size / tokens.length; // 0..1
+
+  const hasDigit = /\d/.test(raw);
+  const hasCapWord = /\b[A-Z][a-z]{2,}\b/.test(raw); // named dish/staff/spot (rough)
+  const hasDetailMarker = /\b(today|tonight|yesterday|weekend|morning|afternoon|evening)\b/i.test(raw);
+
+  const base = clamp01((uniqRatio - 0.35) / 0.35); // maps ~0.35..0.70 -> 0..1
+  const bonus = (hasDigit ? 0.15 : 0) + (hasCapWord ? 0.12 : 0) + (hasDetailMarker ? 0.08 : 0);
+
+  return clamp01(base + bonus);
+}
+
+function scoreAntiTemplate(text: string, avoidPhrases: string[]) {
+  // Penalize corporate/AI tells / marketing patterns.
+  const t = (text || "").toLowerCase();
+  let penalty = 0;
+
+  // strong penalties for banned phrases
+  for (const p of avoidPhrases) {
+    const pp = String(p || "").trim();
+    if (!pp) continue;
+    const re = new RegExp(`\\b${escapeRegex(pp.toLowerCase())}\\b`, "i");
+    if (re.test(t)) penalty += 0.35;
+  }
+
+  // marketing / CTA / links
+  if (/\b(book now|special offer|promo|discount|follow us|check out|visit our)\b/i.test(t))
+    penalty += 0.35;
+
+  // too many exclamations / emojis (even though we strip, detect intent)
+  if ((t.match(/[!¡]/g) ?? []).length >= 2) penalty += 0.15;
+
+  // overly formulaic closers
+  if (/\b(we hope to see you again|hope to see you soon|come back soon)\b/i.test(t))
+    penalty += 0.08;
+
+  // generic corporate nouns
+  if (/\b(valued (customer|guest)|your satisfaction|our commitment)\b/i.test(t))
+    penalty += 0.25;
+
+  return clamp01(1 - penalty);
+}
+
+function scoreSample(cleanedText: string, avoidPhrases: string[]) {
+  // Weighted blend: anti-template is most important
+  const L = scoreLength(cleanedText); // 0..1
+  const S = scoreSpecificity(cleanedText); // 0..1
+  const A = scoreAntiTemplate(cleanedText, avoidPhrases); // 0..1
+
+  // Encourage 1–3 sentences
+  const sent = splitSentences(cleanedText).length;
+  const sentScore = sent >= 1 && sent <= 3 ? 1 : sent === 4 ? 0.7 : 0.45;
+
+  return (
+    0.48 * A + // anti-template
+    0.26 * L + // length window
+    0.18 * S + // specificity
+    0.08 * sentScore // sentence count
+  );
+}
+
 async function loadVoiceSamplesForOrg(opts?: {
   maxItems?: number;
   maxCharsEach?: number;
@@ -240,32 +361,109 @@ async function loadVoiceSamplesForOrg(opts?: {
   try {
     const { supabase, organizationId } = await requireOrgContext();
 
+    // Pull a broader candidate pool for scoring
+    const candidateLimit = 50;
+
     const { data, error } = await supabase
       .from("org_voice_samples")
       .select("id,sample_text,created_at")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
-      .limit(Math.max(1, Math.min(maxItems, 12)));
+      .limit(candidateLimit);
 
     if (error) return [];
 
     const rows = (data ?? []) as VoiceSampleRow[];
-    const cleaned: string[] = [];
+
+    // Build avoid list from DEFAULT_VOICE (deterministic; matches our banned-phrase philosophy)
+    const avoidPhrases = (DEFAULT_VOICE.things_to_avoid ?? [])
+      .map((x) => String(x))
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 120);
+
+    // Sanitize + score
+    const candidates = rows
+      .map((r) => {
+        const raw = cleanString(r.sample_text, 5000);
+        const clipped = truncateForPrompt(raw, maxCharsEach);
+        const normalized = collapseWhitespace(removeQuotations(stripEmojis(clipped)));
+        const cleaned = normalized;
+        if (!cleaned) return null;
+
+        const score = scoreSample(cleaned, avoidPhrases);
+        const tokenSet = new Set(tokenize(cleaned));
+
+        return {
+          id: r.id,
+          cleaned,
+          score,
+          tokenSet,
+          created_at: r.created_at ?? "",
+        };
+      })
+      .filter(Boolean) as Array<{
+      id: string;
+      cleaned: string;
+      score: number;
+      tokenSet: Set<string>;
+      created_at: string;
+    }>;
+
+    if (candidates.length === 0) return [];
+
+    // Sort by best score first, tie-break by recency
+    candidates.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      // fallback: newer first
+      return String(b.created_at).localeCompare(String(a.created_at));
+    });
+
+    // Greedy selection with diversity:
+    // - prefer high score
+    // - penalize high similarity to already selected
+    const selected: string[] = [];
+    const selectedTokenSets: Set<string>[] = [];
 
     let total = 0;
-    for (const r of rows) {
-      const text = truncateForPrompt(cleanString(r.sample_text, 5000), maxCharsEach);
-      const normalized = collapseWhitespace(removeQuotations(stripEmojis(text)));
-      if (!normalized) continue;
 
-      const nextLen = normalized.length + 10;
-      if (total + nextLen > maxTotalChars) break;
+    for (const c of candidates) {
+      if (selected.length >= Math.max(1, Math.min(maxItems, 12))) break;
 
-      cleaned.push(normalized);
+      const nextLen = c.cleaned.length + 10;
+      if (total + nextLen > maxTotalChars) continue;
+
+      // Diversity gate: skip if too similar to any already selected
+      let tooSimilar = false;
+      for (const sset of selectedTokenSets) {
+        const sim = jaccard(c.tokenSet, sset);
+        if (sim >= 0.78) {
+          tooSimilar = true;
+          break;
+        }
+      }
+      if (tooSimilar) continue;
+
+      selected.push(c.cleaned);
+      selectedTokenSets.push(c.tokenSet);
       total += nextLen;
     }
 
-    return cleaned;
+    // If diversity filter was too strict and we selected too few, backfill with best remaining within budget
+    if (selected.length < Math.min(maxItems, 3)) {
+      for (const c of candidates) {
+        if (selected.length >= Math.max(1, Math.min(maxItems, 12))) break;
+        if (selected.includes(c.cleaned)) continue;
+
+        const nextLen = c.cleaned.length + 10;
+        if (total + nextLen > maxTotalChars) continue;
+
+        selected.push(c.cleaned);
+        total += nextLen;
+      }
+    }
+
+    return selected;
   } catch {
     return [];
   }

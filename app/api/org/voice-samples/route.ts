@@ -64,9 +64,10 @@ export async function POST(req: Request) {
 }
 
 /**
- * PATCH /api/org/voice-samples
+ * Legacy PATCH /api/org/voice-samples
  * Body: { id: string, sample_text: string }
- * Updates a sample (future-proof for edit UI).
+ * NOTE: Preferred is PATCH /api/org/voice-samples/:id (see [id]/route.ts),
+ * but we keep this for backwards compatibility.
  */
 export async function PATCH(req: Request) {
   try {
@@ -96,8 +97,9 @@ export async function PATCH(req: Request) {
 }
 
 /**
- * DELETE /api/org/voice-samples?id=<uuid>
- * Deletes a sample owned by the current org.
+ * Legacy DELETE /api/org/voice-samples?id=<uuid>
+ * NOTE: Preferred is DELETE /api/org/voice-samples/:id (see [id]/route.ts),
+ * but we keep this for backwards compatibility.
  */
 export async function DELETE(req: Request) {
   try {
