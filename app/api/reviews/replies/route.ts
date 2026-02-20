@@ -86,7 +86,7 @@ export async function POST(req: Request) {
     const { data, error } = await supabase
       .from("review_replies")
       .insert(insertRow)
-      .select("id,created_at,status,copied_at,posted_at")
+      .select("id,organization_id,business_id,review_id,draft_text,owner_language,reviewer_language,rating,status,copied_at,posted_at,created_at")
       .single();
 
     if (error) {
@@ -96,13 +96,29 @@ export async function POST(req: Request) {
       );
     }
 
-    // Optional event log on "copied" and "posted"
+    // If status is copied/posted, write event with FULL context
     let event_warning: string | null = null;
 
     if (status === "copied" || status === "posted") {
+      // Optional: lookup google_review_id for the event
+      let google_review_id: string | null = null;
+      try {
+        const { data: revRow } = await supabase
+          .from("reviews")
+          .select("google_review_id")
+          .eq("organization_id", organizationId)
+          .eq("id", review_id)
+          .maybeSingle();
+
+        if (revRow?.google_review_id) google_review_id = String(revRow.google_review_id);
+      } catch {
+        // ignore
+      }
+
       const { error: evErr } = await supabase.from("review_reply_events").insert({
         organization_id: organizationId,
         review_id,
+        google_review_id,
         source: "app",
         rating,
         reviewer_language,
@@ -111,15 +127,10 @@ export async function POST(req: Request) {
         reply_text: draft_text,
       });
 
-      if (evErr) {
-        event_warning = evErr.message;
-      }
+      if (evErr) event_warning = evErr.message;
     }
 
-    return NextResponse.json(
-      { ok: true, reply_record: data, event_warning },
-      { status: 200 }
-    );
+    return NextResponse.json({ ok: true, reply_record: data, event_warning }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json(
       { ok: false, error: err?.message ?? "Failed to save reply" },
@@ -131,6 +142,7 @@ export async function POST(req: Request) {
 /**
  * PATCH /api/reviews/replies
  * Update status for a reply record (copied/posted)
+ * Also logs an event with full context (no null placeholders).
  */
 export async function PATCH(req: Request) {
   try {
@@ -151,16 +163,20 @@ export async function PATCH(req: Request) {
     }
 
     const updates: any = { status };
+    const nowIso = new Date().toISOString();
 
-    if (status === "copied") updates.copied_at = new Date().toISOString();
-    if (status === "posted") updates.posted_at = new Date().toISOString();
+    if (status === "copied") updates.copied_at = nowIso;
+    if (status === "posted") updates.posted_at = nowIso;
 
+    // IMPORTANT: select the fields we need for the event (review_id, languages, rating, text)
     const { data, error } = await supabase
       .from("review_replies")
       .update(updates)
       .eq("id", id)
       .eq("organization_id", organizationId)
-      .select("id,status,copied_at,posted_at,updated_at")
+      .select(
+        "id,organization_id,business_id,review_id,draft_text,owner_language,reviewer_language,rating,status,copied_at,posted_at,updated_at"
+      )
       .single();
 
     if (error) {
@@ -170,29 +186,45 @@ export async function PATCH(req: Request) {
       );
     }
 
-    // Optional event log on PATCH too (only for copied/posted)
+    // Log event ONLY for copied/posted, using the updated row context
+    let event_warning: string | null = null;
+
     if (status === "copied" || status === "posted") {
+      const review_id = data?.review_id ? String(data.review_id) : null;
+
+      // Optional: lookup google_review_id from reviews
+      let google_review_id: string | null = null;
+      if (review_id) {
+        try {
+          const { data: revRow } = await supabase
+            .from("reviews")
+            .select("google_review_id")
+            .eq("organization_id", organizationId)
+            .eq("id", review_id)
+            .maybeSingle();
+
+          if (revRow?.google_review_id) google_review_id = String(revRow.google_review_id);
+        } catch {
+          // ignore
+        }
+      }
+
       const { error: evErr } = await supabase.from("review_reply_events").insert({
         organization_id: organizationId,
-        review_id: null,
+        review_id,
+        google_review_id,
         source: "app",
-        rating: null,
-        reviewer_language: null,
-        owner_language: null,
+        rating: typeof data?.rating === "number" ? data.rating : null,
+        reviewer_language: data?.reviewer_language ?? null,
+        owner_language: data?.owner_language ?? null,
         event_type: status,
-        reply_text: null,
+        reply_text: data?.draft_text ?? null,
       });
 
-      if (evErr) {
-        // don’t fail PATCH; just return warning
-        return NextResponse.json(
-          { ok: true, reply_record: data, event_warning: evErr.message },
-          { status: 200 }
-        );
-      }
+      if (evErr) event_warning = evErr.message;
     }
 
-    return NextResponse.json({ ok: true, reply_record: data }, { status: 200 });
+    return NextResponse.json({ ok: true, reply_record: data, event_warning }, { status: 200 });
   } catch (err: any) {
     return NextResponse.json(
       { ok: false, error: err?.message ?? "Failed to update reply" },
