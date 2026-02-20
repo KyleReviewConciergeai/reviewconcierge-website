@@ -454,6 +454,29 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     try {
       await navigator.clipboard.writeText(textToCopy);
 
+      // After: await navigator.clipboard.writeText(textToCopy);
+
+try {
+  // Only save when we have a selected review (so we have ids)
+  if (selectedReview?.reviewId && (selectedReview as any).businessId) {
+    await fetch("/api/reviews/replies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        review_id: selectedReview.reviewId,
+        business_id: (selectedReview as any).businessId,
+        draft_text: textToCopy,
+        owner_language: ownerLanguage,
+        reviewer_language: replyLanguage,
+        rating,
+        status: "copied",
+      }),
+    });
+  }
+} catch {
+  // Don’t block UX if logging fails
+}
+
       // NEW: mark copied (best-effort)
       if (replyRecordId) {
         markReplyCopied(replyRecordId);

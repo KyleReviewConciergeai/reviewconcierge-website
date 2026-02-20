@@ -10,9 +10,7 @@ function cleanString(v: unknown, maxLen = 4000) {
 }
 
 function cleanUuid(v: unknown) {
-  const s = cleanString(v, 80);
-  // simple “uuid-ish” check; DB will enforce for real
-  return s;
+  return cleanString(v, 80);
 }
 
 function parseRating(v: unknown) {
@@ -31,7 +29,7 @@ function parseStatus(v: unknown): Status | null {
 
 /**
  * POST /api/reviews/replies
- * Create a reply record (draft)
+ * Create a reply record (draft/copy/post)
  */
 export async function POST(req: Request) {
   try {
@@ -49,6 +47,8 @@ export async function POST(req: Request) {
     const rating =
       Number.isFinite(ratingRaw) && ratingRaw >= 1 && ratingRaw <= 5 ? Math.round(ratingRaw) : null;
 
+    const status: Status = parseStatus((body as any)?.status) ?? "draft";
+
     if (!review_id) {
       return NextResponse.json({ ok: false, error: "review_id is required" }, { status: 400 });
     }
@@ -59,23 +59,54 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "draft_text is required" }, { status: 400 });
     }
 
+    const nowIso = new Date().toISOString();
+
+    const insertRow: any = {
+      organization_id: organizationId,
+      business_id,
+      review_id,
+      draft_text,
+      owner_language,
+      reviewer_language,
+      rating,
+      status,
+    };
+
+    if (status === "copied") insertRow.copied_at = nowIso;
+    if (status === "posted") insertRow.posted_at = nowIso;
+
+    // Note: no UNIQUE constraint on review_id, so this creates a new row each time.
+    // That’s fine for MVP (gives you history).
     const { data, error } = await supabase
       .from("review_replies")
-      .insert({
-        organization_id: organizationId,
-        business_id,
-        review_id,
-        draft_text,
-        owner_language,
-        reviewer_language,
-        rating,
-        status: "draft",
-      })
-      .select("id,created_at,status")
+      .insert(insertRow)
+      .select("id,created_at,status,copied_at,posted_at")
       .single();
 
     if (error) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    }
+
+    // Optional event log on "copied" and "posted"
+    if (status === "copied" || status === "posted") {
+      const { error: evErr } = await supabase.from("review_reply_events").insert({
+        organization_id: organizationId,
+        review_id,
+        source: "app",
+        rating,
+        reviewer_language,
+        owner_language,
+        event_type: status, // "copied" | "posted"
+        reply_text: draft_text,
+      });
+
+      // Don’t fail the whole request if event logging fails
+      if (evErr) {
+        return NextResponse.json(
+          { ok: true, reply_record: data, warning: `Event log failed: ${evErr.message}` },
+          { status: 200 }
+        );
+      }
     }
 
     return NextResponse.json({ ok: true, reply_record: data }, { status: 200 });
@@ -103,7 +134,10 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ ok: false, error: "id is required" }, { status: 400 });
     }
     if (!status) {
-      return NextResponse.json({ ok: false, error: "status must be draft|copied|posted" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "status must be draft|copied|posted" },
+        { status: 400 }
+      );
     }
 
     const updates: any = { status };
