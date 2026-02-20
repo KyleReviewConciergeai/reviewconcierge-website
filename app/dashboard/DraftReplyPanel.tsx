@@ -32,6 +32,8 @@ type DraftReplyPanelProps = {
  * We support BOTH payload shapes:
  *  - Old:  { reviewText, rating, authorName, detectedLanguage, reviewId }
  *  - New:  { text, rating, authorName, language, reviewId }
+ *
+ * NOTE: If you later add google_review_id to the event payload, we’ll capture it.
  */
 type RcSelectReviewDetail = {
   reviewId?: string | null;
@@ -48,6 +50,10 @@ type RcSelectReviewDetail = {
   authorName?: string | null;
   createdAt?: string | null;
   source?: string | null; // e.g. "places_sample"
+
+  // optional future
+  googleReviewId?: string | null;
+  google_review_id?: string | null;
 };
 
 type SelectedReview = {
@@ -58,6 +64,8 @@ type SelectedReview = {
   createdAt: string | null;
   language: string | null;
   source: string | null;
+
+  googleReviewId: string | null;
 };
 
 /** Small hook for responsive inline styles (safe in React/Next) */
@@ -109,6 +117,28 @@ const DRAFT_RULES = [
   "If rating is 1–2★: apologize, take accountability, and invite them to continue the conversation offline.",
   "Do not promise refunds, policy changes, or future guarantees.",
 ];
+
+async function logReplyEvent(payload: {
+  event_type: "drafted" | "copied";
+  review_id?: string | null;
+  google_review_id?: string | null;
+  source?: string | null;
+  rating?: number | null;
+  reviewer_language?: string | null;
+  owner_language?: string | null;
+  reply_text?: string | null;
+}) {
+  try {
+    await fetch("/api/reviews/reply-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    // intentionally ignore errors (never block UX)
+  } catch {
+    // ignore
+  }
+}
 
 export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) {
   const panelRef = useRef<HTMLElement | null>(null);
@@ -212,6 +242,13 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           ? d.detectedLanguage
           : null;
 
+      const googleReviewId =
+        typeof d.googleReviewId === "string"
+          ? d.googleReviewId
+          : typeof d.google_review_id === "string"
+          ? d.google_review_id
+          : null;
+
       const next: SelectedReview = {
         reviewId: String(d.reviewId ?? ""),
         text,
@@ -220,6 +257,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         createdAt: d.createdAt ?? null,
         language: langRaw ?? null,
         source: d.source ?? null,
+        googleReviewId: googleReviewId ?? null,
       };
 
       setSelectedReview(next);
@@ -334,8 +372,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           // Step 8 payload additions (server can use these to improve human-ness)
           tone,
           rules: DRAFT_RULES,
-
-          // ✅ Do NOT send hardcoded voice — let org settings control voice for MVP
         }),
       });
 
@@ -372,15 +408,30 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       const reviewerLangRaw = replyLanguage || data.meta?.reviewer_language || "en";
 
       // ✅ Translate ONLY if different language (using normalized compare)
+      let copyReady = "";
       if (normLang(ownerLangRaw) !== normLang(reviewerLangRaw)) {
         const translated = await requestTranslate(ownerDraft, reviewerLangRaw);
         setFinalReply(translated);
+        copyReady = translated;
       } else {
-        // Same language — no translation and no separate copy-ready UI needed
         setFinalReply("");
+        copyReady = ownerDraft;
       }
 
       setStatus("success");
+
+      // ✅ Log drafted event (non-blocking)
+      logReplyEvent({
+        event_type: "drafted",
+        review_id: selectedReview?.reviewId || null,
+        google_review_id: selectedReview?.googleReviewId || null,
+        source: selectedReview?.source || null,
+        rating,
+        reviewer_language: replyLanguage || null,
+        owner_language: ownerLangRaw || null,
+        reply_text: copyReady || ownerDraft,
+      });
+
       return { ok: true as const };
     } catch (err: unknown) {
       setDraft("");
@@ -413,6 +464,18 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
     try {
       await navigator.clipboard.writeText(textToCopy);
+
+      // ✅ Log copied event (non-blocking)
+      logReplyEvent({
+        event_type: "copied",
+        review_id: selectedReview?.reviewId || null,
+        google_review_id: selectedReview?.googleReviewId || null,
+        source: selectedReview?.source || null,
+        rating,
+        reviewer_language: replyLanguage || null,
+        owner_language: ownerLanguage || null,
+        reply_text: textToCopy,
+      });
 
       setCopied(true);
       if (copiedTimer.current) window.clearTimeout(copiedTimer.current);
@@ -603,7 +666,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         </div>
       </div>
 
-      {/* Step 6 helper text moved BELOW the entire row so inputs align */}
       <div style={{ fontSize: 12, color: "rgba(226,232,240,0.62)", marginTop: 6 }}>
         Helps tailor the reply tone to a 1★ vs 5★ experience.
       </div>
@@ -698,10 +760,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
         <textarea
           value={draft}
-          onChange={(e) => {
-            const next = e.target.value;
-            setDraft(next);
-          }}
+          onChange={(e) => setDraft(e.target.value)}
           placeholder={COPY.draftPlaceholder}
           rows={7}
           style={{
@@ -757,7 +816,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       </div>
 
       {/* Copy-ready output (ONLY when different language) */}
-      {showFinalBox ? (
+      {!sameLang ? (
         <div style={{ marginTop: 14 }}>
           <div style={labelStyle}>{COPY.finalLabel}</div>
 
