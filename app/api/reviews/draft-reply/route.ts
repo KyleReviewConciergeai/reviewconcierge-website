@@ -5,6 +5,14 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
+import crypto from "crypto";
+
+const PROMPT_VERSION = "draft-reply-v1";
+const BANNED_LIST_VERSION = "banned-v1";
+
+function sha256Hex(input: string) {
+  return crypto.createHash("sha256").update(input ?? "", "utf8").digest("hex");
+}
 
 function cleanString(v: unknown, maxLen = 4000) {
   if (typeof v !== "string") return "";
@@ -215,11 +223,12 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
  * load voice samples (org_voice_samples)
  * We use these as style reference only (never copy verbatim).
  *
- * A4 update:
- * - Fetch a wider set
- * - Sanitize deterministically
+ * A4:
+ * - Fetch a wider pool
+ * - Deterministically sanitize
  * - Score for usefulness (length window, specificity, anti-template)
- * - Select "best N" with diversity + token/char budget
+ * - Select top N with diversity + token/char budget
+ * - Return sample IDs for audit logging
  */
 type VoiceSampleRow = {
   id: string;
@@ -274,38 +283,35 @@ function scoreLength(text: string) {
   if (L < min) return clamp01(L / min) * 0.4; // too short
   if (L >= idealLo && L <= idealHi) return 1.0; // great
   if (L > hardMax) return 0.2; // too long
-  // Between idealHi and hardMax: linearly decay
+
   const decay = 1 - (L - idealHi) / (hardMax - idealHi);
   return clamp01(decay);
 }
 
 function scoreSpecificity(text: string) {
-  // Heuristic: reward concrete-ish content without being a template.
-  // - reward: presence of digits (times/dates), named items (capitalized words), or descriptive adjectives.
-  // - reward: higher unique token ratio (but clamp)
   const raw = text || "";
   const tokens = tokenize(raw);
   if (tokens.length === 0) return 0;
 
   const unique = new Set(tokens);
-  const uniqRatio = unique.size / tokens.length; // 0..1
+  const uniqRatio = unique.size / tokens.length;
 
   const hasDigit = /\d/.test(raw);
-  const hasCapWord = /\b[A-Z][a-z]{2,}\b/.test(raw); // named dish/staff/spot (rough)
-  const hasDetailMarker = /\b(today|tonight|yesterday|weekend|morning|afternoon|evening)\b/i.test(raw);
+  const hasCapWord = /\b[A-Z][a-z]{2,}\b/.test(raw);
+  const hasDetailMarker = /\b(today|tonight|yesterday|weekend|morning|afternoon|evening)\b/i.test(
+    raw
+  );
 
-  const base = clamp01((uniqRatio - 0.35) / 0.35); // maps ~0.35..0.70 -> 0..1
+  const base = clamp01((uniqRatio - 0.35) / 0.35);
   const bonus = (hasDigit ? 0.15 : 0) + (hasCapWord ? 0.12 : 0) + (hasDetailMarker ? 0.08 : 0);
 
   return clamp01(base + bonus);
 }
 
 function scoreAntiTemplate(text: string, avoidPhrases: string[]) {
-  // Penalize corporate/AI tells / marketing patterns.
   const t = (text || "").toLowerCase();
   let penalty = 0;
 
-  // strong penalties for banned phrases
   for (const p of avoidPhrases) {
     const pp = String(p || "").trim();
     if (!pp) continue;
@@ -313,18 +319,14 @@ function scoreAntiTemplate(text: string, avoidPhrases: string[]) {
     if (re.test(t)) penalty += 0.35;
   }
 
-  // marketing / CTA / links
   if (/\b(book now|special offer|promo|discount|follow us|check out|visit our)\b/i.test(t))
     penalty += 0.35;
 
-  // too many exclamations / emojis (even though we strip, detect intent)
   if ((t.match(/[!¡]/g) ?? []).length >= 2) penalty += 0.15;
 
-  // overly formulaic closers
   if (/\b(we hope to see you again|hope to see you soon|come back soon)\b/i.test(t))
     penalty += 0.08;
 
-  // generic corporate nouns
   if (/\b(valued (customer|guest)|your satisfaction|our commitment)\b/i.test(t))
     penalty += 0.25;
 
@@ -332,28 +334,21 @@ function scoreAntiTemplate(text: string, avoidPhrases: string[]) {
 }
 
 function scoreSample(cleanedText: string, avoidPhrases: string[]) {
-  // Weighted blend: anti-template is most important
-  const L = scoreLength(cleanedText); // 0..1
-  const S = scoreSpecificity(cleanedText); // 0..1
-  const A = scoreAntiTemplate(cleanedText, avoidPhrases); // 0..1
+  const L = scoreLength(cleanedText);
+  const S = scoreSpecificity(cleanedText);
+  const A = scoreAntiTemplate(cleanedText, avoidPhrases);
 
-  // Encourage 1–3 sentences
   const sent = splitSentences(cleanedText).length;
   const sentScore = sent >= 1 && sent <= 3 ? 1 : sent === 4 ? 0.7 : 0.45;
 
-  return (
-    0.48 * A + // anti-template
-    0.26 * L + // length window
-    0.18 * S + // specificity
-    0.08 * sentScore // sentence count
-  );
+  return 0.48 * A + 0.26 * L + 0.18 * S + 0.08 * sentScore;
 }
 
 async function loadVoiceSamplesForOrg(opts?: {
   maxItems?: number;
   maxCharsEach?: number;
   maxTotalChars?: number;
-}): Promise<string[]> {
+}): Promise<{ samples: string[]; sampleIds: string[] }> {
   const maxItems = opts?.maxItems ?? 7;
   const maxCharsEach = opts?.maxCharsEach ?? 420;
   const maxTotalChars = opts?.maxTotalChars ?? 2400;
@@ -361,7 +356,6 @@ async function loadVoiceSamplesForOrg(opts?: {
   try {
     const { supabase, organizationId } = await requireOrgContext();
 
-    // Pull a broader candidate pool for scoring
     const candidateLimit = 50;
 
     const { data, error } = await supabase
@@ -371,18 +365,16 @@ async function loadVoiceSamplesForOrg(opts?: {
       .order("created_at", { ascending: false })
       .limit(candidateLimit);
 
-    if (error) return [];
+    if (error) return { samples: [], sampleIds: [] };
 
     const rows = (data ?? []) as VoiceSampleRow[];
 
-    // Build avoid list from DEFAULT_VOICE (deterministic; matches our banned-phrase philosophy)
     const avoidPhrases = (DEFAULT_VOICE.things_to_avoid ?? [])
       .map((x) => String(x))
       .map((s) => s.trim())
       .filter(Boolean)
       .slice(0, 120);
 
-    // Sanitize + score
     const candidates = rows
       .map((r) => {
         const raw = cleanString(r.sample_text, 5000);
@@ -410,21 +402,14 @@ async function loadVoiceSamplesForOrg(opts?: {
       created_at: string;
     }>;
 
-    if (candidates.length === 0) return [];
+    if (candidates.length === 0) return { samples: [], sampleIds: [] };
 
-    // Sort by best score first, tie-break by recency
     candidates.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      // fallback: newer first
       return String(b.created_at).localeCompare(String(a.created_at));
     });
 
-    // Greedy selection with diversity:
-    // - prefer high score
-    // - penalize high similarity to already selected
-    const selected: string[] = [];
-    const selectedTokenSets: Set<string>[] = [];
-
+    const selected: Array<{ id: string; cleaned: string; tokenSet: Set<string> }> = [];
     let total = 0;
 
     for (const c of candidates) {
@@ -433,10 +418,9 @@ async function loadVoiceSamplesForOrg(opts?: {
       const nextLen = c.cleaned.length + 10;
       if (total + nextLen > maxTotalChars) continue;
 
-      // Diversity gate: skip if too similar to any already selected
       let tooSimilar = false;
-      for (const sset of selectedTokenSets) {
-        const sim = jaccard(c.tokenSet, sset);
+      for (const s of selected) {
+        const sim = jaccard(c.tokenSet, s.tokenSet);
         if (sim >= 0.78) {
           tooSimilar = true;
           break;
@@ -444,28 +428,29 @@ async function loadVoiceSamplesForOrg(opts?: {
       }
       if (tooSimilar) continue;
 
-      selected.push(c.cleaned);
-      selectedTokenSets.push(c.tokenSet);
+      selected.push({ id: c.id, cleaned: c.cleaned, tokenSet: c.tokenSet });
       total += nextLen;
     }
 
-    // If diversity filter was too strict and we selected too few, backfill with best remaining within budget
     if (selected.length < Math.min(maxItems, 3)) {
       for (const c of candidates) {
         if (selected.length >= Math.max(1, Math.min(maxItems, 12))) break;
-        if (selected.includes(c.cleaned)) continue;
+        if (selected.some((s) => s.id === c.id)) continue;
 
         const nextLen = c.cleaned.length + 10;
         if (total + nextLen > maxTotalChars) continue;
 
-        selected.push(c.cleaned);
+        selected.push({ id: c.id, cleaned: c.cleaned, tokenSet: c.tokenSet });
         total += nextLen;
       }
     }
 
-    return selected;
+    return {
+      samples: selected.map((x) => x.cleaned),
+      sampleIds: selected.map((x) => x.id),
+    };
   } catch {
-    return [];
+    return { samples: [], sampleIds: [] };
   }
 }
 
@@ -524,12 +509,6 @@ function sentencePolicyForRating(rating: number) {
   return 3;
 }
 
-/**
- * Evidence-informed guidance:
- * - 1–2★: empathy up front is OK/effective, but NEVER invent "why" it happened.
- * - 3★: balanced, invite details
- * - 4–5★: appreciative, short, avoid over-apologizing
- */
 function mustDoForRating(rating: number) {
   const base = [
     "Write 2–4 short sentences max (follow sentence limit below).",
@@ -575,7 +554,6 @@ function mustDoForRating(rating: number) {
     ];
   }
 
-  // 1-star
   return [
     ...base,
     "Open with a short, human apology or acknowledgment (OK to use “Sorry about…” / “We’re sorry to hear…”).",
@@ -595,10 +573,7 @@ function mustNotForRating(rating: number) {
   ];
 
   if (rating >= 4) {
-    return [
-      ...base,
-      "Do NOT over-apologize. Only apologize if the guest clearly had a problem.",
-    ];
+    return [...base, "Do NOT over-apologize. Only apologize if the guest clearly had a problem."];
   }
 
   if (rating <= 2) {
@@ -607,7 +582,6 @@ function mustNotForRating(rating: number) {
       "Do NOT be playful or joking.",
       "Do NOT argue with the reviewer.",
       "Do NOT blame the customer.",
-      // Critical: stop invented excuses
       "Do NOT explain the cause (busy/overwhelmed/short-staffed/etc.) unless the reviewer explicitly mentioned it.",
       "Do NOT justify or excuse the issue with operational context.",
     ];
@@ -741,7 +715,6 @@ function buildPrompt(params: {
 
   const voiceSamplesBlock = buildVoiceSamplesBlock(voice_samples ?? []);
 
-  // Extra hard rule for low ratings: apology OK, but NO invented reasons
   const lowStarExtra =
     rating <= 2
       ? [
@@ -807,26 +780,13 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
   return `${reply.trim()}\n— ${sig}`.trim();
 }
 
-/**
- * Strip templated openers. (Start-of-reply only.)
- * We intentionally do NOT strip “we’re sorry…” because low stars benefit from it.
- */
 function stripTemplatedOpeners(text: string) {
   let t = text.trim();
 
   const patterns: RegExp[] = [
-    // Keep these (do not remove):
-    // - we're sorry to hear...
-    // - we apologize for...
-
-    // Remove corporate openers / AI-ish tells
     /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words))?)[,!.]\s*/i,
     /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
-
-    // Remove “it sounds like …” / “it seems like …” openers (AI tell)
     /^\s*(it\s+(sounds|seems)\s+like)[,!.]?\s*/i,
-
-    // Remove “we regret …” opener (awkward + template-y)
     /^\s*(we\s+regret(\s+that)?)[,!.]?\s*/i,
   ];
 
@@ -837,36 +797,24 @@ function stripTemplatedOpeners(text: string) {
   return t.trim();
 }
 
-/**
- * Mission-statement / corporate phrasing tends to leak mid-sentence.
- * This makes it deterministic by rewriting/stripping common patterns anywhere.
- */
 function sanitizeCorporatePhrases(text: string) {
   let t = text;
 
-  // 1) Remove/neutralize “it sounds like …” anywhere (not only opener)
   t = t.replace(/\b(it\s+(sounds|seems)\s+like)\b[, ]*/gi, "");
 
-  // 2) Rewrite mission-statement phrasing (anywhere)
-  // Keep meaning but make it human.
   t = t.replace(/\bwe\s+aim\s+to\b/gi, "we want to");
   t = t.replace(/\bwe\s+aim\s+for\b/gi, "we want");
   t = t.replace(/\bwe\s+strive\s+to\b/gi, "we try to");
   t = t.replace(/\bour\s+goal\s+is\s+to\b/gi, "we want to");
   t = t.replace(/\bwe\s+work\s+hard\s+to\b/gi, "we try to");
 
-  // 3) Remove corporate “we take X seriously” phrasing
-  // (Often reads like a template.)
   t = t.replace(
     /\bwe\s+take\s+(your\s+)?(feedback|concerns|complaint|complaints|comments)\s+(very\s+)?seriously\b[, ]*/gi,
     ""
   );
 
-  // 4) Remove “we regret…” anywhere (not just opener).
-  // Replace with a softer human clause.
   t = t.replace(/\bwe\s+regret(\s+that)?\b/gi, "sorry");
 
-  // Cleanup punctuation spacing after removals
   t = t.replace(/\s+,/g, ",");
   t = t.replace(/\s+\./g, ".");
   t = t.replace(/\s+!/g, "!");
@@ -884,13 +832,8 @@ function capitalizeIfNeeded(text: string) {
   return t;
 }
 
-/**
- * Remove “excuse” / invented operational context for low-star replies,
- * UNLESS the reviewer explicitly mentioned it.
- */
 function reviewerMentionsCapacityExcuse(reviewText: string) {
   const r = (reviewText ?? "").toLowerCase();
-  // Only allow if reviewer explicitly mentions these concepts.
   return /(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped|packed|crowded)/i.test(
     r
   );
@@ -905,7 +848,7 @@ function removeExcuseSentencesIfInvented(params: {
   const t = (reply ?? "").trim();
   if (!t) return t;
 
-  if (rating > 2) return t; // we only enforce this hard on 1–2★
+  if (rating > 2) return t;
 
   const allow = reviewerMentionsCapacityExcuse(review_text);
   if (allow) return t;
@@ -913,11 +856,7 @@ function removeExcuseSentencesIfInvented(params: {
   const excuseRe = /\b(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped)\b/i;
 
   const parts = splitSentences(t);
-
-  // Filter out any sentence that contains excuse language.
   const kept = parts.filter((s) => !excuseRe.test(s));
-
-  // If we removed everything (unlikely), fall back to original.
   if (kept.length === 0) return t;
 
   return kept.join(" ").trim();
@@ -942,8 +881,13 @@ export async function POST(req: Request) {
 
     const review_text = cleanString((body as any)?.review_text, 5000);
     const business_name = cleanString((body as any)?.business_name, 200);
-    const reviewer_language = cleanLanguage((body as any)?.language); // kept for meta
+    const reviewer_language = cleanLanguage((body as any)?.language);
     const rating = parseRating((body as any)?.rating);
+
+    // future-proof identifiers (optional)
+    const review_id = cleanString((body as any)?.review_id, 80) || null;
+    const google_review_id = cleanString((body as any)?.google_review_id, 140) || null;
+    const location_id = cleanString((body as any)?.location_id, 180) || null;
 
     if (!review_text) {
       return NextResponse.json({ ok: false, error: "review_text is required" }, { status: 400 });
@@ -972,7 +916,7 @@ export async function POST(req: Request) {
     const org_reply_tone_raw = orgSettings.reply_tone || "warm";
     const reply_signature = orgSettings.reply_signature ?? null;
 
-    const voiceSamples = await loadVoiceSamplesForOrg({
+    const { samples: voiceSamples, sampleIds: voiceSampleIds } = await loadVoiceSamplesForOrg({
       maxItems: 7,
       maxCharsEach: 420,
       maxTotalChars: 2400,
@@ -987,6 +931,9 @@ export async function POST(req: Request) {
       ...merged,
       tone: (merged as any)?.tone ? (merged as any).tone : toneFromOrg,
     });
+
+    const temperature = rating <= 2 ? 0.15 : 0.25;
+    const model = "gpt-4o-mini";
 
     const prompt = buildPrompt({
       business_name,
@@ -1008,8 +955,8 @@ export async function POST(req: Request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: rating <= 2 ? 0.15 : 0.25,
+        model,
+        temperature,
         frequency_penalty: 0.2,
         presence_penalty: 0.1,
         messages: [
@@ -1086,6 +1033,50 @@ export async function POST(req: Request) {
         { ok: false, error: "No reply content returned from OpenAI", upstreamBody: upstreamJson },
         { status: 502 }
       );
+    }
+
+    // B1: audit log insert (non-blocking; draft should still return even if logging fails)
+    try {
+      const { supabase, organizationId } = await requireOrgContext();
+
+      const reviewHash = sha256Hex(review_text);
+      const promptFingerprint = sha256Hex(
+        [
+          PROMPT_VERSION,
+          BANNED_LIST_VERSION,
+          model,
+          String(temperature),
+          voiceSampleIds.join(","),
+        ].join("|")
+      );
+
+      const auditRow: any = {
+        organization_id: organizationId,
+        rating: Math.round(Number(rating)),
+        review_hash: reviewHash,
+        prompt_fingerprint: promptFingerprint,
+        prompt_version: PROMPT_VERSION,
+        banned_list_version: BANNED_LIST_VERSION,
+        model,
+        temperature,
+        voice_sample_count: voiceSampleIds.length,
+        voice_sample_ids: voiceSampleIds,
+        review_id: review_id,
+        google_review_id: google_review_id,
+        location_id: location_id,
+      };
+
+      // If review_id isn't a UUID, keep it null (don't fail insert)
+      if (auditRow.review_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(auditRow.review_id)) {
+        auditRow.review_id = null;
+      }
+
+      const { error: auditErr } = await supabase.from("draft_audit_logs").insert(auditRow);
+      if (auditErr) {
+        console.warn("draft_audit_logs insert failed:", auditErr.message);
+      }
+    } catch (e: any) {
+      console.warn("draft_audit_logs insert exception:", e?.message ?? e);
     }
 
     return NextResponse.json(
