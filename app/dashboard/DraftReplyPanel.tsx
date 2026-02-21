@@ -364,7 +364,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return typeof id === "string" && id ? id : null;
   }
 
-  async function patchReplyRecord(id: string, statusValue: "copied" | "posted") {
+  async function patchReplyRecord(
+  id: string,
+  statusValue: "copied" | "posted",
+  google_location_id?: string
+) {
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -533,7 +537,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (review_id && business_id) {
         if (replyRecordId) {
-          await patchReplyRecord(replyRecordId, "copied");
+          await patchReplyRecord(replyRecordId, "copied", google_location_id);
         } else {
           const fallbackId = await createCopiedReplyRecordFallback({
             review_id,

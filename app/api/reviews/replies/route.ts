@@ -28,9 +28,8 @@ function parseStatus(v: unknown): Status | null {
 }
 
 function cleanLocationId(v: unknown) {
-  // keep generous; GBP location resource names can be longer
-  const s = cleanString(v, 240);
-  return s || null;
+  const s = cleanString(v, 256);
+  return s ? s : null;
 }
 
 /**
@@ -63,10 +62,11 @@ export async function POST(req: Request) {
 
     const status: Status = parseStatus((body as any)?.status) ?? "draft";
 
-    // C1: accept location in either key (future-proof + backwards compatible)
+    // ✅ C1: accept location id (support both keys)
     const google_location_id =
       cleanLocationId((body as any)?.google_location_id) ??
-      cleanLocationId((body as any)?.location_id);
+      cleanLocationId((body as any)?.location_id) ??
+      null;
 
     if (!review_id) {
       return NextResponse.json({ ok: false, error: "review_id is required" }, { status: 400 });
@@ -89,8 +89,8 @@ export async function POST(req: Request) {
       reviewer_language,
       rating,
       status,
-      // C1 persistence
-      google_location_id: google_location_id,
+      // ✅ persist on reply record
+      google_location_id,
     };
 
     if (status === "copied") insertRow.copied_at = nowIso;
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
       .from("review_replies")
       .insert(insertRow)
       .select(
-        "id,organization_id,business_id,review_id,google_location_id,draft_text,owner_language,reviewer_language,rating,status,copied_at,posted_at,created_at"
+        "id,organization_id,business_id,review_id,draft_text,owner_language,reviewer_language,rating,status,google_location_id,copied_at,posted_at,created_at"
       )
       .single();
 
@@ -134,8 +134,8 @@ export async function POST(req: Request) {
         organization_id: organizationId,
         review_id,
         google_review_id,
-        // C1 persistence
-        google_location_id: google_location_id,
+        // ✅ C1: persist location on event
+        google_location_id,
         source: "app",
         rating,
         reviewer_language,
@@ -169,10 +169,11 @@ export async function PATCH(req: Request) {
     const id = cleanUuid((body as any)?.id);
     const status = parseStatus((body as any)?.status);
 
-    // C1: allow passing location in PATCH too (optional)
-    const google_location_id_patch =
+    // ✅ C1: accept location id on PATCH too
+    const google_location_id =
       cleanLocationId((body as any)?.google_location_id) ??
-      cleanLocationId((body as any)?.location_id);
+      cleanLocationId((body as any)?.location_id) ??
+      null;
 
     if (!id) {
       return NextResponse.json({ ok: false, error: "id is required" }, { status: 400 });
@@ -190,17 +191,17 @@ export async function PATCH(req: Request) {
     if (status === "copied") updates.copied_at = nowIso;
     if (status === "posted") updates.posted_at = nowIso;
 
-    // If caller provided a location, persist it (future-proof)
-    if (google_location_id_patch) updates.google_location_id = google_location_id_patch;
+    // If provided, persist location on the reply record
+    if (google_location_id) updates.google_location_id = google_location_id;
 
-    // IMPORTANT: select the fields we need for the event (review_id, languages, rating, text, location)
+    // IMPORTANT: select the fields we need for the event (review_id, languages, rating, text)
     const { data, error } = await supabase
       .from("review_replies")
       .update(updates)
       .eq("id", id)
       .eq("organization_id", organizationId)
       .select(
-        "id,organization_id,business_id,review_id,google_location_id,draft_text,owner_language,reviewer_language,rating,status,copied_at,posted_at,updated_at"
+        "id,organization_id,business_id,review_id,draft_text,owner_language,reviewer_language,rating,status,google_location_id,copied_at,posted_at,updated_at"
       )
       .single();
 
@@ -234,12 +235,17 @@ export async function PATCH(req: Request) {
         }
       }
 
+      const effectiveLocation =
+        (typeof data?.google_location_id === "string" && data.google_location_id) ||
+        google_location_id ||
+        null;
+
       const { error: evErr } = await supabase.from("review_reply_events").insert({
         organization_id: organizationId,
         review_id,
         google_review_id,
-        // C1 persistence
-        google_location_id: data?.google_location_id ?? null,
+        // ✅ C1: persist location on event
+        google_location_id: effectiveLocation,
         source: "app",
         rating: typeof data?.rating === "number" ? data.rating : null,
         reviewer_language: data?.reviewer_language ?? null,
