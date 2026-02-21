@@ -12,6 +12,7 @@ type DraftReplyResponse = {
     reviewer_language?: string;
     reply_tone?: string;
     reply_signature?: string | null;
+    google_location_id?: string | null;
   };
 };
 
@@ -31,11 +32,14 @@ type DraftReplyPanelProps = {
  * Dashboard emits: window.dispatchEvent(new CustomEvent("rc:select-review", { detail: { ... } }))
  * We support BOTH payload shapes:
  *  - Old:  { reviewText, rating, authorName, detectedLanguage, reviewId, businessId }
- *  - New:  { text, rating, authorName, language, reviewId, businessId }
+ *  - New:  { text, rating, authorName, language, reviewId, businessId, google_location_id }
  */
 type RcSelectReviewDetail = {
   reviewId?: string | null;
   businessId?: string | null;
+
+  // C1: location context (Places or GBP)
+  google_location_id?: string | null;
 
   // new shape
   text?: string | null;
@@ -55,7 +59,7 @@ type SelectedReview = {
   reviewId: string;
   businessId: string | null;
   text: string;
-  google_location_id?: string;
+  google_location_id?: string | null;
   rating: number | null;
   authorName: string | null;
   createdAt: string | null;
@@ -113,7 +117,10 @@ const DRAFT_RULES = [
 ];
 
 // --- tiny fetch helper: logs status + raw text if JSON parse fails ---
-async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promise<{
+async function fetchJson<T = any>(
+  input: RequestInfo,
+  init?: RequestInit
+): Promise<{
   ok: boolean;
   status: number;
   json: T | null;
@@ -127,7 +134,6 @@ async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promi
   try {
     json = rawText ? (JSON.parse(rawText) as T) : null;
   } catch {
-    // non-JSON response (404 HTML etc)
     json = null;
   }
 
@@ -182,31 +188,12 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     title: "Draft a reply in your voice",
     subtitle:
       "Paste the guest's review here. We'll draft a short reply in your style—you can tweak it before you post it anywhere.",
-    businessLabel: "Business name",
-    ratingLabel: "Review rating",
-    replyLanguageLabel: "Reviewer language (copy-ready)",
-    reviewLabel: "Guest review",
-    reviewHelp: "Paste the review text exactly as the guest wrote it.",
-    reviewCountHint: "10+",
-    draftLabel: "Owner draft (editable)",
-    draftPlaceholder: "A suggested reply will appear here…",
-    draftHelp: "This is a starting point. Edit it freely so it feels like you.",
-    finalLabel: "Copy-ready reply",
-    finalPlaceholder: "Copy-ready reply will appear here…",
-    finalHelp: "This is what you’ll paste into Google Reviews. It matches the reviewer’s language.",
-    btnDraft: "Draft a reply",
-    btnDraftLoading: "Drafting…",
-    btnAnother: "Draft another option",
-    btnAnotherLoading: "Drafting…",
-    btnCopy: "Copy reply",
-    btnCopied: "Copied",
+    selectedHint: "Selected review",
+    clearSelection: "Clear selection",
     statusDrafting: "Drafting…",
     statusReady: "Suggested",
     statusError: "Couldn’t draft",
     errorDefault: "Couldn’t draft a reply right now. Please try again.",
-    tip: "Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.",
-    selectedHint: "Selected review",
-    clearSelection: "Clear selection",
   };
 
   useEffect(() => {
@@ -241,10 +228,16 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           ? d.detectedLanguage
           : null;
 
+      const loc =
+        typeof d.google_location_id === "string" && d.google_location_id.trim()
+          ? d.google_location_id.trim()
+          : null;
+
       const next: SelectedReview = {
         reviewId: String(d.reviewId ?? ""),
         businessId: d.businessId ? String(d.businessId) : null,
         text,
+        google_location_id: loc, // ✅ C1: carry location into panel state
         rating: typeof d.rating === "number" ? d.rating : null,
         authorName: d.authorName ?? null,
         createdAt: d.createdAt ?? null,
@@ -336,6 +329,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     owner_language: string;
     reviewer_language: string;
     rating: number;
+    google_location_id?: string | null;
   }) {
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "POST",
@@ -356,11 +350,16 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return typeof id === "string" && id ? id : null;
   }
 
-  async function patchReplyRecord(id: string, statusValue: "copied" | "posted") {
+  async function patchReplyRecord(id: string, statusValue: "copied" | "posted", google_location_id?: string | null) {
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status: statusValue }),
+      body: JSON.stringify({
+        id,
+        status: statusValue,
+        google_location_id: google_location_id ?? null,
+        location_id: google_location_id ?? null, // backwards compatible
+      }),
     });
 
     if (!ok || !json?.ok) {
@@ -417,14 +416,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-          business_name: businessNameState.trim(),
-          rating,
-          language: replyLanguage,
-          review_text: reviewText.trim(),
-          google_location_id: selectedReview?.google_location_id?.trim() || "",
-          location_id: selectedReview?.google_location_id?.trim() || "", // optional safety for audit logging
-          tone, 
-          rules: DRAFT_RULES,
+            business_name: businessNameState.trim(),
+            rating,
+            language: replyLanguage,
+            review_text: reviewText.trim(),
+            google_location_id: selectedReview?.google_location_id?.trim() || "",
+            location_id: selectedReview?.google_location_id?.trim() || "",
+            tone,
+            rules: DRAFT_RULES,
           }),
         }
       );
@@ -469,11 +468,13 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       // create a draft record (best-effort)
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
+      const google_location_id = selectedReview?.google_location_id?.trim() || "";
 
       if (review_id && business_id) {
         const recId = await createReplyRecordDraft({
           review_id,
           business_id,
+          google_location_id: google_location_id || null,
           draft_text: ownerDraft,
           owner_language: ownerLangRaw,
           reviewer_language: reviewerLangRaw,
@@ -523,10 +524,9 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       const business_id = selectedReview?.businessId?.trim() || "";
       const google_location_id = selectedReview?.google_location_id?.trim() || "";
 
-
       if (review_id && business_id) {
         if (replyRecordId) {
-          await patchReplyRecord(replyRecordId, "copied");
+          await patchReplyRecord(replyRecordId, "copied", google_location_id || null);
         } else {
           const fallbackId = await createCopiedReplyRecordFallback({
             review_id,
@@ -583,11 +583,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const controlsGridStyle: React.CSSProperties = useMemo(
     () => ({
       display: "grid",
-      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 220px",
+      gridTemplateColumns: useIsNarrow(720) ? "1fr" : "1fr 140px 220px",
       gap: 10,
       marginTop: 12,
     }),
-    [isNarrow]
+    []
   );
 
   return (
@@ -604,7 +604,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       >
         <div style={{ minWidth: 240 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>{COPY.title}</h2>
+            <h2 style={{ margin: 0, fontSize: 18 }}>Draft a reply in your voice</h2>
 
             {version > 0 ? (
               <span style={versionBadgeStyle} title="Another option counter">
@@ -621,7 +621,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               lineHeight: 1.45,
             }}
           >
-            {COPY.subtitle}
+            Paste the guest's review here. We'll draft a short reply in your style—you can tweak it
+            before you post it anywhere.
           </p>
 
           {selectedReview ? (
@@ -771,32 +772,14 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       </div>
 
       {/* Actions */}
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          marginTop: 12,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
+      <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
         {!hasDraft ? (
-          <button
-            onClick={onDraft}
-            disabled={!canSubmit || isLoading}
-            style={primaryButtonStyle(!canSubmit || isLoading)}
-            title="Create a suggested reply you can edit"
-          >
+          <button onClick={onDraft} disabled={!canSubmit || isLoading} style={primaryButtonStyle(!canSubmit || isLoading)}>
             {isLoading ? "Drafting…" : "Draft a reply"}
           </button>
         ) : (
           <>
-            <button
-              onClick={onDraftAnother}
-              disabled={!canSubmit || isLoading}
-              style={primaryButtonStyle(!canSubmit || isLoading)}
-              title="Create another suggested option"
-            >
+            <button onClick={onDraftAnother} disabled={!canSubmit || isLoading} style={primaryButtonStyle(!canSubmit || isLoading)}>
               {isLoading ? "Drafting…" : "Draft another option"}
             </button>
 
@@ -806,9 +789,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </>
         )}
 
-        {status === "error" ? (
-          <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span>
-        ) : null}
+        {status === "error" ? <span style={{ color: "#fecaca", fontSize: 13 }}>{errorMessage}</span> : null}
       </div>
 
       {/* Owner Draft output */}
@@ -820,25 +801,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           onChange={(e) => setDraft(e.target.value)}
           placeholder="A suggested reply will appear here…"
           rows={7}
-          style={{
-            ...textareaStyle,
-            marginTop: 6,
-            opacity: hasDraft ? 1 : 0.9,
-          }}
+          style={{ ...textareaStyle, marginTop: 6, opacity: hasDraft ? 1 : 0.9 }}
         />
-
-        {hasDraft ? (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 12,
-              color: "rgba(226,232,240,0.62)",
-              lineHeight: 1.35,
-            }}
-          >
-            This is a starting point. Edit it freely so it feels like you.
-          </div>
-        ) : null}
       </div>
 
       {/* Copy-ready output (ONLY when different language) */}
@@ -851,35 +815,13 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             onChange={(e) => setFinalReply(e.target.value)}
             placeholder="Copy-ready reply will appear here…"
             rows={7}
-            style={{
-              ...textareaStyle,
-              marginTop: 6,
-              opacity: finalReply.trim() ? 1 : 0.9,
-            }}
+            style={{ ...textareaStyle, marginTop: 6, opacity: finalReply.trim() ? 1 : 0.9 }}
           />
-
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 12,
-              color: "rgba(226,232,240,0.62)",
-              lineHeight: 1.35,
-            }}
-          >
-            This is what you’ll paste into Google Reviews. It matches the reviewer’s language.
-          </div>
         </div>
       ) : null}
 
       {/* Footer note */}
-      <div
-        style={{
-          marginTop: 10,
-          fontSize: 12,
-          color: "rgba(226,232,240,0.6)",
-          lineHeight: 1.45,
-        }}
-      >
+      <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.6)", lineHeight: 1.45 }}>
         Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.
       </div>
     </section>
@@ -976,19 +918,11 @@ function statusPillStyle(tone: "neutral" | "success" | "error"): React.CSSProper
   };
 
   if (tone === "success") {
-    return {
-      ...base,
-      border: "1px solid rgba(34,197,94,0.35)",
-      background: "rgba(34,197,94,0.12)",
-    };
+    return { ...base, border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.12)" };
   }
 
   if (tone === "error") {
-    return {
-      ...base,
-      border: "1px solid rgba(248,113,113,0.45)",
-      background: "rgba(248,113,113,0.12)",
-    };
+    return { ...base, border: "1px solid rgba(248,113,113,0.45)", background: "rgba(248,113,113,0.12)" };
   }
 
   return base;
