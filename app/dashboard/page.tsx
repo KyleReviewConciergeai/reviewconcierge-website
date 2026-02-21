@@ -688,6 +688,17 @@ export default function DashboardPage() {
 
     setLocalState(review.id, { status: "drafted" });
 
+console.log(
+  "selectReviewForDraft review.google_location_id =",
+  (review as any).google_location_id
+);
+console.log(
+  "selectReviewForDraft derived google_location_id =",
+  (review as any).google_location_id ??
+    (review as any).location_id ??
+    (business?.google_place_id ?? null)
+);
+
     // ✅ Payload shape matches DraftReplyPanel (new shape)
     window.dispatchEvent(
       new CustomEvent("rc:select-review", {
