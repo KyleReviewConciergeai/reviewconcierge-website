@@ -12,7 +12,6 @@ type DraftReplyResponse = {
     reviewer_language?: string;
     reply_tone?: string;
     reply_signature?: string | null;
-    google_location_id?: string | null;
   };
 };
 
@@ -38,7 +37,7 @@ type RcSelectReviewDetail = {
   reviewId?: string | null;
   businessId?: string | null;
 
-  // C1: location context (Places or GBP)
+  // ✅ C1: carry location context through selection
   google_location_id?: string | null;
 
   // new shape
@@ -117,10 +116,7 @@ const DRAFT_RULES = [
 ];
 
 // --- tiny fetch helper: logs status + raw text if JSON parse fails ---
-async function fetchJson<T = any>(
-  input: RequestInfo,
-  init?: RequestInit
-): Promise<{
+async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promise<{
   ok: boolean;
   status: number;
   json: T | null;
@@ -188,12 +184,31 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     title: "Draft a reply in your voice",
     subtitle:
       "Paste the guest's review here. We'll draft a short reply in your style—you can tweak it before you post it anywhere.",
-    selectedHint: "Selected review",
-    clearSelection: "Clear selection",
+    businessLabel: "Business name",
+    ratingLabel: "Review rating",
+    replyLanguageLabel: "Reviewer language (copy-ready output).",
+    reviewLabel: "Guest review",
+    reviewHelp: "Paste the review text exactly as the guest wrote it.",
+    reviewCountHint: "10+",
+    draftLabel: "Owner draft (editable)",
+    draftPlaceholder: "A suggested reply will appear here…",
+    draftHelp: "This is a starting point. Edit it freely so it feels like you.",
+    finalLabel: "Copy-ready reply",
+    finalPlaceholder: "Copy-ready reply will appear here…",
+    finalHelp: "This is what you’ll paste into Google Reviews. It matches the reviewer’s language.",
+    btnDraft: "Draft a reply",
+    btnDraftLoading: "Drafting…",
+    btnAnother: "Draft another option",
+    btnAnotherLoading: "Drafting…",
+    btnCopy: "Copy reply",
+    btnCopied: "Copied",
     statusDrafting: "Drafting…",
     statusReady: "Suggested",
     statusError: "Couldn’t draft",
     errorDefault: "Couldn’t draft a reply right now. Please try again.",
+    tip: "Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.",
+    selectedHint: "Selected review",
+    clearSelection: "Clear selection",
   };
 
   useEffect(() => {
@@ -237,7 +252,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         reviewId: String(d.reviewId ?? ""),
         businessId: d.businessId ? String(d.businessId) : null,
         text,
-        google_location_id: loc, // ✅ C1: carry location into panel state
+        google_location_id: loc, // ✅ FIX: store location in selectedReview
         rating: typeof d.rating === "number" ? d.rating : null,
         authorName: d.authorName ?? null,
         createdAt: d.createdAt ?? null,
@@ -329,7 +344,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     owner_language: string;
     reviewer_language: string;
     rating: number;
-    google_location_id?: string | null;
   }) {
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "POST",
@@ -350,16 +364,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return typeof id === "string" && id ? id : null;
   }
 
-  async function patchReplyRecord(id: string, statusValue: "copied" | "posted", google_location_id?: string | null) {
+  async function patchReplyRecord(id: string, statusValue: "copied" | "posted") {
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id,
-        status: statusValue,
-        google_location_id: google_location_id ?? null,
-        location_id: google_location_id ?? null, // backwards compatible
-      }),
+      body: JSON.stringify({ id, status: statusValue }),
     });
 
     if (!ok || !json?.ok) {
@@ -468,13 +477,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       // create a draft record (best-effort)
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
-      const google_location_id = selectedReview?.google_location_id?.trim() || "";
 
       if (review_id && business_id) {
         const recId = await createReplyRecordDraft({
           review_id,
           business_id,
-          google_location_id: google_location_id || null,
           draft_text: ownerDraft,
           owner_language: ownerLangRaw,
           reviewer_language: reviewerLangRaw,
@@ -526,7 +533,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
 
       if (review_id && business_id) {
         if (replyRecordId) {
-          await patchReplyRecord(replyRecordId, "copied", google_location_id || null);
+          await patchReplyRecord(replyRecordId, "copied");
         } else {
           const fallbackId = await createCopiedReplyRecordFallback({
             review_id,
@@ -583,11 +590,11 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const controlsGridStyle: React.CSSProperties = useMemo(
     () => ({
       display: "grid",
-      gridTemplateColumns: useIsNarrow(720) ? "1fr" : "1fr 140px 220px",
+      gridTemplateColumns: isNarrow ? "1fr" : "1fr 140px 220px",
       gap: 10,
       marginTop: 12,
     }),
-    []
+    [isNarrow]
   );
 
   return (
@@ -604,7 +611,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       >
         <div style={{ minWidth: 240 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>Draft a reply in your voice</h2>
+            <h2 style={{ margin: 0, fontSize: 18 }}>{COPY.title}</h2>
 
             {version > 0 ? (
               <span style={versionBadgeStyle} title="Another option counter">
@@ -621,8 +628,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
               lineHeight: 1.45,
             }}
           >
-            Paste the guest's review here. We'll draft a short reply in your style—you can tweak it
-            before you post it anywhere.
+            {COPY.subtitle}
           </p>
 
           {selectedReview ? (
@@ -750,14 +756,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: 6,
-            fontSize: 12,
-            color: "rgba(226,232,240,0.62)",
-            lineHeight: 1.35,
-          }}
-        >
+        <div style={{ marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.62)", lineHeight: 1.35 }}>
           Paste the review text exactly as the guest wrote it.
         </div>
 
@@ -918,11 +917,19 @@ function statusPillStyle(tone: "neutral" | "success" | "error"): React.CSSProper
   };
 
   if (tone === "success") {
-    return { ...base, border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.12)" };
+    return {
+      ...base,
+      border: "1px solid rgba(34,197,94,0.35)",
+      background: "rgba(34,197,94,0.12)",
+    };
   }
 
   if (tone === "error") {
-    return { ...base, border: "1px solid rgba(248,113,113,0.45)", background: "rgba(248,113,113,0.12)" };
+    return {
+      ...base,
+      border: "1px solid rgba(248,113,113,0.45)",
+      background: "rgba(248,113,113,0.12)",
+    };
   }
 
   return base;
