@@ -372,7 +372,12 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status: statusValue }),
+      body: JSON.stringify({
+  id,
+  status: statusValue,
+  google_location_id: google_location_id?.trim() || "",
+  location_id: google_location_id?.trim() || "", // optional backwards-compat
+}),
     });
 
     if (!ok || !json?.ok) {
