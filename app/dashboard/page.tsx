@@ -60,6 +60,19 @@ type ReviewLocalState = {
   updatedAt: string;
 };
 
+// ✅ C3: sync status row
+type SyncStatusRow = {
+  google_location_id: string;
+  source: string;
+  last_sync_at: string | null;
+  last_sync_status: string | null; // 'success' | 'error'
+  last_sync_error: string | null;
+  last_fetched: number | null;
+  last_inserted: number | null;
+  last_updated: number | null;
+  updated_at: string | null;
+};
+
 function formatDate(iso: string | null) {
   if (!iso) return "";
   try {
@@ -93,6 +106,13 @@ function maskLocationId(id?: string | null) {
   const s = String(id);
   if (s.length <= 14) return s;
   return `${s.slice(0, 8)}…${s.slice(-4)}`;
+}
+
+function maskPlaceId(pid?: string | null) {
+  if (!pid) return "";
+  const s = String(pid);
+  if (s.length <= 10) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
 }
 
 export default function DashboardPage() {
@@ -146,6 +166,17 @@ export default function DashboardPage() {
     statusHandled: "Handled",
 
     locationAll: "All locations", // ✅ C2
+
+    // ✅ C3 copy
+    syncStatusTitle: "Sync status",
+    syncStatusHelp: "Shows the last Places sync for the selected location.",
+    syncStatusOk: "Healthy",
+    syncStatusErr: "Needs attention",
+    syncStatusNone: "No sync yet.",
+    syncStatusSource: "Source",
+    syncStatusLast: "Last sync",
+    syncStatusCounts: "Counts",
+    syncStatusError: "Error",
 
     listLabel: "Sample from Google (Places)",
     listLabelNote: "Google Places returns a limited sample (not always the latest).",
@@ -212,6 +243,9 @@ export default function DashboardPage() {
 
   // ✅ C2: location filter + persistence
   const [locationFilter, setLocationFilter] = useState<string>("all");
+
+  // ✅ C3: sync status
+  const [syncStatus, setSyncStatus] = useState<SyncStatusRow | null>(null);
 
   const storageKey = useMemo(() => {
     return `rc_review_state:${business?.id ?? "unknown"}`;
@@ -386,6 +420,46 @@ export default function DashboardPage() {
     }
   }
 
+  // ✅ C3: load per-location sync status from server API
+  async function loadSyncStatus(google_location_id: string | null) {
+    if (!google_location_id) {
+      setSyncStatus(null);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/org/location-sync-status?google_location_id=${encodeURIComponent(
+          google_location_id
+        )}&source=google_places`,
+        { cache: "no-store" }
+      );
+      const json = await res.json();
+
+      if (!res.ok || !json?.ok) {
+        setSyncStatus(null);
+        return;
+      }
+
+      const rows = Array.isArray(json?.rows) ? (json.rows as SyncStatusRow[]) : [];
+      setSyncStatus(rows.length ? rows[0] : null);
+    } catch {
+      setSyncStatus(null);
+    }
+  }
+
+  // ✅ C3: determine which location to show sync status for
+  const statusLocationId = useMemo(() => {
+    if (locationFilter !== "all") return locationFilter;
+    return business?.google_place_id ?? null;
+  }, [locationFilter, business?.google_place_id]);
+
+  // ✅ C3: reload status when selection changes
+  useEffect(() => {
+    loadSyncStatus(statusLocationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusLocationId]);
+
   async function reloadList() {
     if (actionLoading) return;
     try {
@@ -429,17 +503,20 @@ export default function DashboardPage() {
           { message: "Couldn’t refresh right now. Please try again.", type: "error" },
           4500
         );
+
+        // ✅ C3: refresh status (it may have recorded an error)
+        await loadSyncStatus(statusLocationId);
         return;
       }
 
       const fetched = Number(googleJson?.fetched ?? 0);
       const inserted = Number(googleJson?.inserted ?? 0);
       const updated = Number(googleJson?.updated ?? 0);
-      const syncedAt = (googleJson?.synced_at as string | undefined) ?? new Date().toISOString();
+      const fetchedAt = (googleJson?.fetched_at as string | undefined) ?? new Date().toISOString();
 
       const json = await loadReviews();
       setData(json);
-      setLastRefreshedAt(syncedAt);
+      setLastRefreshedAt(fetchedAt);
 
       const msg =
         fetched === 0
@@ -447,9 +524,13 @@ export default function DashboardPage() {
           : `Refreshed sample • ${inserted} new, ${updated} updated.`;
 
       showToast({ message: msg, type: "success" }, 3500);
+
+      // ✅ C3: refresh status card
+      await loadSyncStatus(statusLocationId);
     } catch (e: any) {
       console.error("Refresh from Google error:", e);
       showToast({ message: "Couldn’t refresh right now. Please try again.", type: "error" }, 4500);
+      await loadSyncStatus(statusLocationId);
     } finally {
       setActionLoading(null);
     }
@@ -509,6 +590,9 @@ export default function DashboardPage() {
 
       const r = await loadReviews();
       setData(r);
+
+      // ✅ C3: load status for new place id
+      await loadSyncStatus(json.business?.google_place_id ?? null);
     } catch (e: any) {
       const msg = e?.message ?? "Network error verifying Place ID. Please try again.";
       setPlaceIdStatus("error");
@@ -704,15 +788,6 @@ export default function DashboardPage() {
     data?.business?.business_name ??
     (businessLoaded ? "Unknown" : "Loading…");
 
-  const isPlaceConnectLoading = actionLoading === "connect" || placeIdStatus === "loading";
-
-  function maskPlaceId(pid?: string | null) {
-    if (!pid) return "";
-    const s = String(pid);
-    if (s.length <= 10) return s;
-    return `${s.slice(0, 6)}…${s.slice(-4)}`;
-  }
-
   async function copyReviewToClipboard(review: Review) {
     const text = (review.review_text ?? "").trim();
     if (!text) {
@@ -798,6 +873,44 @@ export default function DashboardPage() {
     if (s === "handled") return "rgba(34,197,94,0.35)";
     if (s === "drafted") return "rgba(59,130,246,0.30)";
     return "rgba(251,191,36,0.28)";
+  }
+
+  const syncTone = useMemo(() => {
+    const s = (syncStatus?.last_sync_status ?? "").toLowerCase();
+    if (s === "success") return "success" as const;
+    if (s === "error") return "error" as const;
+    return "neutral" as const;
+  }, [syncStatus?.last_sync_status]);
+
+  function syncPillStyle(tone: "neutral" | "success" | "error"): React.CSSProperties {
+    const base: React.CSSProperties = {
+      fontSize: 12,
+      padding: "6px 10px",
+      borderRadius: 999,
+      border: "1px solid rgba(148,163,184,0.28)",
+      background: "rgba(15,23,42,0.75)",
+      color: "#e2e8f0",
+      whiteSpace: "nowrap",
+      fontWeight: 800,
+    };
+
+    if (tone === "success") {
+      return {
+        ...base,
+        border: "1px solid rgba(34,197,94,0.35)",
+        background: "rgba(34,197,94,0.12)",
+      };
+    }
+
+    if (tone === "error") {
+      return {
+        ...base,
+        border: "1px solid rgba(248,113,113,0.45)",
+        background: "rgba(248,113,113,0.12)",
+      };
+    }
+
+    return base;
   }
 
   if (loading) {
@@ -983,6 +1096,94 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* ✅ C3 Sync status card */}
+      {hasGoogleConnected && (
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 16,
+            padding: 14,
+            background: "rgba(2,6,23,0.35)",
+            color: "rgba(226,232,240,0.92)",
+            marginTop: 14,
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>{COPY.syncStatusTitle}</div>
+              <div style={{ fontSize: 12, opacity: 0.72 }}>{COPY.syncStatusHelp}</div>
+              <div style={{ fontSize: 12, opacity: 0.72, marginTop: 6 }}>
+                Location:{" "}
+                <span style={{ fontFamily: "monospace", opacity: 0.95 }}>
+                  {maskLocationId(statusLocationId)}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <span style={syncPillStyle(syncTone)}>
+                {syncTone === "success"
+                  ? COPY.syncStatusOk
+                  : syncTone === "error"
+                    ? COPY.syncStatusErr
+                    : COPY.syncStatusNone}
+              </span>
+
+              <button
+                onClick={() => loadSyncStatus(statusLocationId)}
+                disabled={actionLoading !== null}
+                style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                title="Refresh sync status"
+              >
+                Refresh status
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: 12,
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              <div style={{ opacity: 0.7 }}>{COPY.syncStatusSource}</div>
+              <div style={{ fontWeight: 800, marginTop: 4 }}>
+                {syncStatus?.source ?? "google_places"}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              <div style={{ opacity: 0.7 }}>{COPY.syncStatusLast}</div>
+              <div style={{ fontWeight: 800, marginTop: 4 }}>
+                {syncStatus?.last_sync_at ? formatDate(syncStatus.last_sync_at) : "—"}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              <div style={{ opacity: 0.7 }}>{COPY.syncStatusCounts}</div>
+              <div style={{ fontWeight: 800, marginTop: 4 }}>
+                {syncStatus
+                  ? `${syncStatus.last_inserted ?? 0} new • ${syncStatus.last_updated ?? 0} updated • ${
+                      syncStatus.last_fetched ?? 0
+                    } fetched`
+                  : "—"}
+              </div>
+            </div>
+          </div>
+
+          {syncTone === "error" && syncStatus?.last_sync_error && (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#fecaca", lineHeight: 1.4 }}>
+              <div style={{ fontWeight: 900, marginBottom: 4 }}>{COPY.syncStatusError}</div>
+              <div style={{ opacity: 0.95 }}>{syncStatus.last_sync_error}</div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Why box */}
       {hasGoogleConnected && whyOpen && (
         <div
@@ -1151,7 +1352,7 @@ export default function DashboardPage() {
                 setPlaceSearchError(null);
                 setPlaceSearchResults([]);
               }}
-              disabled={isPlaceConnectLoading}
+              disabled={actionLoading !== null || placeIdStatus === "loading"}
               style={{ ...buttonStyle, minWidth: 170 }}
             >
               {showPlaceSearch ? "Hide search" : "Find my business"}
@@ -1169,7 +1370,7 @@ export default function DashboardPage() {
                   setPlaceSearchError(null);
                   showToast({ message: "Canceled Place ID change.", type: "success" }, 1800);
                 }}
-                disabled={isPlaceConnectLoading}
+                disabled={actionLoading !== null}
                 style={{ ...ghostButtonStyle, minWidth: 120 }}
               >
                 {COPY.cancelChangePlaceBtn}
@@ -1193,7 +1394,7 @@ export default function DashboardPage() {
                   value={placeSearchQuery}
                   onChange={(e) => setPlaceSearchQuery(e.target.value)}
                   placeholder="Business name + city"
-                  disabled={placeSearchLoading || isPlaceConnectLoading}
+                  disabled={placeSearchLoading || actionLoading !== null}
                   style={{
                     flex: "1 1 260px",
                     padding: "10px 12px",
@@ -1267,15 +1468,6 @@ export default function DashboardPage() {
                   ))}
                 </div>
               )}
-
-              {placeSearchResults.length === 0 &&
-                !placeSearchLoading &&
-                placeSearchQuery.trim() &&
-                !placeSearchError && (
-                  <div style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
-                    No results yet — try adding the city/neighborhood.
-                  </div>
-                )}
             </div>
           )}
 
@@ -1298,7 +1490,7 @@ export default function DashboardPage() {
                 }
               }}
               placeholder="Paste a Google Place ID"
-              disabled={isPlaceConnectLoading}
+              disabled={actionLoading !== null}
               style={{
                 flex: "1 1 320px",
                 padding: "10px 12px",
@@ -1307,16 +1499,16 @@ export default function DashboardPage() {
                 background: "rgba(15,23,42,0.7)",
                 color: "inherit",
                 outline: "none",
-                opacity: isPlaceConnectLoading ? 0.7 : 1,
+                opacity: actionLoading !== null ? 0.7 : 1,
               }}
             />
 
             <button
               onClick={connectGooglePlaceId}
-              disabled={actionLoading !== null || !placeIdInput.trim() || isPlaceConnectLoading}
+              disabled={actionLoading !== null || !placeIdInput.trim()}
               style={{ ...buttonStyle, minWidth: 170 }}
             >
-              {isPlaceConnectLoading ? COPY.connectBtnLoading : COPY.connectBtn}
+              {actionLoading === "connect" ? COPY.connectBtnLoading : COPY.connectBtn}
             </button>
           </div>
 
@@ -1349,66 +1541,6 @@ export default function DashboardPage() {
           )}
         </div>
       )}
-
-      {/* Summary cards */}
-      <div
-        className="summary-grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 16,
-          marginTop: 18,
-          marginBottom: 20,
-        }}
-      >
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Average rating</div>
-          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>from Google</div>
-          <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>
-            {avgRating === null ? "—" : clamp(avgRating, 0, 5).toFixed(2)}
-            <span style={{ opacity: 0.75, fontSize: 14, marginLeft: 10 }}>
-              {avgRating === null ? "" : stars(avgRating)}
-            </span>
-          </div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Reviews</div>
-          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>on Google</div>
-
-          <div style={{ fontSize: 22, fontWeight: 800, marginTop: 6 }}>
-            {totalReviews ?? data.count ?? reviews.length}
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 10 }}>
-              • showing {filteredReviews.length}
-            </span>
-          </div>
-        </div>
-
-        <div style={cardStyle}>
-          <div style={{ opacity: 0.75, fontSize: 12 }}>Last refreshed</div>
-
-          <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>
-            {lastRefreshedAt ? formatDate(lastRefreshedAt) : "—"}
-          </div>
-
-          <div style={{ opacity: 0.65, fontSize: 12, marginTop: 6 }}>
-            Latest review
-            {lastReviewDate ? ` • ${formatDate(lastReviewDate)}` : ""}
-          </div>
-        </div>
-      </div>
-
-      <style jsx>{`
-        @media (max-width: 768px) {
-          .summary-grid {
-            grid-template-columns: 1fr !important;
-          }
-        }
-      `}</style>
-
-      <div id="rc-draft-panel-anchor" style={{ position: "relative", top: -10 }} />
-
-      <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
 
       {/* Filters */}
       <div

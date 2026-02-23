@@ -28,6 +28,7 @@ type ReviewUpsertRow = {
   business_id: string;
   source: "google";
   google_review_id: string;
+  google_location_id: string; // ✅ C1/C3
   author_name: string | null;
   author_url: string | null;
   rating: number | null;
@@ -36,6 +37,10 @@ type ReviewUpsertRow = {
   detected_language: string | null;
   raw: unknown;
 };
+
+function asString(v: unknown) {
+  return typeof v === "string" ? v : "";
+}
 
 /**
  * Deterministic, short, low-collision ID derived from place + review payload.
@@ -57,14 +62,61 @@ function makeGoogleReviewId(
   return `${placeId}:${hash}`.slice(0, 255);
 }
 
-function asString(v: unknown) {
-  return typeof v === "string" ? v : "";
+async function upsertSyncStatus(params: {
+  supabase: any;
+  organizationId: string;
+  google_location_id: string;
+  source: "google_places";
+  status: "success" | "error";
+  errorMessage?: string | null;
+  fetched?: number | null;
+  inserted?: number | null;
+  updated?: number | null;
+}) {
+  const {
+    supabase,
+    organizationId,
+    google_location_id,
+    source,
+    status,
+    errorMessage,
+    fetched,
+    inserted,
+    updated,
+  } = params;
+
+  const nowIso = new Date().toISOString();
+
+  try {
+    await supabase.from("location_sync_status").upsert(
+      {
+        organization_id: organizationId,
+        google_location_id,
+        source,
+        last_sync_at: nowIso,
+        last_sync_status: status,
+        last_sync_error: status === "error" ? (errorMessage ?? "Unknown error") : null,
+        last_fetched: typeof fetched === "number" ? fetched : null,
+        last_inserted: typeof inserted === "number" ? inserted : null,
+        last_updated: typeof updated === "number" ? updated : null,
+        updated_at: nowIso,
+      },
+      { onConflict: "organization_id,google_location_id,source" }
+    );
+  } catch {
+    // best-effort; never fail the main request because of status bookkeeping
+  }
 }
 
 export async function GET(req: Request) {
+  // Best-effort C3 context so we can mark errors even if we exit early
+  let orgCtx: { supabase: any; organizationId: string } | null = null;
+  let placeIdForStatus: string | null = null;
+
   try {
     // 1) Org context
     const { supabase, organizationId } = await requireOrgContext();
+    orgCtx = { supabase, organizationId };
 
     // 2) Subscription gating (unlock Google fetch)
     const sub = await requireActiveSubscription();
@@ -85,7 +137,10 @@ export async function GET(req: Request) {
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ ok: false, error: "Missing GOOGLE_PLACES_API_KEY" }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "Missing GOOGLE_PLACES_API_KEY" },
+        { status: 500 }
+      );
     }
 
     // 3) Resolve placeId
@@ -116,6 +171,8 @@ export async function GET(req: Request) {
 
       placeId = biz.google_place_id;
     }
+
+    placeIdForStatus = placeId;
 
     // 4) Find matching business row for org + placeId
     const { data: business, error: businessErr } = await supabase
@@ -151,6 +208,16 @@ export async function GET(req: Request) {
     const google = (await res.json()) as GooglePlaceDetailsResponse;
 
     if (google.status !== "OK") {
+      // ✅ C3: mark sync error
+      await upsertSyncStatus({
+        supabase,
+        organizationId,
+        google_location_id: placeId,
+        source: "google_places",
+        status: "error",
+        errorMessage: `${google.status}${google.error_message ? `: ${google.error_message}` : ""}`,
+      });
+
       return NextResponse.json(
         { ok: false, googleStatus: google.status, googleError: google.error_message },
         { status: 502 }
@@ -159,7 +226,9 @@ export async function GET(req: Request) {
 
     const googleRating = typeof google.result?.rating === "number" ? google.result.rating : null;
     const googleTotal =
-      typeof google.result?.user_ratings_total === "number" ? google.result.user_ratings_total : null;
+      typeof google.result?.user_ratings_total === "number"
+        ? google.result.user_ratings_total
+        : null;
     const googleName = typeof google.result?.name === "string" ? google.result.name : null;
 
     // 5a) Update business row with summary stats
@@ -174,6 +243,16 @@ export async function GET(req: Request) {
       .eq("organization_id", organizationId);
 
     if (bizUpdateErr) {
+      // ✅ C3: mark sync error (we did hit Google but failed locally)
+      await upsertSyncStatus({
+        supabase,
+        organizationId,
+        google_location_id: placeId,
+        source: "google_places",
+        status: "error",
+        errorMessage: bizUpdateErr.message,
+      });
+
       return NextResponse.json({ ok: false, error: bizUpdateErr.message }, { status: 500 });
     }
 
@@ -181,6 +260,18 @@ export async function GET(req: Request) {
 
     // Note: Places API returns a limited set of reviews (often recent / helpful), not full history.
     if (googleReviews.length === 0) {
+      // ✅ C3: record a successful sync with 0 fetched
+      await upsertSyncStatus({
+        supabase,
+        organizationId,
+        google_location_id: placeId,
+        source: "google_places",
+        status: "success",
+        fetched: 0,
+        inserted: 0,
+        updated: 0,
+      });
+
       return NextResponse.json({
         ok: true,
         business_id: businessId,
@@ -202,7 +293,7 @@ export async function GET(req: Request) {
       business_id: businessId,
       source: "google",
       google_review_id: makeGoogleReviewId(placeId, r),
-      google_location_id: placeId,
+      google_location_id: placeId, // ✅ C1: always set it for Places
       author_name: r.author_name ?? null,
       author_url: r.author_url ?? null,
       rating: typeof r.rating === "number" ? r.rating : null,
@@ -224,11 +315,23 @@ export async function GET(req: Request) {
       .in("google_review_id", ids);
 
     if (existingErr) {
+      await upsertSyncStatus({
+        supabase,
+        organizationId,
+        google_location_id: placeId,
+        source: "google_places",
+        status: "error",
+        errorMessage: existingErr.message,
+      });
+
       return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
     }
 
     const existingSet = new Set((existing ?? []).map((r) => r.google_review_id));
-    const inserted = rows.reduce((acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1), 0);
+    const inserted = rows.reduce(
+      (acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1),
+      0
+    );
     const updated = rows.length - inserted;
 
     // 6b) Upsert
@@ -239,8 +342,32 @@ export async function GET(req: Request) {
       .limit(10);
 
     if (saveErr) {
+      await upsertSyncStatus({
+        supabase,
+        organizationId,
+        google_location_id: placeId,
+        source: "google_places",
+        status: "error",
+        errorMessage: saveErr.message,
+        fetched: rows.length,
+        inserted,
+        updated,
+      });
+
       return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
     }
+
+    // ✅ C3: mark sync success with counts
+    await upsertSyncStatus({
+      supabase,
+      organizationId,
+      google_location_id: placeId,
+      source: "google_places",
+      status: "success",
+      fetched: rows.length,
+      inserted,
+      updated,
+    });
 
     return NextResponse.json({
       ok: true,
@@ -258,6 +385,19 @@ export async function GET(req: Request) {
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
+
+    // ✅ C3: best-effort error status update if we have enough context
+    if (orgCtx?.supabase && orgCtx.organizationId && placeIdForStatus) {
+      await upsertSyncStatus({
+        supabase: orgCtx.supabase,
+        organizationId: orgCtx.organizationId,
+        google_location_id: placeIdForStatus,
+        source: "google_places",
+        status: "error",
+        errorMessage: message,
+      });
+    }
+
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
