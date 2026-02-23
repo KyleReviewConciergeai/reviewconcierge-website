@@ -1,7 +1,7 @@
 // app/api/org/voice-samples/[id]/route.ts
 export const runtime = "nodejs";
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireOrgContext } from "@/lib/orgServer";
 
 const MIN_LEN = 60;
@@ -55,9 +55,8 @@ function computeWarnings(sampleText: string): string[] {
   const hasUrl = /\bhttps?:\/\/|www\./i.test(t);
   if (hasUrl) warnings.push("contains_url");
 
-  const hasAddressHint = /\b(street|st\.|avenue|ave\.|road|rd\.|suite|ste\.|apt|apartment|unit|#\d+)\b/i.test(
-    t
-  );
+  const hasAddressHint =
+    /\b(street|st\.|avenue|ave\.|road|rd\.|suite|ste\.|apt|apartment|unit|#\d+)\b/i.test(t);
   if (hasAddressHint) warnings.push("contains_address_hint");
 
   return Array.from(new Set(warnings));
@@ -71,14 +70,16 @@ function validateOrThrow(sampleText: string) {
     throw new Error(`Sample text is too long. Maximum is ${MAX_LEN} characters.`);
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { supabase, organizationId } = await requireOrgContext();
-    const id = String(ctx?.params?.id ?? "").trim();
-    if (!id) return NextResponse.json({ ok: false, error: "Missing id." }, { status: 400 });
+
+    const { id } = await ctx.params;
+    const cleanId = String(id ?? "").trim();
+    if (!cleanId) return NextResponse.json({ ok: false, error: "Missing id." }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
-    const sample_text = cleanText(body?.sample_text);
+    const sample_text = cleanText((body as any)?.sample_text);
     validateOrThrow(sample_text);
 
     const nowIso = new Date().toISOString();
@@ -86,7 +87,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     const { data, error } = await supabase
       .from("voice_samples")
       .update({ sample_text, updated_at: nowIso })
-      .eq("id", id)
+      .eq("id", cleanId)
       .eq("organization_id", organizationId)
       .select("id, sample_text, created_at, updated_at")
       .single();
@@ -109,16 +110,18 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(_req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { supabase, organizationId } = await requireOrgContext();
-    const id = String(ctx?.params?.id ?? "").trim();
-    if (!id) return NextResponse.json({ ok: false, error: "Missing id." }, { status: 400 });
+
+    const { id } = await ctx.params;
+    const cleanId = String(id ?? "").trim();
+    if (!cleanId) return NextResponse.json({ ok: false, error: "Missing id." }, { status: 400 });
 
     const { error } = await supabase
       .from("voice_samples")
       .delete()
-      .eq("id", id)
+      .eq("id", cleanId)
       .eq("organization_id", organizationId);
 
     if (error) {
