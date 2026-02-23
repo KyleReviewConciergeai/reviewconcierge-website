@@ -1428,7 +1428,7 @@ export default function DashboardPage() {
             value={locationFilter}
             onChange={(e) => setLocationFilter(e.target.value)}
             style={selectStyle}
-            disabled={locationOptions.length <= 1}
+            disabled={locationOptions.length <= 0}
             title={locationOptions.length <= 1 ? "Only one location available" : "Filter by location"}
           >
             <option value="all">{COPY.locationAll}</option>
