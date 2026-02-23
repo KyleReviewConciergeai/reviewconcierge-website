@@ -60,13 +60,12 @@ type ReviewLocalState = {
   updatedAt: string;
 };
 
-// ✅ C3: sync status row
+// ✅ C3: this matches what your /api/location-sync-status currently returns
 type SyncStatusRow = {
   google_location_id: string;
-  source: string;
-  last_sync_at: string | null;
-  last_sync_status: string | null; // 'success' | 'error'
-  last_sync_error: string | null;
+  source: string; // "google_places"
+  last_synced_at: string | null;
+  last_error: string | null;
   last_fetched: number | null;
   last_inserted: number | null;
   last_updated: number | null;
@@ -246,6 +245,7 @@ export default function DashboardPage() {
 
   // ✅ C3: sync status
   const [syncStatus, setSyncStatus] = useState<SyncStatusRow | null>(null);
+  const [syncStatusLoading, setSyncStatusLoading] = useState(false);
 
   const storageKey = useMemo(() => {
     return `rc_review_state:${business?.id ?? "unknown"}`;
@@ -421,15 +421,17 @@ export default function DashboardPage() {
   }
 
   // ✅ C3: load per-location sync status from server API
+  // IMPORTANT: your route is /api/location-sync-status (NOT /api/org/location-sync-status)
   async function loadSyncStatus(google_location_id: string | null) {
     if (!google_location_id) {
       setSyncStatus(null);
       return;
     }
 
+    setSyncStatusLoading(true);
     try {
       const res = await fetch(
-        `/api/org/location-sync-status?google_location_id=${encodeURIComponent(
+        `/api/location-sync-status?google_location_id=${encodeURIComponent(
           google_location_id
         )}&source=google_places`,
         { cache: "no-store" }
@@ -445,6 +447,8 @@ export default function DashboardPage() {
       setSyncStatus(rows.length ? rows[0] : null);
     } catch {
       setSyncStatus(null);
+    } finally {
+      setSyncStatusLoading(false);
     }
   }
 
@@ -503,8 +507,6 @@ export default function DashboardPage() {
           { message: "Couldn’t refresh right now. Please try again.", type: "error" },
           4500
         );
-
-        // ✅ C3: refresh status (it may have recorded an error)
         await loadSyncStatus(statusLocationId);
         return;
       }
@@ -525,7 +527,6 @@ export default function DashboardPage() {
 
       showToast({ message: msg, type: "success" }, 3500);
 
-      // ✅ C3: refresh status card
       await loadSyncStatus(statusLocationId);
     } catch (e: any) {
       console.error("Refresh from Google error:", e);
@@ -591,7 +592,6 @@ export default function DashboardPage() {
       const r = await loadReviews();
       setData(r);
 
-      // ✅ C3: load status for new place id
       await loadSyncStatus(json.business?.google_place_id ?? null);
     } catch (e: any) {
       const msg = e?.message ?? "Network error verifying Place ID. Please try again.";
@@ -829,7 +829,6 @@ export default function DashboardPage() {
 
     setLocalState(review.id, { status: "drafted" });
 
-    // ✅ Payload shape matches DraftReplyPanel (new shape)
     window.dispatchEvent(
       new CustomEvent("rc:select-review", {
         detail: {
@@ -847,7 +846,6 @@ export default function DashboardPage() {
       })
     );
 
-    // Optional convenience
     copyReviewToClipboard(review).catch(() => null);
     showToast({ message: COPY.selectHelp, type: "success" }, 3000);
 
@@ -876,11 +874,14 @@ export default function DashboardPage() {
   }
 
   const syncTone = useMemo(() => {
-    const s = (syncStatus?.last_sync_status ?? "").toLowerCase();
-    if (s === "success") return "success" as const;
-    if (s === "error") return "error" as const;
+    // Your schema doesn’t have last_sync_status; infer:
+    // - if last_synced_at present and last_error null => success
+    // - if last_error present => error
+    // - else => neutral
+    if (syncStatus?.last_error) return "error" as const;
+    if (syncStatus?.last_synced_at) return "success" as const;
     return "neutral" as const;
-  }, [syncStatus?.last_sync_status]);
+  }, [syncStatus?.last_error, syncStatus?.last_synced_at]);
 
   function syncPillStyle(tone: "neutral" | "success" | "error"): React.CSSProperties {
     const base: React.CSSProperties = {
@@ -1073,6 +1074,7 @@ export default function DashboardPage() {
 
           {hasGoogleConnected && (
             <button
+              type="button"
               onClick={() => setWhyOpen((v) => !v)}
               disabled={actionLoading !== null}
               style={{
@@ -1089,13 +1091,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* “Last fetched” */}
-      {hasGoogleConnected && lastRefreshedAt && (
-        <div style={{ fontSize: 12, opacity: 0.65, marginTop: 8 }}>
-          Last refreshed: {new Date(lastRefreshedAt).toLocaleString()}
-        </div>
-      )}
-
       {/* ✅ C3 Sync status card */}
       {hasGoogleConnected && (
         <div
@@ -1109,7 +1104,15 @@ export default function DashboardPage() {
             marginBottom: 14,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+            }}
+          >
             <div>
               <div style={{ fontWeight: 900, marginBottom: 6 }}>{COPY.syncStatusTitle}</div>
               <div style={{ fontSize: 12, opacity: 0.72 }}>{COPY.syncStatusHelp}</div>
@@ -1126,17 +1129,32 @@ export default function DashboardPage() {
                 {syncTone === "success"
                   ? COPY.syncStatusOk
                   : syncTone === "error"
-                    ? COPY.syncStatusErr
-                    : COPY.syncStatusNone}
+                  ? COPY.syncStatusErr
+                  : COPY.syncStatusNone}
               </span>
 
+              {/* FIX: never render a “dead” button — allow click, guard inside handler */}
               <button
-                onClick={() => loadSyncStatus(statusLocationId)}
-                disabled={!statusLocationId}
-                style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
+                type="button"
+                onClick={async () => {
+                  if (!statusLocationId) {
+                    showToast({ message: "No location selected.", type: "error" }, 2500);
+                    return;
+                  }
+                  await loadSyncStatus(statusLocationId);
+                }}
+                disabled={syncStatusLoading}
+                style={{
+                  ...ghostButtonStyle,
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  fontSize: 12,
+                  opacity: syncStatusLoading ? 0.7 : 1,
+                  cursor: syncStatusLoading ? "not-allowed" : "pointer",
+                }}
                 title="Refresh sync status"
               >
-                Refresh status
+                {syncStatusLoading ? "Refreshing…" : "Refresh status"}
               </button>
             </div>
           </div>
@@ -1159,7 +1177,7 @@ export default function DashboardPage() {
             <div style={{ fontSize: 12, opacity: 0.8 }}>
               <div style={{ opacity: 0.7 }}>{COPY.syncStatusLast}</div>
               <div style={{ fontWeight: 800, marginTop: 4 }}>
-                {syncStatus?.last_sync_at ? formatDate(syncStatus.last_sync_at) : "—"}
+                {syncStatus?.last_synced_at ? formatDate(syncStatus.last_synced_at) : "—"}
               </div>
             </div>
 
@@ -1175,10 +1193,10 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {syncTone === "error" && syncStatus?.last_sync_error && (
+          {syncTone === "error" && syncStatus?.last_error && (
             <div style={{ marginTop: 12, fontSize: 12, color: "#fecaca", lineHeight: 1.4 }}>
               <div style={{ fontWeight: 900, marginBottom: 4 }}>{COPY.syncStatusError}</div>
-              <div style={{ opacity: 0.95 }}>{syncStatus.last_sync_error}</div>
+              <div style={{ opacity: 0.95 }}>{syncStatus.last_error}</div>
             </div>
           )}
         </div>
@@ -1204,343 +1222,8 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Connected confirmation + plan status */}
-      {!needsOnboarding && hasGoogleConnected && (
-        <div
-          style={{
-            border: "1px solid rgba(148,163,184,0.25)",
-            borderRadius: 16,
-            padding: 16,
-            background: "#0f172a",
-            color: "#e2e8f0",
-            marginTop: 16,
-            marginBottom: 16,
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 14,
-            alignItems: "flex-start",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ minWidth: 260, flex: "1 1 420px" }}>
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 800,
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <span style={{ color: "#22c55e" }}>●</span>
-              {COPY.connectedLabel}
-
-              <button
-                onClick={() => {
-                  setShowChangePlaceId((v) => !v);
-                  setShowPlaceSearch(false);
-                  setPlaceSearchQuery("");
-                  setPlaceSearchResults([]);
-                  setPlaceSearchError(null);
-
-                  window.setTimeout(() => {
-                    const el = document.getElementById("rc-connect-google-anchor");
-                    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }, 30);
-                }}
-                disabled={actionLoading !== null}
-                style={{
-                  ...ghostButtonStyle,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  fontSize: 12,
-                  fontWeight: 800,
-                }}
-                title="Switch to a different Place ID"
-              >
-                {showChangePlaceId ? COPY.cancelChangePlaceBtn : COPY.changePlaceBtn}
-              </button>
-            </div>
-
-            <div style={{ marginTop: 8, fontSize: 13, opacity: 0.92 }}>
-              <div style={{ marginBottom: 6 }}>
-                <span style={{ opacity: 0.75 }}>Business:</span>{" "}
-                <strong>{displayBusinessName}</strong>
-              </div>
-
-              <div>
-                <span style={{ opacity: 0.75 }}>Place ID:</span>{" "}
-                <span style={{ fontFamily: "monospace", opacity: 0.95 }}>
-                  {maskPlaceId(business?.google_place_id)}
-                </span>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>{COPY.connectedHelp}</div>
-
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.72 }}>
-              Nothing is posted automatically.
-            </div>
-          </div>
-
-          <div style={{ minWidth: 240, textAlign: "right" }}>
-            {subscriptionActive === null ? (
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-                Google sync: Checking…
-              </div>
-            ) : subscriptionActive ? (
-              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                Google sync: <span style={{ color: "#22c55e", fontWeight: 800 }}>Available</span>
-              </div>
-            ) : (
-              <>
-                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 8 }}>
-                  Google sync: <span style={{ color: "#f87171", fontWeight: 800 }}>Locked</span>
-                </div>
-                <div
-                  style={{
-                    border: "1px solid rgba(148,163,184,0.18)",
-                    borderRadius: 12,
-                    padding: "10px 12px",
-                    background: "rgba(2,6,23,0.25)",
-                    fontSize: 12,
-                    opacity: 0.9,
-                    marginBottom: 10,
-                    textAlign: "left",
-                  }}
-                >
-                  <div style={{ fontWeight: 800, marginBottom: 6 }}>{COPY.planLockedTitle}</div>
-                  <div style={{ lineHeight: 1.4 }}>{COPY.planLockedBody}</div>
-                </div>
-                <SubscribeButton />
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div id="rc-connect-google-anchor" style={{ position: "relative", top: -10 }} />
-
-      {/* Connect/Change card */}
-      {showConnectCard && (
-        <div
-          style={{
-            border: "1px solid rgba(148,163,184,0.25)",
-            borderRadius: 16,
-            padding: 16,
-            background: "#0f172a",
-            color: "#e2e8f0",
-            marginTop: 16,
-            marginBottom: 16,
-          }}
-        >
-          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{COPY.connectHeader}</div>
-
-          <div style={{ opacity: 0.85, fontSize: 13, marginBottom: 12, lineHeight: 1.45 }}>
-            {needsOnboarding ? COPY.connectBody : COPY.connectBodyChange}
-          </div>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <button
-              onClick={async () => {
-                if (subscriptionActive === false || upgradeRequired === true) {
-                  await redirectToCheckout();
-                  return;
-                }
-                setShowPlaceSearch((v) => !v);
-                setPlaceSearchError(null);
-                setPlaceSearchResults([]);
-              }}
-              disabled={actionLoading !== null || placeIdStatus === "loading"}
-              style={{ ...buttonStyle, minWidth: 170 }}
-            >
-              {showPlaceSearch ? "Hide search" : "Find my business"}
-            </button>
-
-            <div style={{ fontSize: 12, opacity: 0.75 }}>{COPY.connectTip}</div>
-
-            {!needsOnboarding && (
-              <button
-                onClick={() => {
-                  setShowChangePlaceId(false);
-                  setShowPlaceSearch(false);
-                  setPlaceSearchQuery("");
-                  setPlaceSearchResults([]);
-                  setPlaceSearchError(null);
-                  showToast({ message: "Canceled Place ID change.", type: "success" }, 1800);
-                }}
-                disabled={actionLoading !== null}
-                style={{ ...ghostButtonStyle, minWidth: 120 }}
-              >
-                {COPY.cancelChangePlaceBtn}
-              </button>
-            )}
-          </div>
-
-          {showPlaceSearch && (
-            <div
-              style={{
-                border: "1px solid rgba(148,163,184,0.25)",
-                borderRadius: 14,
-                padding: 12,
-                background: "rgba(2,6,23,0.35)",
-                marginTop: 12,
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <input
-                  value={placeSearchQuery}
-                  onChange={(e) => setPlaceSearchQuery(e.target.value)}
-                  placeholder="Business name + city"
-                  disabled={placeSearchLoading || actionLoading !== null}
-                  style={{
-                    flex: "1 1 260px",
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(148,163,184,0.35)",
-                    background: "rgba(15,23,42,0.7)",
-                    color: "inherit",
-                    outline: "none",
-                    opacity: placeSearchLoading ? 0.8 : 1,
-                  }}
-                />
-
-                <button
-                  onClick={searchPlaces}
-                  disabled={placeSearchLoading || !placeSearchQuery.trim()}
-                  style={{ ...buttonStyle, minWidth: 120 }}
-                >
-                  {placeSearchLoading ? "Searching…" : "Search"}
-                </button>
-              </div>
-
-              {placeSearchError && (
-                <div style={{ marginTop: 10, fontSize: 13, color: "#f87171" }}>
-                  {placeSearchError}
-                </div>
-              )}
-
-              {placeSearchResults.length > 0 && (
-                <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-                  {placeSearchResults.map((p) => (
-                    <button
-                      key={p.place_id}
-                      onClick={() => {
-                        setPlaceIdInput(p.place_id);
-
-                        if (placeIdStatus === "error") {
-                          setPlaceIdStatus("idle");
-                          setPlaceIdError(null);
-                        }
-
-                        setShowPlaceSearch(false);
-                        showToast({ message: `Selected: ${p.name}`, type: "success" }, 2200);
-                      }}
-                      style={{
-                        textAlign: "left",
-                        padding: "12px 12px",
-                        borderRadius: 14,
-                        border: "1px solid rgba(148,163,184,0.25)",
-                        background: "rgba(15,23,42,0.6)",
-                        color: "#e2e8f0",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
-                      {p.formatted_address && (
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                          {p.formatted_address}
-                        </div>
-                      )}
-                      <div
-                        style={{
-                          fontSize: 11,
-                          opacity: 0.55,
-                          marginTop: 8,
-                          fontFamily: "monospace",
-                        }}
-                      >
-                        {p.place_id}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              flexWrap: "wrap",
-              marginTop: 12,
-            }}
-          >
-            <input
-              value={placeIdInput}
-              onChange={(e) => {
-                setPlaceIdInput(e.target.value);
-                if (placeIdStatus === "error") {
-                  setPlaceIdStatus("idle");
-                  setPlaceIdError(null);
-                }
-              }}
-              placeholder="Paste a Google Place ID"
-              disabled={actionLoading !== null}
-              style={{
-                flex: "1 1 320px",
-                padding: "10px 12px",
-                borderRadius: 10,
-                border: "1px solid rgba(148,163,184,0.35)",
-                background: "rgba(15,23,42,0.7)",
-                color: "inherit",
-                outline: "none",
-                opacity: actionLoading !== null ? 0.7 : 1,
-              }}
-            />
-
-            <button
-              onClick={connectGooglePlaceId}
-              disabled={actionLoading !== null || !placeIdInput.trim()}
-              style={{ ...buttonStyle, minWidth: 170 }}
-            >
-              {actionLoading === "connect" ? COPY.connectBtnLoading : COPY.connectBtn}
-            </button>
-          </div>
-
-          <div style={{ marginTop: 10 }}>
-            {placeIdStatus === "loading" && (
-              <div style={{ fontSize: 13, opacity: 0.9 }}>Verifying…</div>
-            )}
-
-            {placeIdStatus === "error" && (
-              <div style={{ fontSize: 13, color: "#f87171" }}>
-                {placeIdError ??
-                  "We couldn’t verify this Place ID. Please double-check and try again."}
-              </div>
-            )}
-
-            {placeIdStatus === "success" && (
-              <div style={{ fontSize: 13, color: "#22c55e", fontWeight: 700 }}>
-                Connected ✔
-              </div>
-            )}
-          </div>
-
-          {placeVerify?.name && (
-            <div style={{ marginTop: 10, fontSize: 13, opacity: 0.9, lineHeight: 1.45 }}>
-              Connected to <strong>{placeVerify.name}</strong>.
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-                Next: refresh a sample of reviews above.
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      <div id="rc-draft-panel-anchor" style={{ position: "relative", top: -10 }} />
+      <DraftReplyPanel businessName={displayBusinessName === "Unknown" ? "" : displayBusinessName} />
 
       {/* Filters */}
       <div
@@ -1561,7 +1244,9 @@ export default function DashboardPage() {
             onChange={(e) => setLocationFilter(e.target.value)}
             style={selectStyle}
             disabled={locationOptions.length <= 0}
-            title={locationOptions.length === 0 ? "No locations available yet" : "Filter by location"}
+            title={
+              locationOptions.length === 0 ? "No locations available yet" : "Filter by location"
+            }
           >
             <option value="all">{COPY.locationAll}</option>
             {locationOptions.map((loc) => (
@@ -1615,6 +1300,7 @@ export default function DashboardPage() {
         </div>
 
         <button
+          type="button"
           onClick={() => {
             setLocationFilter("all");
             setRatingFilter("all");
@@ -1658,9 +1344,7 @@ export default function DashboardPage() {
                 {!hasGoogleConnected ? COPY.emptyBodyNoGoogle : COPY.emptyBodyHasGoogle}
               </div>
 
-              <div style={{ marginTop: 10, opacity: 0.72 }}>
-                You’ll always choose what to post.
-              </div>
+              <div style={{ marginTop: 10, opacity: 0.72 }}>You’ll always choose what to post.</div>
             </>
           ) : (
             <>
@@ -1670,6 +1354,7 @@ export default function DashboardPage() {
               </div>
               <div style={{ marginTop: 10 }}>
                 <button
+                  type="button"
                   onClick={() => {
                     setLocationFilter("all");
                     setRatingFilter("all");
@@ -1785,6 +1470,7 @@ export default function DashboardPage() {
                       }}
                     >
                       <button
+                        type="button"
                         onClick={() => selectReviewForDraft(r)}
                         disabled={!r.review_text}
                         style={{
@@ -1800,6 +1486,7 @@ export default function DashboardPage() {
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => copyReviewToClipboard(r)}
                         disabled={!r.review_text}
                         style={{
@@ -1835,6 +1522,7 @@ export default function DashboardPage() {
                 >
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
+                      type="button"
                       onClick={() => {
                         setLocalState(r.id, { status: "handled" });
                         showToast({ message: "Marked handled.", type: "success" }, 2000);
@@ -1852,6 +1540,7 @@ export default function DashboardPage() {
 
                     {local.status === "handled" && (
                       <button
+                        type="button"
                         onClick={() => {
                           setLocalState(r.id, { status: "needs_reply" });
                           showToast({ message: "Moved back to needs reply.", type: "success" }, 2000);
@@ -1872,9 +1561,7 @@ export default function DashboardPage() {
                   <div style={{ fontSize: 11, opacity: 0.65 }}>Saved on this device</div>
                 </div>
 
-                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
-                  Source: {r.source}
-                </div>
+                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>Source: {r.source}</div>
               </div>
             );
           })}
