@@ -1,3 +1,4 @@
+// app/api/location-sync-status/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -8,13 +9,13 @@ export async function GET(req: Request) {
     const { supabase, organizationId } = await requireOrgContext();
     const url = new URL(req.url);
 
-    const google_location_id = url.searchParams.get("google_location_id");
+    const google_location_id = (url.searchParams.get("google_location_id") ?? "").trim();
     const source = (url.searchParams.get("source") ?? "google_places").trim();
 
     let q = supabase
       .from("location_sync_status")
       .select(
-        "google_location_id,source,last_sync_at,last_sync_status,last_sync_error,last_fetched,last_inserted,last_updated,updated_at"
+        "google_location_id,source,last_synced_at,last_error,last_fetched,last_inserted,last_updated,updated_at"
       )
       .eq("organization_id", organizationId)
       .eq("source", source)
