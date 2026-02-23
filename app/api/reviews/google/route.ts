@@ -1,3 +1,4 @@
+// app/api/reviews/google/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -62,12 +63,13 @@ function makeGoogleReviewId(
   return `${placeId}:${hash}`.slice(0, 255);
 }
 
+// ✅ C3: best-effort sync status upsert (matches minimal table)
 async function upsertSyncStatus(params: {
   supabase: any;
   organizationId: string;
   google_location_id: string;
   source: "google_places";
-  status: "success" | "error";
+  ok: boolean;
   errorMessage?: string | null;
   fetched?: number | null;
   inserted?: number | null;
@@ -78,7 +80,7 @@ async function upsertSyncStatus(params: {
     organizationId,
     google_location_id,
     source,
-    status,
+    ok,
     errorMessage,
     fetched,
     inserted,
@@ -93,9 +95,8 @@ async function upsertSyncStatus(params: {
         organization_id: organizationId,
         google_location_id,
         source,
-        last_sync_at: nowIso,
-        last_sync_status: status,
-        last_sync_error: status === "error" ? (errorMessage ?? "Unknown error") : null,
+        last_synced_at: nowIso,
+        last_error: ok ? null : (errorMessage ?? "Unknown error"),
         last_fetched: typeof fetched === "number" ? fetched : null,
         last_inserted: typeof inserted === "number" ? inserted : null,
         last_updated: typeof updated === "number" ? updated : null,
@@ -104,7 +105,7 @@ async function upsertSyncStatus(params: {
       { onConflict: "organization_id,google_location_id,source" }
     );
   } catch {
-    // best-effort; never fail the main request because of status bookkeeping
+    // best-effort only
   }
 }
 
@@ -137,10 +138,7 @@ export async function GET(req: Request) {
 
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { ok: false, error: "Missing GOOGLE_PLACES_API_KEY" },
-        { status: 500 }
-      );
+      return NextResponse.json({ ok: false, error: "Missing GOOGLE_PLACES_API_KEY" }, { status: 500 });
     }
 
     // 3) Resolve placeId
@@ -161,10 +159,7 @@ export async function GET(req: Request) {
 
       if (!biz?.google_place_id) {
         return NextResponse.json(
-          {
-            ok: false,
-            error: "No connected Google Place ID found. Connect your business first.",
-          },
+          { ok: false, error: "No connected Google Place ID found. Connect your business first." },
           { status: 400 }
         );
       }
@@ -185,10 +180,28 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (businessErr) {
+      await upsertSyncStatus({
+        supabase,
+        organizationId,
+        google_location_id: placeId,
+        source: "google_places",
+        ok: false,
+        errorMessage: businessErr.message,
+      });
+
       return NextResponse.json({ ok: false, error: businessErr.message }, { status: 500 });
     }
 
     if (!business?.id || !business?.google_place_id) {
+      await upsertSyncStatus({
+        supabase,
+        organizationId,
+        google_location_id: placeId,
+        source: "google_places",
+        ok: false,
+        errorMessage: "No matching business found for this connected Place ID.",
+      });
+
       return NextResponse.json(
         { ok: false, error: "No matching business found for this connected Place ID." },
         { status: 404 }
@@ -197,7 +210,7 @@ export async function GET(req: Request) {
 
     const businessId = business.id as string;
 
-    // 5) Fetch Place details (includes a limited set of recent reviews + summary metrics)
+    // 5) Fetch Place details
     const url =
       "https://maps.googleapis.com/maps/api/place/details/json" +
       `?place_id=${encodeURIComponent(placeId)}` +
@@ -208,13 +221,12 @@ export async function GET(req: Request) {
     const google = (await res.json()) as GooglePlaceDetailsResponse;
 
     if (google.status !== "OK") {
-      // ✅ C3: mark sync error
       await upsertSyncStatus({
         supabase,
         organizationId,
         google_location_id: placeId,
         source: "google_places",
-        status: "error",
+        ok: false,
         errorMessage: `${google.status}${google.error_message ? `: ${google.error_message}` : ""}`,
       });
 
@@ -226,12 +238,10 @@ export async function GET(req: Request) {
 
     const googleRating = typeof google.result?.rating === "number" ? google.result.rating : null;
     const googleTotal =
-      typeof google.result?.user_ratings_total === "number"
-        ? google.result.user_ratings_total
-        : null;
+      typeof google.result?.user_ratings_total === "number" ? google.result.user_ratings_total : null;
     const googleName = typeof google.result?.name === "string" ? google.result.name : null;
 
-    // 5a) Update business row with summary stats
+    // 5a) Update business stats
     const { error: bizUpdateErr } = await supabase
       .from("businesses")
       .update({
@@ -243,13 +253,12 @@ export async function GET(req: Request) {
       .eq("organization_id", organizationId);
 
     if (bizUpdateErr) {
-      // ✅ C3: mark sync error (we did hit Google but failed locally)
       await upsertSyncStatus({
         supabase,
         organizationId,
         google_location_id: placeId,
         source: "google_places",
-        status: "error",
+        ok: false,
         errorMessage: bizUpdateErr.message,
       });
 
@@ -258,15 +267,13 @@ export async function GET(req: Request) {
 
     const googleReviews = Array.isArray(google.result?.reviews) ? google.result!.reviews! : [];
 
-    // Note: Places API returns a limited set of reviews (often recent / helpful), not full history.
     if (googleReviews.length === 0) {
-      // ✅ C3: record a successful sync with 0 fetched
       await upsertSyncStatus({
         supabase,
         organizationId,
         google_location_id: placeId,
         source: "google_places",
-        status: "success",
+        ok: true,
         fetched: 0,
         inserted: 0,
         updated: 0,
@@ -293,7 +300,7 @@ export async function GET(req: Request) {
       business_id: businessId,
       source: "google",
       google_review_id: makeGoogleReviewId(placeId, r),
-      google_location_id: placeId, // ✅ C1: always set it for Places
+      google_location_id: placeId, // ✅ always set for Places
       author_name: r.author_name ?? null,
       author_url: r.author_url ?? null,
       rating: typeof r.rating === "number" ? r.rating : null,
@@ -320,7 +327,7 @@ export async function GET(req: Request) {
         organizationId,
         google_location_id: placeId,
         source: "google_places",
-        status: "error",
+        ok: false,
         errorMessage: existingErr.message,
       });
 
@@ -328,17 +335,14 @@ export async function GET(req: Request) {
     }
 
     const existingSet = new Set((existing ?? []).map((r) => r.google_review_id));
-    const inserted = rows.reduce(
-      (acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1),
-      0
-    );
+    const inserted = rows.reduce((acc, r) => acc + (existingSet.has(r.google_review_id) ? 0 : 1), 0);
     const updated = rows.length - inserted;
 
     // 6b) Upsert
     const { data: savedPreview, error: saveErr } = await supabase
       .from("reviews")
       .upsert(rows, { onConflict: "organization_id,source,google_review_id" })
-      .select("id, source, google_review_id, rating, author_name, review_date, detected_language")
+      .select("id, source, google_review_id, rating, author_name, review_date, detected_language, google_location_id")
       .limit(10);
 
     if (saveErr) {
@@ -347,7 +351,7 @@ export async function GET(req: Request) {
         organizationId,
         google_location_id: placeId,
         source: "google_places",
-        status: "error",
+        ok: false,
         errorMessage: saveErr.message,
         fetched: rows.length,
         inserted,
@@ -357,13 +361,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: saveErr.message }, { status: 500 });
     }
 
-    // ✅ C3: mark sync success with counts
     await upsertSyncStatus({
       supabase,
       organizationId,
       google_location_id: placeId,
       source: "google_places",
-      status: "success",
+      ok: true,
       fetched: rows.length,
       inserted,
       updated,
@@ -386,14 +389,13 @@ export async function GET(req: Request) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
-    // ✅ C3: best-effort error status update if we have enough context
     if (orgCtx?.supabase && orgCtx.organizationId && placeIdForStatus) {
       await upsertSyncStatus({
         supabase: orgCtx.supabase,
         organizationId: orgCtx.organizationId,
         google_location_id: placeIdForStatus,
         source: "google_places",
-        status: "error",
+        ok: false,
         errorMessage: message,
       });
     }
