@@ -202,6 +202,7 @@ export async function GET(req: Request) {
       business_id: businessId,
       source: "google",
       google_review_id: makeGoogleReviewId(placeId, r),
+      google_location_id: placeId,
       author_name: r.author_name ?? null,
       author_url: r.author_url ?? null,
       rating: typeof r.rating === "number" ? r.rating : null,

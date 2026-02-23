@@ -12,6 +12,7 @@ type Review = {
   business_id: string;
   source: string;
   google_review_id: string;
+  google_location_id?: string | null; // ✅ C2
   rating: number | null;
   author_name: string | null;
   author_url: string | null;
@@ -87,6 +88,13 @@ function safeJsonParse<T>(value: string | null): T | null {
   }
 }
 
+function maskLocationId(id?: string | null) {
+  if (!id) return "Unknown";
+  const s = String(id);
+  if (s.length <= 14) return s;
+  return `${s.slice(0, 8)}…${s.slice(-4)}`;
+}
+
 export default function DashboardPage() {
   const sb = supabaseBrowser();
 
@@ -131,10 +139,13 @@ export default function DashboardPage() {
     filtersSearch: "Search",
     filtersClear: "Clear",
     filtersStatus: "Status",
+    filtersLocation: "Location", // ✅ C2
     statusAll: "All",
     statusNeeds: "Needs reply",
     statusDrafted: "Drafted",
     statusHandled: "Handled",
+
+    locationAll: "All locations", // ✅ C2
 
     listLabel: "Sample from Google (Places)",
     listLabelNote: "Google Places returns a limited sample (not always the latest).",
@@ -199,8 +210,15 @@ export default function DashboardPage() {
 
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
 
+  // ✅ C2: location filter + persistence
+  const [locationFilter, setLocationFilter] = useState<string>("all");
+
   const storageKey = useMemo(() => {
     return `rc_review_state:${business?.id ?? "unknown"}`;
+  }, [business?.id]);
+
+  const locationStorageKey = useMemo(() => {
+    return `rc_location_filter:${business?.id ?? "unknown"}`;
   }, [business?.id]);
 
   const needsOnboarding = businessLoaded && (!business || !business.google_place_id);
@@ -231,6 +249,26 @@ export default function DashboardPage() {
       // ignore
     }
   }, [reviewLocal, storageKey]);
+
+  // ✅ C2: load persisted location filter
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(locationStorageKey);
+      const parsed = safeJsonParse<{ location: string }>(raw);
+      if (parsed?.location) setLocationFilter(parsed.location);
+    } catch {
+      // ignore
+    }
+  }, [locationStorageKey]);
+
+  // ✅ C2: persist location filter
+  useEffect(() => {
+    try {
+      localStorage.setItem(locationStorageKey, JSON.stringify({ location: locationFilter }));
+    } catch {
+      // ignore
+    }
+  }, [locationFilter, locationStorageKey]);
 
   function getLocalState(id: string): ReviewLocalState {
     const existing = reviewLocal[id];
@@ -564,6 +602,27 @@ export default function DashboardPage() {
 
   const reviews = data?.reviews ?? [];
 
+  // ✅ C2: compute available locations from current review rows
+  const locationOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of reviews) {
+      const loc = (r as any)?.google_location_id;
+      if (typeof loc === "string" && loc.trim()) set.add(loc.trim());
+    }
+
+    // If we have a connected place id but reviews are missing location, include it as an option
+    if (business?.google_place_id) set.add(String(business.google_place_id));
+
+    return Array.from(set).sort();
+  }, [reviews, business?.google_place_id]);
+
+  // ✅ C2: if the saved filter points to a location that no longer exists, reset to all
+  useEffect(() => {
+    if (locationFilter === "all") return;
+    if (locationOptions.includes(locationFilter)) return;
+    setLocationFilter("all");
+  }, [locationFilter, locationOptions]);
+
   useEffect(() => {
     if (!reviews?.length) return;
 
@@ -585,6 +644,13 @@ export default function DashboardPage() {
     const q = query.trim().toLowerCase();
 
     return reviews.filter((r) => {
+      // ✅ C2 location filter
+      if (locationFilter !== "all") {
+        const loc = (r as any)?.google_location_id;
+        const normalized = typeof loc === "string" ? loc.trim() : "";
+        if (normalized !== locationFilter) return false;
+      }
+
       const matchesRating =
         ratingFilter === "all"
           ? true
@@ -611,7 +677,7 @@ export default function DashboardPage() {
       return haystack.includes(q);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reviews, ratingFilter, query, statusFilter, reviewLocal]);
+  }, [reviews, ratingFilter, query, statusFilter, reviewLocal, locationFilter]);
 
   const avgRating = useMemo(() => {
     const n = business?.google_rating;
@@ -688,17 +754,6 @@ export default function DashboardPage() {
 
     setLocalState(review.id, { status: "drafted" });
 
-console.log(
-  "selectReviewForDraft review.google_location_id =",
-  (review as any).google_location_id
-);
-console.log(
-  "selectReviewForDraft derived google_location_id =",
-  (review as any).google_location_id ??
-    (review as any).location_id ??
-    (business?.google_place_id ?? null)
-);
-
     // ✅ Payload shape matches DraftReplyPanel (new shape)
     window.dispatchEvent(
       new CustomEvent("rc:select-review", {
@@ -706,9 +761,7 @@ console.log(
           reviewId: review.id,
           businessId: review.business_id,
           google_location_id:
-            (review as any).google_location_id ??
-            (review as any).location_id ??
-            (business?.google_place_id ?? null),
+            (review.google_location_id ?? null) || (business?.google_place_id ?? null),
           text,
           rating: typeof review.rating === "number" ? review.rating : null,
           authorName: review.author_name ?? null,
@@ -1368,6 +1421,25 @@ console.log(
           marginTop: 14,
         }}
       >
+        {/* ✅ C2 Location */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersLocation}</span>
+          <select
+            value={locationFilter}
+            onChange={(e) => setLocationFilter(e.target.value)}
+            style={selectStyle}
+            disabled={locationOptions.length <= 1}
+            title={locationOptions.length <= 1 ? "Only one location available" : "Filter by location"}
+          >
+            <option value="all">{COPY.locationAll}</option>
+            {locationOptions.map((loc) => (
+              <option key={loc} value={loc}>
+                {maskLocationId(loc)}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ opacity: 0.8, fontSize: 13 }}>{COPY.filtersRating}</span>
           <select
@@ -1412,6 +1484,7 @@ console.log(
 
         <button
           onClick={() => {
+            setLocationFilter("all");
             setRatingFilter("all");
             setStatusFilter("all");
             setQuery("");
@@ -1466,6 +1539,7 @@ console.log(
               <div style={{ marginTop: 10 }}>
                 <button
                   onClick={() => {
+                    setLocationFilter("all");
                     setRatingFilter("all");
                     setStatusFilter("all");
                     setQuery("");
@@ -1666,7 +1740,9 @@ console.log(
                   <div style={{ fontSize: 11, opacity: 0.65 }}>Saved on this device</div>
                 </div>
 
-                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>Source: {r.source}</div>
+                <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
+                  Source: {r.source}
+                </div>
               </div>
             );
           })}
