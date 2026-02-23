@@ -9,6 +9,7 @@ import crypto from "crypto";
 
 const PROMPT_VERSION = "draft-reply-v1";
 const BANNED_LIST_VERSION = "banned-v1";
+const POST_CLEAN_VERSION = "postclean-v2"; // ✅ B4
 
 function sha256Hex(input: string) {
   return crypto.createHash("sha256").update(input ?? "", "utf8").digest("hex");
@@ -61,7 +62,7 @@ function splitSentences(text: string) {
 }
 
 function limitSentences(text: string, maxSentences: number) {
-  const t = text.trim();
+  const t = (text ?? "").trim();
   if (!t) return t;
 
   const parts = splitSentences(t);
@@ -209,11 +210,7 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
 }
 
 /**
- * Voice samples (A4 selection already incorporated in your current file).
- * NOTE: Keeping your existing implementation from the version you deployed previously.
- * This file replacement assumes your current A4 version is present.
- *
- * If you ever want me to rebase A4 code again, paste your current file and I’ll merge cleanly.
+ * Voice samples (A4 selection already present in this file)
  */
 type VoiceSampleRow = {
   id: string;
@@ -485,9 +482,6 @@ function sentencePolicyForRating(rating: number) {
   return 3;
 }
 
-// --- (mustDo/mustNot/styleLines/buildAvoidList/buildVoiceSamplesBlock/buildPrompt etc.) ---
-// Keeping unchanged from your current working version:
-
 function mustDoForRating(rating: number) {
   const base = [
     "Write 2–4 short sentences max (follow sentence limit below).",
@@ -615,7 +609,9 @@ function styleLines(params: {
       ? "Formality: casual (still respectful)."
       : "Formality: professional (not stiff).";
 
-  const signatureLine = reply_signature ? `Signature: end with “— ${reply_signature}”.` : "Signature: none.";
+  const signatureLine = reply_signature
+    ? `Signature: end with “— ${reply_signature}”.`
+    : "Signature: none.";
 
   const exclamationLine = voice.allow_exclamation
     ? rating >= 5
@@ -758,7 +754,7 @@ function appendSignatureIfMissing(reply: string, signature: string | null) {
 }
 
 function stripTemplatedOpeners(text: string) {
-  let t = text.trim();
+  let t = (text ?? "").trim();
   const patterns: RegExp[] = [
     /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words))?)[,!.]\s*/i,
     /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
@@ -805,7 +801,11 @@ function reviewerMentionsCapacityExcuse(reviewText: string) {
   );
 }
 
-function removeExcuseSentencesIfInvented(params: { reply: string; rating: number; review_text: string }) {
+function removeExcuseSentencesIfInvented(params: {
+  reply: string;
+  rating: number;
+  review_text: string;
+}) {
   const { reply, rating, review_text } = params;
   const t = (reply ?? "").trim();
   if (!t) return t;
@@ -817,6 +817,157 @@ function removeExcuseSentencesIfInvented(params: { reply: string; rating: number
   const parts = splitSentences(t);
   const kept = parts.filter((s) => !excuseRe.test(s));
   return kept.length === 0 ? t : kept.join(" ").trim();
+}
+
+/* =========================
+   ✅ B4: First-sentence detail enforcement + closer cleanup
+   ========================= */
+
+const STOPWORDS = new Set(
+  [
+    "the","and","for","with","this","that","was","were","are","is","to","of","in","on","at","it",
+    "we","i","you","they","them","our","your","my","me","a","an","as","but","so","very","really",
+    "just","too","not","no","yes","had","have","has","be","been","from","again","back","there",
+    "here","great","good","nice","love","loved","amazing","awesome","best","worst","bad","okay",
+    "food","service" // keep these from dominating keyword selection
+  ]
+);
+
+const DETAIL_HINT_RE =
+  /\b(server|staff|team|host|bartender|barista|chef|manager|wine|coffee|espresso|cocktail|beer|pizza|pasta|steak|sushi|taco|burger|salad|dessert|cake|ice cream|breakfast|brunch|lunch|dinner|table|patio|music|vibe|atmosphere|reservation|wait|line|checkout|price|portion|parking|bathroom|restroom|clean|location)\b/i;
+
+function pickDetailKeyword(reviewText: string) {
+  const t = (reviewText ?? "").trim();
+  if (!t) return null;
+
+  // Prefer a known “detail hint” term if present
+  const m = t.match(DETAIL_HINT_RE);
+  if (m && m[0]) return m[0].trim();
+
+  // Otherwise pick a decent non-stopword token (length >= 4)
+  const tokens = tokenize(t);
+  const candidates = tokens
+    .filter((w) => w.length >= 4)
+    .filter((w) => !STOPWORDS.has(w))
+    .slice(0, 80);
+
+  if (candidates.length === 0) return null;
+
+  // Slight preference: earlier words often are the detail
+  return candidates[0];
+}
+
+function firstSentenceMentionsKeyword(reply: string, keyword: string) {
+  const parts = splitSentences(reply);
+  if (parts.length === 0) return false;
+  const first = parts[0].toLowerCase();
+  return first.includes(keyword.toLowerCase());
+}
+
+function isGenericFirstSentence(s: string) {
+  const t = (s ?? "").toLowerCase();
+  // Very light heuristic: first sentence that is basically gratitude with no specifics
+  return (
+    /\b(thank you|thanks|appreciate)\b/.test(t) &&
+    !DETAIL_HINT_RE.test(t) &&
+    t.length <= 120
+  );
+}
+
+function buildFirstSentenceWithKeyword(params: {
+  keyword: string;
+  rating: number;
+  owner_language: string;
+  voice: ReturnType<typeof normalizeVoice>;
+}) {
+  const { keyword, rating, owner_language, voice } = params;
+  const lang = normLang(owner_language);
+
+  const whoWe = voice.reply_as === "we";
+  const subj = whoWe ? "We" : "I";
+
+  // Keep it safe: mention ONLY the keyword, no invented claims.
+  if (lang === "es") {
+    if (rating <= 2) return `Lamentamos lo de ${keyword}.`;
+    return `Gracias por mencionar ${keyword}.`;
+  }
+  if (lang === "pt") {
+    if (rating <= 2) return `Sinto muito pelo problema com ${keyword}.`;
+    return `Obrigado(a) por mencionar ${keyword}.`;
+  }
+  if (lang === "fr") {
+    if (rating <= 2) return `Désolé pour le souci avec ${keyword}.`;
+    return `Merci d’avoir mentionné ${keyword}.`;
+  }
+  if (lang === "it") {
+    if (rating <= 2) return `Mi dispiace per il problema con ${keyword}.`;
+    return `Grazie per aver menzionato ${keyword}.`;
+  }
+  if (lang === "de") {
+    if (rating <= 2) return `Es tut mir leid wegen ${keyword}.`;
+    return `Danke, dass du ${keyword} erwähnt hast.`;
+  }
+
+  // default EN
+  if (rating <= 2) return `${subj}’re sorry about the ${keyword}.`.replace("I’re", "I’m");
+  return `Thanks for mentioning the ${keyword}.`;
+}
+
+function normLang(tag: string) {
+  return (tag || "").trim().toLowerCase().split("-")[0];
+}
+
+function enforceFirstSentenceDetail(params: {
+  reply: string;
+  review_text: string;
+  rating: number;
+  owner_language: string;
+  voice: ReturnType<typeof normalizeVoice>;
+}) {
+  const { reply, review_text, rating, owner_language, voice } = params;
+
+  const keyword = pickDetailKeyword(review_text);
+  if (!keyword) {
+    return { text: reply, enforced: false, keyword: null };
+  }
+
+  const parts = splitSentences(reply);
+  if (parts.length === 0) return { text: reply, enforced: false, keyword };
+
+  if (firstSentenceMentionsKeyword(reply, keyword)) {
+    return { text: reply, enforced: false, keyword };
+  }
+
+  const first = parts[0];
+  const replacement = buildFirstSentenceWithKeyword({ keyword, rating, owner_language, voice });
+
+  // If the first sentence is generic, replace it. Otherwise, prepend (safer).
+  let nextParts: string[] = [];
+  if (isGenericFirstSentence(first)) {
+    nextParts = [replacement, ...parts.slice(1)];
+  } else {
+    nextParts = [replacement, ...parts];
+  }
+
+  const out = nextParts.join(" ").trim();
+  return { text: out, enforced: true, keyword };
+}
+
+const REPETITIVE_CLOSER_RE =
+  /\b(hope to see you again|hope to see you soon|see you again soon|come back soon|visit us again|we look forward to (?:seeing|welcoming) you)\b/i;
+
+function stripRepetitiveClosers(reply: string, rating: number) {
+  // Only apply for positive reviews, where closers tend to get template-y.
+  if (rating < 4) return { text: reply, stripped: false };
+
+  const parts = splitSentences(reply);
+  if (parts.length <= 2) return { text: reply, stripped: false }; // already short
+
+  const kept = parts.filter((s) => !REPETITIVE_CLOSER_RE.test(s));
+  if (kept.length === parts.length) return { text: reply, stripped: false };
+
+  const out = kept.join(" ").trim();
+  return { text: out || reply, stripped: true };
 }
 
 export async function POST(req: Request) {
@@ -840,6 +991,8 @@ export async function POST(req: Request) {
     const business_name = cleanString((body as any)?.business_name, 200);
     const reviewer_language = cleanLanguage((body as any)?.language);
     const rating = parseRating((body as any)?.rating);
+
+    const debug = !!(body as any)?.debug;
 
     // Future-proof identifiers (optional)
     const review_id = cleanString((body as any)?.review_id, 80) || null;
@@ -955,18 +1108,37 @@ export async function POST(req: Request) {
     const contentRaw = upstreamJson?.choices?.[0]?.message?.content ?? "";
     let content = safeTrimReply(String(contentRaw));
 
+    // Basic cleanup
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
 
+    // Deterministic “no-template” enforcement
     content = stripTemplatedOpeners(content);
     content = sanitizeCorporatePhrases(content);
     content = capitalizeIfNeeded(content);
 
+    // HARD: remove invented excuse sentences for 1–2★ unless reviewer said it
     content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
 
+    // ✅ B4: First sentence must reference a detail (keyword-only, no invented facts)
+    const firstEnforce = enforceFirstSentenceDetail({
+      reply: content,
+      review_text,
+      rating,
+      owner_language,
+      voice,
+    });
+    content = firstEnforce.text;
+
+    // ✅ B4: strip repetitive closers on 4–5★ (when redundant)
+    const closerStrip = stripRepetitiveClosers(content, rating);
+    content = closerStrip.text;
+
+    // Sentence enforcement
     content = limitSentences(content, sentencePolicyForRating(rating));
 
+    // Exclamation enforcement
     if (!voice.allow_exclamation) {
       content = content.replace(/[!¡]/g, ".");
       content = content.replace(/\.\.+/g, ".").trim();
@@ -982,6 +1154,7 @@ export async function POST(req: Request) {
       }
     }
 
+    // Signature enforcement
     content = appendSignatureIfMissing(content, reply_signature);
 
     if (!content) {
@@ -997,7 +1170,14 @@ export async function POST(req: Request) {
 
       const reviewHash = sha256Hex(review_text);
       const promptFingerprint = sha256Hex(
-        [PROMPT_VERSION, BANNED_LIST_VERSION, model, String(temperature), voiceSampleIds.join(",")].join("|")
+        [
+          PROMPT_VERSION,
+          BANNED_LIST_VERSION,
+          POST_CLEAN_VERSION,
+          model,
+          String(temperature),
+          voiceSampleIds.join(","),
+        ].join("|")
       );
 
       const auditRow: any = {
@@ -1011,18 +1191,12 @@ export async function POST(req: Request) {
         temperature,
         voice_sample_count: voiceSampleIds.length,
         voice_sample_ids: voiceSampleIds,
-
-        // future-proof identifiers
         review_id: review_id,
         google_review_id: google_review_id,
-
-        // ✅ store canonical location column
         google_location_id: google_location_id,
-        // keep legacy too (if the column exists)
-        location_id: google_location_id,
+        location_id: google_location_id, // compatibility
       };
 
-      // If review_id isn't a UUID, keep it null (don't fail insert)
       if (
         auditRow.review_id &&
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -1033,9 +1207,7 @@ export async function POST(req: Request) {
       }
 
       const { error: auditErr } = await supabase.from("draft_audit_logs").insert(auditRow);
-      if (auditErr) {
-        console.warn("draft_audit_logs insert failed:", auditErr.message);
-      }
+      if (auditErr) console.warn("draft_audit_logs insert failed:", auditErr.message);
     } catch (e: any) {
       console.warn("draft_audit_logs insert exception:", e?.message ?? e);
     }
@@ -1050,6 +1222,16 @@ export async function POST(req: Request) {
           reply_tone: org_reply_tone_raw,
           reply_signature: reply_signature ?? null,
           google_location_id: google_location_id ?? null,
+          ...(debug
+            ? {
+                enforcement: {
+                  post_clean_version: POST_CLEAN_VERSION,
+                  keyword: firstEnforce.keyword,
+                  first_sentence_enforced: firstEnforce.enforced,
+                  closer_stripped: closerStrip.stripped,
+                },
+              }
+            : {}),
         },
       },
       { status: 200 }
