@@ -421,7 +421,7 @@ export default function DashboardPage() {
   }
 
   // ✅ C3: load per-location sync status from server API
-  // IMPORTANT: your route is /api/location-sync-status (NOT /api/org/location-sync-status)
+  // IMPORTANT: your route is /api/location-sync-status
   async function loadSyncStatus(google_location_id: string | null) {
     if (!google_location_id) {
       setSyncStatus(null);
