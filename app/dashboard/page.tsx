@@ -1132,7 +1132,7 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => loadSyncStatus(statusLocationId)}
-                disabled={actionLoading !== null}
+                disabled={!statusLocationId}
                 style={{ ...ghostButtonStyle, padding: "8px 10px", borderRadius: 10, fontSize: 12 }}
                 title="Refresh sync status"
               >
