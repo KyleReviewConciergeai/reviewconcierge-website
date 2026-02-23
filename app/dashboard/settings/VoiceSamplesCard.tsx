@@ -7,20 +7,23 @@ type VoiceSample = {
   sample_text: string;
   created_at?: string;
   updated_at?: string;
+  // ✅ from server route (A3)
+  warnings?: string[];
 };
 
-type ApiResp =
-  | { ok: true; samples: VoiceSample[] }
+type ApiListResp =
+  | { ok: true; voice_samples?: VoiceSample[]; samples?: VoiceSample[] }
   | { ok: false; error: string };
 
 type ApiSingleResp =
-  | { ok: true; sample: VoiceSample }
+  | { ok: true; voice_sample?: VoiceSample; sample?: VoiceSample }
   | { ok: false; error: string };
 
-const MIN_CHARS = 40;
-const MAX_CHARS = 1200;
+// ✅ Align with server validation (route.ts)
+const MIN_CHARS = 60;
+const MAX_CHARS = 600;
 
-// Keep these “human” guidance phrases out of voice samples (helps later A4 scoring too)
+// Extra “human” patterns (client-only quick feedback; server does warnings too)
 const SAMPLE_BAD_PATTERNS: Array<{ label: string; re: RegExp }> = [
   { label: "Too corporate/templated", re: /\bwe (?:strive|aim|endeavor)\b/i },
   { label: "Too corporate/templated", re: /\bwe take (?:your )?feedback seriously\b/i },
@@ -32,7 +35,8 @@ const SAMPLE_BAD_PATTERNS: Array<{ label: string; re: RegExp }> = [
 ];
 
 function clampText(raw: string) {
-  const t = (raw ?? "").replace(/\r\n/g, "\n"); // normalize newlines
+  // normalize newlines, then cap hard
+  const t = (raw ?? "").replace(/\r\n/g, "\n");
   if (t.length <= MAX_CHARS) return t;
   return t.slice(0, MAX_CHARS);
 }
@@ -41,10 +45,10 @@ function validateSampleText(text: string) {
   const trimmed = text.trim();
   if (!trimmed) return { ok: false, msg: "" };
   if (trimmed.length < MIN_CHARS) {
-    return { ok: false, msg: `Too short — aim for at least ${MIN_CHARS} characters.` };
+    return { ok: false, msg: `Too short — minimum is ${MIN_CHARS} characters.` };
   }
   if (trimmed.length > MAX_CHARS) {
-    return { ok: false, msg: `Too long — keep it under ${MAX_CHARS} characters.` };
+    return { ok: false, msg: `Too long — maximum is ${MAX_CHARS} characters.` };
   }
   return { ok: true, msg: "" };
 }
@@ -54,8 +58,92 @@ function analyzeSample(text: string) {
   for (const p of SAMPLE_BAD_PATTERNS) {
     if (p.re.test(text)) issues.push(p.label);
   }
-  // de-dupe labels
   return Array.from(new Set(issues));
+}
+
+// ✅ mirror server warning heuristics so user sees it immediately
+function computeClientWarnings(sampleText: string): string[] {
+  const t = (sampleText ?? "").trim();
+  if (!t) return [];
+
+  const warnings: string[] = [];
+
+  if (t.length < 120) warnings.push("too_short");
+  if (t.length > 450) warnings.push("too_long");
+
+  const lower = t.toLowerCase();
+  const genericPhrases = [
+    "thank you",
+    "thanks",
+    "we appreciate",
+    "we appreciate your feedback",
+    "great service",
+    "great food",
+    "come back soon",
+    "hope to see you again",
+    "valued guest",
+    "we're thrilled",
+    "we are thrilled",
+  ];
+  const genericHit = genericPhrases.some((p) => lower.includes(p));
+  if (genericHit && t.length < 160) warnings.push("too_generic");
+
+  const hasConcreteSignal =
+    /\b(staff|server|team|host|bar|wine|coffee|dessert|dish|meal|breakfast|dinner|lunch|table|music|atmosphere|vibe|service|reservation)\b/i.test(
+      t
+    );
+  if (!hasConcreteSignal && t.length < 200) warnings.push("low_specificity");
+
+  const hasEmail = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(t);
+  if (hasEmail) warnings.push("contains_email");
+
+  const digits = (t.match(/\d/g) ?? []).length;
+  const hasPhonePattern =
+    digits >= 7 &&
+    /(\+?\d[\d\s().-]{6,}\d)/.test(t) &&
+    !/\b(1|2|3|4|5)\s?★\b/.test(t);
+  if (hasPhonePattern) warnings.push("contains_phone");
+
+  const hasUrl = /\bhttps?:\/\/|www\./i.test(t);
+  if (hasUrl) warnings.push("contains_url");
+
+  const hasAddressHint =
+    /\b(street|st\.|avenue|ave\.|road|rd\.|suite|ste\.|apt|apartment|unit|#\d+)\b/i.test(t);
+  if (hasAddressHint) warnings.push("contains_address_hint");
+
+  return Array.from(new Set(warnings));
+}
+
+function warningLabel(code: string) {
+  switch (code) {
+    case "too_short":
+      return "Short (add a detail)";
+    case "too_long":
+      return "Long (trim down)";
+    case "too_generic":
+      return "Too generic";
+    case "low_specificity":
+      return "Add a specific detail";
+    case "contains_email":
+      return "Contains email";
+    case "contains_phone":
+      return "Contains phone";
+    case "contains_url":
+      return "Contains URL";
+    case "contains_address_hint":
+      return "Contains address-ish info";
+    default:
+      return code;
+  }
+}
+
+function isPiiWarning(code: string) {
+  return (
+    code === "contains_email" ||
+    code === "contains_phone" ||
+    code === "contains_url" ||
+    code === "contains_address_hint"
+  );
 }
 
 export default function VoiceSamplesCard() {
@@ -81,11 +169,31 @@ export default function VoiceSamplesCard() {
   const newCharCount = useMemo(() => newSample.length, [newSample]);
   const newValidation = useMemo(() => validateSampleText(newSample), [newSample]);
   const newIssues = useMemo(() => (trimmedNew ? analyzeSample(trimmedNew) : []), [trimmedNew]);
+  const newWarnings = useMemo(
+    () => (trimmedNew ? computeClientWarnings(trimmedNew) : []),
+    [trimmedNew]
+  );
 
   const editTrimmed = useMemo(() => editText.trim(), [editText]);
   const editCharCount = useMemo(() => editText.length, [editText]);
   const editValidation = useMemo(() => validateSampleText(editText), [editText]);
   const editIssues = useMemo(() => (editTrimmed ? analyzeSample(editTrimmed) : []), [editTrimmed]);
+  const editWarnings = useMemo(
+    () => (editTrimmed ? computeClientWarnings(editTrimmed) : []),
+    [editTrimmed]
+  );
+
+  function normalizeSampleRow(r: any): VoiceSample {
+    const sample_text = typeof r?.sample_text === "string" ? r.sample_text : "";
+    const warnings = Array.isArray(r?.warnings) ? r.warnings.map(String) : [];
+    return {
+      id: String(r?.id ?? ""),
+      sample_text,
+      created_at: r?.created_at ?? undefined,
+      updated_at: r?.updated_at ?? undefined,
+      warnings,
+    };
+  }
 
   async function loadSamples() {
     setLoading(true);
@@ -93,7 +201,7 @@ export default function VoiceSamplesCard() {
 
     try {
       const res = await fetch("/api/org/voice-samples", { cache: "no-store" });
-      const json = (await res.json()) as ApiResp;
+      const json = (await res.json()) as ApiListResp;
 
       if (!res.ok || !json.ok) {
         setError((json as any)?.error ?? "Couldn’t load voice samples.");
@@ -101,7 +209,9 @@ export default function VoiceSamplesCard() {
         return;
       }
 
-      setSamples(json.samples ?? []);
+      const rowsRaw = (json as any).voice_samples ?? (json as any).samples ?? [];
+      const rows = Array.isArray(rowsRaw) ? rowsRaw.map(normalizeSampleRow) : [];
+      setSamples(rows);
     } catch (e: any) {
       setError(e?.message ?? "Couldn’t load voice samples.");
       setSamples([]);
@@ -127,14 +237,15 @@ export default function VoiceSamplesCard() {
         body: JSON.stringify({ sample_text: text }),
       });
 
-      const json = await res.json();
+      const json = (await res.json()) as ApiSingleResp;
 
       if (!res.ok || !json?.ok) {
-        setError(json?.error ?? "Couldn’t add sample.");
+        setError((json as any)?.error ?? "Couldn’t add sample.");
         return;
       }
 
       setNewSample("");
+      // server returns the row; but safest is reload (keeps ordering consistent)
       await loadSamples();
     } catch (e: any) {
       setError(e?.message ?? "Couldn’t add sample.");
@@ -168,10 +279,11 @@ export default function VoiceSamplesCard() {
 
     // optimistic UI
     const prev = samples;
-    setSamples((xs) => xs.map((x) => (x.id === id ? { ...x, sample_text: text } : x)));
+    setSamples((xs) =>
+      xs.map((x) => (x.id === id ? { ...x, sample_text: text, warnings: computeClientWarnings(text) } : x))
+    );
 
     try {
-      // preferred REST endpoint
       const res = await fetch(`/api/org/voice-samples/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -186,8 +298,15 @@ export default function VoiceSamplesCard() {
         return;
       }
 
-      // keep server-truth (updated_at, any normalization)
-      setSamples((xs) => xs.map((x) => (x.id === id ? json.sample : x)));
+      const rowRaw = (json as any).voice_sample ?? (json as any).sample ?? null;
+      if (rowRaw) {
+        const normalized = normalizeSampleRow(rowRaw);
+        setSamples((xs) => xs.map((x) => (x.id === id ? normalized : x)));
+      } else {
+        // fallback reload
+        await loadSamples();
+      }
+
       cancelEdit();
     } catch (e: any) {
       setSamples(prev);
@@ -199,7 +318,6 @@ export default function VoiceSamplesCard() {
 
   function askDelete(id: string) {
     setError(null);
-    // if currently editing this one, exit edit mode to avoid confusion
     if (editingId === id) cancelEdit();
     setConfirmDeleteId(id);
   }
@@ -242,6 +360,9 @@ export default function VoiceSamplesCard() {
   useEffect(() => {
     loadSamples();
   }, []);
+
+  const newHasPii = newWarnings.some(isPiiWarning);
+  const editHasPii = editWarnings.some(isPiiWarning);
 
   return (
     <div style={cardStyle}>
@@ -289,9 +410,28 @@ export default function VoiceSamplesCard() {
           <div style={{ fontSize: 13, color: "#fbbf24" }}>{newValidation.msg}</div>
         ) : null}
 
-        {!newValidation.msg && newIssues.length > 0 ? (
+        {!newValidation.msg && newHasPii ? (
+          <div style={{ fontSize: 13, color: "#f87171" }}>
+            Remove private info before saving (email/phone/url/address).
+          </div>
+        ) : null}
+
+        {!newValidation.msg && !newHasPii && (newIssues.length > 0 || newWarnings.length > 0) ? (
           <div style={{ fontSize: 13, color: "#fbbf24" }}>
-            Quick tweak: consider removing <span style={{ fontWeight: 700 }}>{newIssues.join(", ")}</span>.
+            Quick tweak:{" "}
+            <span style={{ fontWeight: 700 }}>
+              {[
+                ...(newIssues.length ? [newIssues.join(", ")] : []),
+                ...(newWarnings.length
+                  ? newWarnings
+                      .filter((w) => !isPiiWarning(w))
+                      .map(warningLabel)
+                      .slice(0, 3)
+                  : []),
+              ]
+                .filter(Boolean)
+                .join(" • ")}
+            </span>
           </div>
         ) : null}
 
@@ -307,7 +447,11 @@ export default function VoiceSamplesCard() {
             {creating ? "Adding…" : "Add sample"}
           </button>
 
-          <button onClick={loadSamples} disabled={creating || !!savingId || !!deletingId} style={ghostButtonStyle}>
+          <button
+            onClick={loadSamples}
+            disabled={creating || !!savingId || !!deletingId}
+            style={ghostButtonStyle}
+          >
             Refresh
           </button>
         </div>
@@ -336,6 +480,9 @@ export default function VoiceSamplesCard() {
                 const isConfirmDelete = confirmDeleteId === s.id;
                 const isDeletingThis = deletingId === s.id;
 
+                const serverWarnings = Array.isArray(s.warnings) ? s.warnings : [];
+                const showServerWarnings = serverWarnings.length > 0;
+
                 return (
                   <div
                     key={s.id}
@@ -347,16 +494,44 @@ export default function VoiceSamplesCard() {
                     }}
                   >
                     {!isEditing ? (
-                      <div
-                        style={{
-                          fontSize: 13,
-                          lineHeight: 1.55,
-                          opacity: 0.95,
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {s.sample_text}
-                      </div>
+                      <>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            lineHeight: 1.55,
+                            opacity: 0.95,
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {s.sample_text}
+                        </div>
+
+                        {showServerWarnings ? (
+                          <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {serverWarnings.map((w) => (
+                              <span
+                                key={w}
+                                style={{
+                                  fontSize: 11,
+                                  padding: "3px 8px",
+                                  borderRadius: 999,
+                                  border: `1px solid ${
+                                    isPiiWarning(w) ? "rgba(248,113,113,0.45)" : "rgba(251,191,36,0.35)"
+                                  }`,
+                                  background: isPiiWarning(w)
+                                    ? "rgba(248,113,113,0.12)"
+                                    : "rgba(251,191,36,0.12)",
+                                  color: "rgba(226,232,240,0.95)",
+                                  fontWeight: 700,
+                                }}
+                                title={w}
+                              >
+                                {warningLabel(w)}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
                     ) : (
                       <div style={{ display: "grid", gap: 8 }}>
                         <textarea
@@ -365,7 +540,14 @@ export default function VoiceSamplesCard() {
                           style={{ ...textareaStyle, minHeight: 120 }}
                           disabled={isSavingThis || isDeletingThis}
                         />
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            flexWrap: "wrap",
+                          }}
+                        >
                           <div style={{ fontSize: 12, opacity: 0.7 }}>
                             {editCharCount}/{MAX_CHARS} characters
                           </div>
@@ -376,10 +558,31 @@ export default function VoiceSamplesCard() {
 
                         {editValidation.msg ? (
                           <div style={{ fontSize: 13, color: "#fbbf24" }}>{editValidation.msg}</div>
-                        ) : editIssues.length > 0 ? (
+                        ) : null}
+
+                        {!editValidation.msg && editHasPii ? (
+                          <div style={{ fontSize: 13, color: "#f87171" }}>
+                            Remove private info before saving (email/phone/url/address).
+                          </div>
+                        ) : null}
+
+                        {!editValidation.msg && !editHasPii && (editIssues.length > 0 || editWarnings.length > 0) ? (
                           <div style={{ fontSize: 13, color: "#fbbf24" }}>
                             Quick tweak: consider removing{" "}
-                            <span style={{ fontWeight: 700 }}>{editIssues.join(", ")}</span>.
+                            <span style={{ fontWeight: 700 }}>
+                              {[
+                                ...(editIssues.length ? [editIssues.join(", ")] : []),
+                                ...(editWarnings.length
+                                  ? editWarnings
+                                      .filter((w) => !isPiiWarning(w))
+                                      .map(warningLabel)
+                                      .slice(0, 3)
+                                  : []),
+                              ]
+                                .filter(Boolean)
+                                .join(" • ")}
+                            </span>
+                            .
                           </div>
                         ) : null}
 
@@ -394,11 +597,7 @@ export default function VoiceSamplesCard() {
                           >
                             {isSavingThis ? "Saving…" : "Save"}
                           </button>
-                          <button
-                            onClick={cancelEdit}
-                            disabled={isSavingThis}
-                            style={ghostButtonStyle}
-                          >
+                          <button onClick={cancelEdit} disabled={isSavingThis} style={ghostButtonStyle}>
                             Cancel
                           </button>
                         </div>
@@ -496,12 +695,15 @@ export default function VoiceSamplesCard() {
           )}
 
           <div style={{ marginTop: 12, fontSize: 12, opacity: 0.6, lineHeight: 1.45 }}>
-            <div style={{ fontWeight: 700, opacity: 0.9, marginBottom: 6 }}>What makes a good sample?</div>
+            <div style={{ fontWeight: 700, opacity: 0.9, marginBottom: 6 }}>
+              What makes a good sample?
+            </div>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               <li>1–3 sentences</li>
               <li>References one detail (dish, staff moment, vibe, timing)</li>
               <li>Sounds like you — not corporate</li>
               <li>No emojis, no long apologies, no marketing copy</li>
+              <li>No private info (email/phone/address)</li>
             </ul>
           </div>
         </div>
