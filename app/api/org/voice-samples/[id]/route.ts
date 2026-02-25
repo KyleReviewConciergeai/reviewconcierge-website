@@ -85,7 +85,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const nowIso = new Date().toISOString();
 
     const { data, error } = await supabase
-      .from("voice_samples")
+      .from("org_voice_samples")
       .update({ sample_text, updated_at: nowIso })
       .eq("id", cleanId)
       .eq("organization_id", organizationId)
@@ -119,7 +119,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
     if (!cleanId) return NextResponse.json({ ok: false, error: "Missing id." }, { status: 400 });
 
     const { error } = await supabase
-      .from("voice_samples")
+      .from("org_voice_samples")
       .delete()
       .eq("id", cleanId)
       .eq("organization_id", organizationId);

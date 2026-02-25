@@ -89,7 +89,7 @@ export async function GET() {
     const { supabase, organizationId } = await requireOrgContext();
 
     const { data, error } = await supabase
-      .from("voice_samples")
+      .from("org_voice_samples")
       .select("id, sample_text, created_at, updated_at")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
     const nowIso = new Date().toISOString();
 
     const { data, error } = await supabase
-      .from("voice_samples")
+      .from("org_voice_samples")
       .insert({
         organization_id: organizationId,
         sample_text,
