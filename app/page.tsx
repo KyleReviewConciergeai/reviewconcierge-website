@@ -84,13 +84,13 @@ export default function Home() {
         login: "Log in",
         getStarted: "Get started",
       },
-      badge: "Owner-voice replies • AI drafts • You stay in control",
-      h1a: "Reply to reviews in your voice",
-      h1b: "in minutes — not hours.",
+      badge: "Built for restaurants, cafés, wineries & tours",
+        h1a: "Most owners never reply to reviews.",
+        h1b: "That silence is costing you customers.",
       subtitleA:
-        "Review Concierge drafts short, human replies that sound like you — so you can respond fast without giving up control or sounding generic.",
+       "Review Concierge drafts short, human replies in your voice — so you can respond to every review in minutes without sounding generic or spending an hour staring at a blank screen.",
       subtitleB:
-        "Draft thoughtful replies to reviews in English, Spanish, Portuguese, French, Italian, and German.",
+        "Supports English, Spanish, Portuguese, French, Italian, German, and more.",
       cta: {
         primary: "Get started",
         trial: "2-week free trial",
@@ -110,21 +110,21 @@ export default function Home() {
           "Never auto-posts",
         ],
         matrix: {
-          nowTitle: "Included now",
-          soonTitle: "Coming soon",
+          nowTitle: "What you get",
+          soonTitle: "Why it works",
           now: [
-            "Google sync (recent sample)",
-            "Owner-voice drafts",
-            "Copy + post manually",
+            "Replies that sound like you wrote them",
+            "Draft any review in under 30 seconds",
+            "Never auto-posts — you stay in control",
           ],
           soon: [
-            "Full Google Business Profile integration",
-            "Deeper voice training",
-            "Team roles + approvals",
-            "Multi-location workflows",
+            "97% of customers read owner responses",
+            "Replying builds trust with future guests",
+            "Consistent replies improve Google ranking",
+            "Turn a bad review into a second chance",
           ],
           foot:
-            "Roadmap features are in progress. Early access customers help shape what ships next.",
+            "14-day free trial. No setup fees. Cancel anytime.",
         },
       },
       demo: {
@@ -160,12 +160,12 @@ export default function Home() {
         foot: "Today: Places-based recent sample (up to 10). No auto-posting.",
       },
       pilot: {
-        title: "Want me to set it up for you in 5 minutes?",
+        title: "Want to see it work on your actual reviews?",
         body:
-          "If you’re coming from a Loom demo, send your Place ID and we’ll help you get your first drafts generated quickly.",
+          "Send your Google Place ID and we'll generate a few real draft replies from your own reviews — so you can see exactly what your customers would read before you commit to anything.",
         primary: "Send my Place ID",
         secondary: "Start free trial",
-        note: "No pressure — we’ll only use it to help you get set up.",
+        note: "Takes 5 minutes. No credit card needed to see the drafts.",
       },
       waitlist: {
         title: "Join the beta waitlist",
@@ -218,11 +218,11 @@ export default function Home() {
         price: "$49",
         per: "/ month",
         bullets: [
-          "14-day free trial included",
-          "Enable Google sync (recent sample up to 10)",
-          "Reply drafting inside the dashboard",
-          "Cancel anytime",
-          "Priority support + roadmap input",
+          "14-day free trial — no credit card required",
+          "Draft replies for any Google review in seconds",
+          "Replies in 6 languages including Spanish & Portuguese",
+          "Never auto-posts — you approve everything",
+          "Cancel anytime, no questions asked",
         ],
         note:
           "Note: today uses Google Places “recent sample” (up to 10). We focus on voice fidelity first — not feature bloat.",
@@ -810,8 +810,30 @@ export default function Home() {
 
         <div className="section-divider" />
 
-        {/* ✅ Quick demo */}
-        <section className="demo-section">
+        {/* Stats bar */}
+        <section className="stats-bar">
+         <div className="stat-item">
+         <div className="stat-number">35%</div>
+         <div className="stat-label">more revenue for businesses that reply to reviews</div>
+         </div>
+       <div className="stat-item">
+         <div className="stat-number">97%</div>
+         <div className="stat-label">of customers read owner responses</div>
+        </div>
+       <div className="stat-item">
+         <div className="stat-number">88%</div>
+         <div className="stat-label">more likely to choose a business that responds</div>
+       </div>
+      <div className="stat-item">
+         <div className="stat-number">56%</div>
+          <div className="stat-label">changed their opinion based on a business response</div>
+          </div>
+      </section>
+
+<div className="section-divider" />
+
+{/* ✅ Quick demo */}
+<section className="demo-section">
           <div className="demo-head">
             <h2>{t.demo.title}</h2>
             <p className="section-intro" style={{ marginBottom: 0 }}>
@@ -1360,17 +1382,19 @@ export default function Home() {
         }
 
         .badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 12px;
-          padding: 6px 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(148, 163, 184, 0.35);
-          background: rgba(2, 6, 23, 0.35);
-          color: rgba(226, 232, 240, 0.92);
-          margin-bottom: 14px;
-        }
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.55);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(124, 58, 237, 0.2));
+  color: #93c5fd;
+  margin-bottom: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
 
         .hero-card {
           position: relative;
@@ -1423,10 +1447,10 @@ export default function Home() {
 
         /* ✅ New: roadmap matrix visual */
         .roadmap-matrix {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 12px;
-          margin-top: 14px;
+           display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 12px;
+            margin-top: 14px;
         }
 
         .roadmap-col {
@@ -1619,6 +1643,41 @@ export default function Home() {
           background: rgba(148, 163, 184, 0.16);
           margin: 18px 0 40px;
         }
+
+.stats-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.stat-item {
+  background: rgba(15, 23, 42, 0.95);
+  border-radius: 16px;
+  padding: 18px 16px;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  text-align: center;
+}
+
+.stat-number {
+  font-size: 32px;
+  font-weight: 800;
+  color: #60a5fa;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: rgba(209, 213, 219, 0.85);
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .stats-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 
         /* ✅ Demo section */
         .demo-section {
@@ -2034,10 +2093,37 @@ export default function Home() {
         }
 
         .pricing-card ul {
-          padding-left: 18px;
-          margin: 0 0 14px;
-          color: #d1d5db;
-        }
+  padding-left: 0;
+  margin: 0 0 14px;
+  color: #d1d5db;
+  list-style: none;
+}
+
+.pricing-card ul li {
+  position: relative;
+  padding-left: 26px;
+  margin: 10px 0;
+  color: rgba(226, 232, 240, 0.92);
+  line-height: 1.35;
+}
+
+.pricing-card ul li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  top: 0.1em;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  background: rgba(37, 99, 235, 0.22);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: rgba(226, 232, 240, 0.95);
+}
 
         .pricing-actions {
           display: flex;
