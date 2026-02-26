@@ -260,13 +260,13 @@ export default function Home() {
         login: "Iniciar sesión",
         getStarted: "Empezar",
       },
-      badge: "Respuestas con tu voz • Borradores con IA • Tú decides",
-      h1a: "Responde reseñas con tu voz",
-      h1b: "en minutos — no en horas.",
-      subtitleA:
-        "Review Concierge redacta respuestas cortas y humanas que suenan como tú — para que respondas rápido sin perder control ni sonar genérico.",
-      subtitleB:
-        "Redacta respuestas cuidadas en inglés, español, portugués, francés, italiano y alemán.",
+      badge: "Para restaurantes, cafés, bodegas y tours",
+      h1a: "La mayoría de los dueños nunca responde reseñas.",
+h1b: "Ese silencio te está costando clientes.",
+subtitleA:
+  "Review Concierge redacta respuestas cortas con tu voz — para que puedas responder cada reseña en minutos sin sonar genérico ni quedarte en blanco.",
+subtitleB:
+  "Compatible con inglés, español, portugués, francés, italiano y alemán.",
       cta: {
         primary: "Empezar",
         trial: "Prueba gratis 2 semanas",
@@ -286,21 +286,21 @@ export default function Home() {
           "Nunca publica automáticamente",
         ],
         matrix: {
-          nowTitle: "Incluye hoy",
-          soonTitle: "Muy pronto",
+          nowTitle: "Qué incluye",
+          soonTitle: "Por qué funciona",
           now: [
-            "Sync de Google (muestra reciente)",
-            "Borradores con tu voz",
-            "Copiar + publicar manualmente",
+            "Respuestas que suenan como tú las escribiste",
+            "Borradores en menos de 30 segundos",
+            "Nunca publica solo — tú decides",
           ],
           soon: [
-            "Integración completa con Google Business Profile",
-            "Mejor entrenamiento de voz",
-            "Roles de equipo + aprobaciones",
-            "Flujos multi-ubicación",
+            "El 97% de los clientes lee las respuestas del dueño",
+            "Responder genera confianza con futuros clientes",
+            "Las respuestas mejoran tu posición en Google",
+            "Convierte una mala reseña en una segunda oportunidad",
           ],
           foot:
-            "Las funciones del roadmap están en progreso. Los primeros clientes ayudan a priorizar qué sale primero.",
+            "14 días de prueba gratis. Sin costos de setup. Cancela cuando quieras.",
         },
       },
       demo: {
@@ -336,12 +336,12 @@ export default function Home() {
         foot: "Hoy: muestra reciente vía Places (hasta 10). Sin auto-publicación.",
       },
       pilot: {
-        title: "¿Querés que te lo configure en 5 minutos?",
+        title: "¿Querés ver cómo funciona con tus reseñas reales?",
         body:
-          "Si venís desde un demo (Loom), envianos tu Place ID y te ayudamos a generar tus primeros borradores rápido.",
+          "Envianos tu Google Place ID y generamos algunos borradores reales de tus propias reseñas — para que veas exactamente qué leerían tus clientes antes de comprometerte con nada.",
         primary: "Enviar mi Place ID",
         secondary: "Iniciar prueba gratis",
-        note: "Sin compromiso — solo para ayudarte a empezar.",
+        note: "Tarda 5 minutos. No hace falta tarjeta para ver los borradores.",
       },
       waitlist: {
         title: "Sumate a la beta",
@@ -393,11 +393,11 @@ export default function Home() {
         price: "$49",
         per: "/ mes",
         bullets: [
-          "Incluye prueba gratis de 14 días",
-          "Habilita sincronización (muestra reciente hasta 10)",
-          "Redacción de respuestas en el panel",
-          "Cancelá cuando quieras",
-          "Soporte prioritario + feedback de roadmap",
+          "14 días de prueba gratis — sin tarjeta de crédito",
+          "Borradores para cualquier reseña de Google en segundos",
+          "Respuestas en 6 idiomas incluyendo español y portugués",
+          "Nunca publica solo — vos aprobás todo",
+          "Cancelá cuando quieras, sin preguntas",
         ],
         note:
           "Nota: hoy usamos una “muestra reciente” vía Google Places (hasta 10). Priorizamos fidelidad de voz por sobre más features.",
@@ -435,13 +435,13 @@ export default function Home() {
         login: "Entrar",
         getStarted: "Começar",
       },
-      badge: "Respostas com sua voz • Rascunhos com IA • Você no controle",
-      h1a: "Responda avaliações com sua voz",
-      h1b: "em minutos — não horas.",
-      subtitleA:
-        "O Review Concierge cria respostas curtas e humanas que soam como você — para responder rápido sem perder o controle nem parecer genérico.",
-      subtitleB:
-        "Crie respostas cuidadosas em inglês, espanhol, português, francês, italiano e alemão.",
+      badge: "Para restaurantes, cafés, vinícolas e tours",
+      h1a: "A maioria dos donos nunca responde avaliações.",
+h1b: "Esse silêncio está custando clientes.",
+subtitleA:
+  "O Review Concierge cria respostas curtas com sua voz — para que você responda cada avaliação em minutos sem parecer genérico nem ficar sem palavras.",
+subtitleB:
+  "Compatível com inglês, espanhol, português, francês, italiano e alemão.",
       cta: {
         primary: "Começar",
         trial: "Teste grátis 2 semanas",
@@ -461,21 +461,21 @@ export default function Home() {
           "Nunca posta automaticamente",
         ],
         matrix: {
-          nowTitle: "Inclui hoje",
-          soonTitle: "Em breve",
+          nowTitle: "O que inclui",
+          soonTitle: "Por que funciona",
           now: [
-            "Sync do Google (amostra recente)",
-            "Rascunhos com voz do dono",
-            "Copiar + postar manualmente",
+            "Respostas que parecem escritas por você",
+            "Rascunhos em menos de 30 segundos",
+            "Nunca posta sozinho — você decide",
           ],
           soon: [
-            "Integração completa com Google Business Profile",
-            "Treinamento de voz melhor",
-            "Papéis da equipe + aprovações",
-            "Fluxos multi-localização",
+            "97% dos clientes lê as respostas do dono",
+            "Responder gera confiança com futuros clientes",
+            "Respostas melhoram seu ranking no Google",
+            "Transforme uma avaliação ruim em segunda chance",
           ],
           foot:
-            "Recursos do roadmap estão em desenvolvimento. Clientes early access ajudam a definir prioridades.",
+            "14 dias de teste grátis. Sem taxas de setup. Cancele quando quiser.",
         },
       },
       demo: {
@@ -511,12 +511,12 @@ export default function Home() {
         foot: "Hoje: amostra recente via Places (até 10). Sem autopost.",
       },
       pilot: {
-        title: "Quer que eu configure para você em 5 minutos?",
+        title: "Quer ver como funciona com suas avaliações reais?",
         body:
-          "Se você veio de um demo (Loom), envie seu Place ID e ajudamos você a gerar seus primeiros rascunhos rapidamente.",
+          "Envie seu Google Place ID e geramos alguns rascunhos reais das suas próprias avaliações — para você ver exatamente o que seus clientes leriam antes de se comprometer com qualquer coisa.",
         primary: "Enviar meu Place ID",
         secondary: "Iniciar teste grátis",
-        note: "Sem pressão — apenas para ajudar você a começar.",
+        note: "Leva 5 minutos. Não precisa de cartão para ver os rascunhos.",
       },
       waitlist: {
         title: "Entre na beta",
@@ -568,11 +568,11 @@ export default function Home() {
         price: "$49",
         per: "/ mês",
         bullets: [
-          "Inclui teste grátis de 14 dias",
-          "Habilita sync (amostra recente até 10)",
-          "Rascunhos dentro do painel",
-          "Cancele quando quiser",
-          "Suporte prioritário + feedback de roadmap",
+          "14 dias de teste grátis — sem cartão de crédito",
+          "Rascunhos para qualquer avaliação do Google em segundos",
+          "Respostas em 6 idiomas incluindo espanhol e português",
+          "Nunca posta sozinho — você aprova tudo",
+          "Cancele quando quiser, sem perguntas",
         ],
         note:
           "Obs.: hoje usamos a “amostra recente” via Google Places (até 10). Priorizamos fidelidade de voz — não excesso de recursos.",
