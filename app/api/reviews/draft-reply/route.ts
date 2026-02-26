@@ -1018,12 +1018,12 @@ export async function POST(req: Request) {
     const clientTone = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
     const clientRules = parseClientRules((body as any)?.rules);
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
       return NextResponse.json(
-        { ok: false, error: "Missing OPENAI_API_KEY in server env. Add in Vercel and redeploy." },
-        { status: 500 }
-      );
+       { ok: false, error: "Missing ANTHROPIC_API_KEY in server env. Add in Vercel and redeploy." },
+       { status: 500 }
+     );
     }
 
     const orgSettings = await loadOrgReplySettings();
@@ -1048,7 +1048,7 @@ export async function POST(req: Request) {
     });
 
     const temperature = rating <= 2 ? 0.15 : 0.25;
-    const model = "gpt-4o-mini";
+    const model = "claude-haiku-4-5-20251001";
 
     const prompt = buildPrompt({
       business_name,
@@ -1063,49 +1063,43 @@ export async function POST(req: Request) {
       voice_samples: voiceSamples,
     });
 
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
+    const upstream = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model,
         temperature,
-        frequency_penalty: 0.2,
-        presence_penalty: 0.1,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You write short, human-sounding public review replies for local businesses. Follow constraints exactly. Output only the reply text.",
-          },
-          { role: "user", content: prompt },
-        ],
         max_tokens: 260,
+        system:
+          "You write short, human-sounding public review replies for local businesses. Follow constraints exactly. Output only the reply text.",
+        messages: [{ role: "user", content: prompt }],
       }),
       cache: "no-store",
     });
-
+    
     const rawText = await upstream.text();
     let upstreamJson: any = null;
     try {
       upstreamJson = JSON.parse(rawText);
     } catch {}
-
+    
     if (!upstream.ok) {
       return NextResponse.json(
         {
           ok: false,
-          error: "OpenAI upstream error",
+          error: "Anthropic upstream error",
           upstreamStatus: upstream.status,
           upstreamBody: upstreamJson ?? rawText,
         },
         { status: 502 }
       );
     }
-
-    const contentRaw = upstreamJson?.choices?.[0]?.message?.content ?? "";
+    
+    const contentRaw = upstreamJson?.content?.[0]?.text ?? "";
     let content = safeTrimReply(String(contentRaw));
 
     // Basic cleanup
@@ -1159,7 +1153,7 @@ export async function POST(req: Request) {
 
     if (!content) {
       return NextResponse.json(
-        { ok: false, error: "No reply content returned from OpenAI", upstreamBody: upstreamJson },
+        { ok: false, error: "No reply content returned from Anthropic", upstreamBody: upstreamJson },
         { status: 502 }
       );
     }
