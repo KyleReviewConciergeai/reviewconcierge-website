@@ -823,15 +823,17 @@ function removeExcuseSentencesIfInvented(params: {
    ✅ B4: First-sentence detail enforcement + closer cleanup
    ========================= */
 
-const STOPWORDS = new Set(
-  [
-    "the","and","for","with","this","that","was","were","are","is","to","of","in","on","at","it",
-    "we","i","you","they","them","our","your","my","me","a","an","as","but","so","very","really",
-    "just","too","not","no","yes","had","have","has","be","been","from","again","back","there",
-    "here","great","good","nice","love","loved","amazing","awesome","best","worst","bad","okay",
-    "food","service" // keep these from dominating keyword selection
-  ]
-);
+   const STOPWORDS = new Set(
+    [
+      "the","and","for","with","this","that","was","were","are","is","to","of","in","on","at","it",
+      "we","i","you","they","them","our","your","my","me","a","an","as","but","so","very","really",
+      "just","too","not","no","yes","had","have","has","be","been","from","again","back","there",
+      "here","great","good","nice","love","loved","amazing","awesome","best","worst","bad","okay",
+      "food","service","such","place","overall","also","quite","little","much","more","some","than",
+      "when","what","how","all","out","its","one","can","get","got","said","even","well","went",
+      "like","did","dont","doesnt","wasnt","werent","isnt","about","would","could","should","their","cute","lovely","beautiful","wonderful","fantastic","excellent","perfect","clean","busy","full"
+    ]
+  );
 
 const DETAIL_HINT_RE =
   /\b(server|staff|team|host|bartender|barista|chef|manager|wine|coffee|espresso|cocktail|beer|pizza|pasta|steak|sushi|taco|burger|salad|dessert|cake|ice cream|breakfast|brunch|lunch|dinner|table|patio|music|vibe|atmosphere|reservation|wait|line|checkout|price|portion|parking|bathroom|restroom|clean|location)\b/i;
@@ -927,9 +929,9 @@ function enforceFirstSentenceDetail(params: {
   const { reply, review_text, rating, owner_language, voice } = params;
 
   const keyword = pickDetailKeyword(review_text);
-  if (!keyword) {
-    return { text: reply, enforced: false, keyword: null };
-  }
+if (!keyword || !DETAIL_HINT_RE.test(keyword)) {
+  return { text: reply, enforced: false, keyword: null };
+}
 
   const parts = splitSentences(reply);
   if (parts.length === 0) return { text: reply, enforced: false, keyword };
