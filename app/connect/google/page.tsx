@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { GBP_ENABLED } from "@/lib/featureFlags";
 
 type PlaceCandidate = {
   place_id: string;
@@ -27,13 +28,13 @@ type Toast = {
 };
 
 type GbpAccount = {
-  name: string; // e.g. "accounts/1234567890"
+  name: string;
   accountName?: string;
   type?: string;
 };
 
 type GbpLocation = {
-  name: string; // e.g. "accounts/123/locations/456"
+  name: string;
   title?: string;
 };
 
@@ -69,15 +70,12 @@ export default function ConnectGooglePage() {
   const [business, setBusiness] = useState<CurrentBusiness | null>(null);
   const [userEmail, setUserEmail] = useState("");
 
-  // If already connected, show a calm summary.
   const [showReconnectUI, setShowReconnectUI] = useState(false);
 
-  // Search flow (Places)
   const [placeSearchQuery, setPlaceSearchQuery] = useState("");
   const [placeSearchResults, setPlaceSearchResults] = useState<PlaceCandidate[]>([]);
   const [placeSearchError, setPlaceSearchError] = useState<string | null>(null);
 
-  // Connect flow (Places)
   const [placeIdInput, setPlaceIdInput] = useState("");
   const [placeIdStatus, setPlaceIdStatus] = useState<PlaceIdStatus>("idle");
   const [placeIdError, setPlaceIdError] = useState<string | null>(null);
@@ -87,11 +85,9 @@ export default function ConnectGooglePage() {
     user_ratings_total?: number;
   } | null>(null);
 
-  // GBP (OAuth + account/location picker)
   const [gbpStatus, setGbpStatus] = useState<string | null>(null);
   const [gbpPendingApproval, setGbpPendingApproval] = useState(false);
 
-  // NEW: OAuth connection status from server (google_integrations)
   const [gbpOauthConnected, setGbpOauthConnected] = useState(false);
   const [gbpOauthEmail, setGbpOauthEmail] = useState<string | null>(null);
   const [gbpOauthChecked, setGbpOauthChecked] = useState(false);
@@ -102,7 +98,6 @@ export default function ConnectGooglePage() {
   const [gbpSelectedLocations, setGbpSelectedLocations] = useState<Record<string, boolean>>({});
   const [gbpLoading, setGbpLoading] = useState<null | "accounts" | "locations" | "save">(null);
 
-  // Saved selections (works even while GBP is pending)
   const [gbpSavedLocations, setGbpSavedLocations] = useState<SavedGbpLocation[]>([]);
   const [gbpSavedLoading, setGbpSavedLoading] = useState(false);
   const [gbpRemoveLoadingId, setGbpRemoveLoadingId] = useState<string | null>(null);
@@ -203,9 +198,6 @@ export default function ConnectGooglePage() {
     }
   }
 
-  // ---------------------------
-  // Places (existing MVP)
-  // ---------------------------
   async function searchPlaces() {
     const q = placeSearchQuery.trim();
     if (!q || actionLoading) return;
@@ -221,7 +213,7 @@ export default function ConnectGooglePage() {
       const json = await res.json();
 
       if (!res.ok || !json?.ok) {
-        setPlaceSearchError(json?.error ?? "Search didn’t work. Try again.");
+        setPlaceSearchError(json?.error ?? "Search didn't work. Try again.");
         return;
       }
 
@@ -234,7 +226,7 @@ export default function ConnectGooglePage() {
         setPlaceSearchError("No matches yet — try adding the city or neighborhood.");
       }
     } catch (e: any) {
-      setPlaceSearchError(e?.message ?? "Search didn’t work. Try again.");
+      setPlaceSearchError(e?.message ?? "Search didn't work. Try again.");
     } finally {
       setActionLoading(null);
     }
@@ -264,7 +256,7 @@ export default function ConnectGooglePage() {
         const msg =
           json?.error ??
           json?.googleError ??
-          "We couldn’t confirm that listing. Please try again.";
+          "We couldn't confirm that listing. Please try again.";
         setPlaceIdStatus("error");
         setPlaceIdError(msg);
         showToast({ message: msg, type: "error" }, 4200);
@@ -290,13 +282,9 @@ export default function ConnectGooglePage() {
     }
   }
 
-  // ---------------------------
-  // GBP (new, minimal UI)
-  // ---------------------------
   async function gbpLoadAccounts() {
     if (gbpLoading) return;
 
-    // Require OAuth connection first
     if (!gbpOauthConnected) {
       const msg = "Connect Google (OAuth) first, then load accounts.";
       setGbpStatus(msg);
@@ -320,7 +308,7 @@ export default function ConnectGooglePage() {
       if (json?.code === "GBP_ACCESS_PENDING") {
         setGbpPendingApproval(true);
         setGbpStatus(
-          "Google Business Profile API access is pending approval. You’re connected via OAuth, and we’ll enable full review syncing as soon as Google grants access."
+          "Google Business Profile API access is pending approval. You're connected via OAuth, and we'll enable full review syncing as soon as Google grants access."
         );
         return;
       }
@@ -371,7 +359,7 @@ export default function ConnectGooglePage() {
       if (json?.code === "GBP_ACCESS_PENDING") {
         setGbpPendingApproval(true);
         setGbpStatus(
-          "Google Business Profile API access is pending approval. You’re connected via OAuth, and we’ll enable location loading as soon as Google grants access."
+          "Google Business Profile API access is pending approval. You're connected via OAuth, and we'll enable location loading as soon as Google grants access."
         );
         return;
       }
@@ -460,9 +448,6 @@ export default function ConnectGooglePage() {
     }
   }
 
-  // ---------------------------
-  // Init
-  // ---------------------------
   useEffect(() => {
     async function init() {
       setLoading(true);
@@ -476,10 +461,10 @@ export default function ConnectGooglePage() {
         return;
       }
 
-      // Load OAuth status first so GBP section is truthful
-      await loadGbpOauthStatus();
-
-      await gbpLoadSavedLocations();
+      if (GBP_ENABLED) {
+        await loadGbpOauthStatus();
+        await gbpLoadSavedLocations();
+      }
 
       const b = await loadCurrentBusiness();
 
@@ -519,7 +504,7 @@ export default function ConnectGooglePage() {
     );
   }
 
-  // Connected summary view (Places)
+  // Connected summary view
   if (isAlreadyConnected && !showReconnectUI) {
     const name = business?.google_place_name ?? business?.business_name ?? "Your business";
 
@@ -559,25 +544,24 @@ export default function ConnectGooglePage() {
             </div>
           )}
 
-          {/* GBP OAuth status (informational) */}
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(148,163,184,0.18)" }}>
-            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
-              Google Business Profile (OAuth)
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              {gbpOauthChecked ? (
-                gbpOauthConnected ? (
-                  <>
-                    Connected ✅{gbpOauthEmail ? ` (${gbpOauthEmail})` : ""}
-                  </>
+          {GBP_ENABLED && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(148,163,184,0.18)" }}>
+              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+                Google Business Profile (OAuth)
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.8 }}>
+                {gbpOauthChecked ? (
+                  gbpOauthConnected ? (
+                    <>Connected ✅{gbpOauthEmail ? ` (${gbpOauthEmail})` : ""}</>
+                  ) : (
+                    "Not connected yet."
+                  )
                 ) : (
-                  "Not connected yet."
-                )
-              ) : (
-                "Checking…"
-              )}
+                  "Checking…"
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button
@@ -597,7 +581,6 @@ export default function ConnectGooglePage() {
                 setPlaceIdStatus("idle");
                 setPlaceIdError(null);
                 setVerified(null);
-
                 setGbpStatus(null);
                 setGbpPendingApproval(false);
                 setGbpAccounts([]);
@@ -646,248 +629,253 @@ export default function ConnectGooglePage() {
       )}
 
       <div style={cardStyle}>
-        {/* --------------------------- */}
-        {/* GBP Section (new, minimal) */}
-        {/* --------------------------- */}
-        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
-          Recommended: Google Business Profile (full reviews)
-        </div>
 
-        <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
-          This is the official integration that enables <strong>all reviews per location</strong>{" "}
-          (multi-location supported). If you haven’t connected yet, start with OAuth.
-        </div>
-
-        <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 10 }}>
-          OAuth status:{" "}
-          {gbpOauthChecked ? (
-            gbpOauthConnected ? (
-              <strong>Connected ✅{gbpOauthEmail ? ` (${gbpOauthEmail})` : ""}</strong>
-            ) : (
-              <strong>Not connected</strong>
-            )
-          ) : (
-            "Checking…"
-          )}
-        </div>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <a
-            href="/api/google/oauth/start"
-            style={{
-              ...buttonStyle,
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-            title="Connect Google via OAuth"
-          >
-            {gbpOauthConnected ? "Reconnect Google (OAuth)" : "Connect Google (OAuth)"}
-          </a>
-
-          <button
-            onClick={gbpLoadAccounts}
-            disabled={gbpLoading !== null || !gbpOauthConnected}
-            style={buttonStyle}
-            title={!gbpOauthConnected ? "Connect Google (OAuth) first" : "Load GBP accounts"}
-          >
-            {gbpLoading === "accounts" ? "Loading accounts…" : "Load accounts"}
-          </button>
-
-          <button
-            onClick={gbpLoadSavedLocations}
-            disabled={gbpSavedLoading || gbpRemoveLoadingId !== null}
-            style={{ ...buttonStyle, background: "rgba(226,232,240,0.08)" }}
-            title="Refresh saved locations"
-          >
-            {gbpSavedLoading ? "Refreshing…" : "Refresh saved"}
-          </button>
-        </div>
-
-        {/* Saved selections */}
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
-            Saved locations:
-          </div>
-
-          {gbpSavedLoading ? (
-            <div style={{ fontSize: 12, opacity: 0.75 }}>Loading saved locations…</div>
-          ) : gbpSavedLocations.length === 0 ? (
-            <div style={{ fontSize: 12, opacity: 0.75 }}>
-              None yet. Once GBP is approved, you’ll select locations here and we’ll sync reviews per location.
+        {/* ---------------------------------------- */}
+        {/* GBP Section — only shown when flag is on */}
+        {/* ---------------------------------------- */}
+        {GBP_ENABLED && (
+          <>
+            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
+              Recommended: Google Business Profile (full reviews)
             </div>
-          ) : (
-            <div style={{ border: "1px solid rgba(148,163,184,0.25)", borderRadius: 12, padding: 10 }}>
-              {gbpSavedLocations.map((l) => {
-                const isRemoving = gbpRemoveLoadingId === l.google_location_id;
-                return (
-                  <div
-                    key={l.google_location_id}
-                    style={{
-                      padding: "8px 6px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 800, fontSize: 13 }}>{l.google_location_name}</div>
-                      <div style={{ fontSize: 12, opacity: 0.75, fontFamily: "monospace" }}>
-                        {maskLongId(l.google_location_id)}
-                      </div>
-                    </div>
 
-                    <button
-                      onClick={() => gbpRemoveSavedLocation(l.google_location_id)}
-                      disabled={gbpRemoveLoadingId !== null}
-                      style={{
-                        ...miniButtonStyle,
-                        border: "1px solid rgba(248,113,113,0.45)",
-                        background: "rgba(127,29,29,0.25)",
-                      }}
-                      title="Remove saved location"
-                    >
-                      {isRemoving ? "Removing…" : "Remove"}
-                    </button>
-                  </div>
-                );
-              })}
+            <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
+              This is the official integration that enables <strong>all reviews per location</strong>{" "}
+              (multi-location supported). If you haven't connected yet, start with OAuth.
             </div>
-          )}
-        </div>
 
-        {/* ✅ Friendly pending-approval banner */}
-        {gbpPendingApproval && (
-          <div
-            style={{
-              marginTop: 12,
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid rgba(148,163,184,0.25)",
-              background: "rgba(15,23,42,0.55)",
-              fontSize: 13,
-              opacity: 0.95,
-            }}
-          >
-            <div style={{ fontWeight: 800, marginBottom: 4 }}>GBP access pending ⏳</div>
-            <div style={{ opacity: 0.9 }}>
-              Google has not approved Business Profile API access for this project yet (quota is 0),
-              so we can’t load accounts/locations today. Your OAuth connection is working, and we’ll
-              enable full review syncing as soon as Google grants access.
+            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 10 }}>
+              OAuth status:{" "}
+              {gbpOauthChecked ? (
+                gbpOauthConnected ? (
+                  <strong>Connected ✅{gbpOauthEmail ? ` (${gbpOauthEmail})` : ""}</strong>
+                ) : (
+                  <strong>Not connected</strong>
+                )
+              ) : (
+                "Checking…"
+              )}
             </div>
-            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-              In the meantime, you can use the <strong>Places</strong> connection below.
-            </div>
-          </div>
-        )}
 
-        {gbpStatus && !gbpPendingApproval && (
-          <div
-            style={{
-              marginTop: 10,
-              fontSize: 13,
-              color: gbpStatus.includes("Saved") ? "#22c55e" : "#f87171",
-            }}
-          >
-            {gbpStatus}
-          </div>
-        )}
-
-        {gbpAccounts.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>Choose an account:</div>
-
-            <select
-              value={gbpSelectedAccount}
-              onChange={(e) => {
-                const v = e.target.value;
-                setGbpSelectedAccount(v);
-                setGbpLocations([]);
-                setGbpSelectedLocations({});
-                if (v) gbpLoadLocations(v);
-              }}
-              style={selectStyle}
-              disabled={gbpLoading === "locations" || gbpLoading === "save"}
-            >
-              <option value="">Select an account…</option>
-              {gbpAccounts.map((a) => (
-                <option key={a.name} value={a.name}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {gbpLocations.length > 0 && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
-                Select locations ({gbpSelectedCount} selected):
-              </div>
-              <button
-                onClick={() => {
-                  const all: Record<string, boolean> = {};
-                  gbpLocations.forEach((l) => (all[l.name] = true));
-                  setGbpSelectedLocations(all);
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <a
+                href="/api/google/oauth/start"
+                style={{
+                  ...buttonStyle,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
-                style={{ ...miniButtonStyle }}
+                title="Connect Google via OAuth"
               >
-                Select all
+                {gbpOauthConnected ? "Reconnect Google (OAuth)" : "Connect Google (OAuth)"}
+              </a>
+
+              <button
+                onClick={gbpLoadAccounts}
+                disabled={gbpLoading !== null || !gbpOauthConnected}
+                style={buttonStyle}
+                title={!gbpOauthConnected ? "Connect Google (OAuth) first" : "Load GBP accounts"}
+              >
+                {gbpLoading === "accounts" ? "Loading accounts…" : "Load accounts"}
+              </button>
+
+              <button
+                onClick={gbpLoadSavedLocations}
+                disabled={gbpSavedLoading || gbpRemoveLoadingId !== null}
+                style={{ ...buttonStyle, background: "rgba(226,232,240,0.08)" }}
+                title="Refresh saved locations"
+              >
+                {gbpSavedLoading ? "Refreshing…" : "Refresh saved"}
               </button>
             </div>
 
-            <div style={{ border: "1px solid rgba(148,163,184,0.25)", borderRadius: 12, padding: 10 }}>
-              {gbpLocations.map((l) => (
-                <label key={l.name} style={{ display: "flex", gap: 10, padding: "8px 6px" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!gbpSelectedLocations[l.name]}
-                    onChange={(e) =>
-                      setGbpSelectedLocations((prev) => ({ ...prev, [l.name]: e.target.checked }))
-                    }
-                    disabled={gbpLoading === "save"}
-                  />
-                  <span>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{l.title ?? "(Untitled location)"}</div>
-                    <div style={{ fontSize: 12, opacity: 0.75 }}>{l.name}</div>
-                  </span>
-                </label>
-              ))}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
+                Saved locations:
+              </div>
+
+              {gbpSavedLoading ? (
+                <div style={{ fontSize: 12, opacity: 0.75 }}>Loading saved locations…</div>
+              ) : gbpSavedLocations.length === 0 ? (
+                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  None yet. Once GBP is approved, you'll select locations here and we'll sync reviews per location.
+                </div>
+              ) : (
+                <div style={{ border: "1px solid rgba(148,163,184,0.25)", borderRadius: 12, padding: 10 }}>
+                  {gbpSavedLocations.map((l) => {
+                    const isRemoving = gbpRemoveLoadingId === l.google_location_id;
+                    return (
+                      <div
+                        key={l.google_location_id}
+                        style={{
+                          padding: "8px 6px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, fontSize: 13 }}>{l.google_location_name}</div>
+                          <div style={{ fontSize: 12, opacity: 0.75, fontFamily: "monospace" }}>
+                            {maskLongId(l.google_location_id)}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => gbpRemoveSavedLocation(l.google_location_id)}
+                          disabled={gbpRemoveLoadingId !== null}
+                          style={{
+                            ...miniButtonStyle,
+                            border: "1px solid rgba(248,113,113,0.45)",
+                            background: "rgba(127,29,29,0.25)",
+                          }}
+                          title="Remove saved location"
+                        >
+                          {isRemoving ? "Removing…" : "Remove"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button onClick={gbpSaveSelectedLocations} disabled={gbpLoading !== null} style={buttonStyle}>
-                {gbpLoading === "save" ? "Saving…" : "Save selected locations"}
-              </button>
-            </div>
+            {gbpPendingApproval && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(148,163,184,0.25)",
+                  background: "rgba(15,23,42,0.55)",
+                  fontSize: 13,
+                  opacity: 0.95,
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 4 }}>GBP access pending ⏳</div>
+                <div style={{ opacity: 0.9 }}>
+                  Google has not approved Business Profile API access for this project yet (quota is 0),
+                  so we can't load accounts/locations today. Your OAuth connection is working, and we'll
+                  enable full review syncing as soon as Google grants access.
+                </div>
+                <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                  In the meantime, you can use the <strong>Places</strong> connection below.
+                </div>
+              </div>
+            )}
 
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-              You can select multiple locations. Reviews will be ingested per-location once the GBP review access is available.
-            </div>
-          </div>
+            {gbpStatus && !gbpPendingApproval && (
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 13,
+                  color: gbpStatus.includes("Saved") ? "#22c55e" : "#f87171",
+                }}
+              >
+                {gbpStatus}
+              </div>
+            )}
+
+            {gbpAccounts.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>Choose an account:</div>
+
+                <select
+                  value={gbpSelectedAccount}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setGbpSelectedAccount(v);
+                    setGbpLocations([]);
+                    setGbpSelectedLocations({});
+                    if (v) gbpLoadLocations(v);
+                  }}
+                  style={selectStyle}
+                  disabled={gbpLoading === "locations" || gbpLoading === "save"}
+                >
+                  <option value="">Select an account…</option>
+                  {gbpAccounts.map((a) => (
+                    <option key={a.name} value={a.name}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {gbpLocations.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
+                    Select locations ({gbpSelectedCount} selected):
+                  </div>
+                  <button
+                    onClick={() => {
+                      const all: Record<string, boolean> = {};
+                      gbpLocations.forEach((l) => (all[l.name] = true));
+                      setGbpSelectedLocations(all);
+                    }}
+                    style={{ ...miniButtonStyle }}
+                  >
+                    Select all
+                  </button>
+                </div>
+
+                <div style={{ border: "1px solid rgba(148,163,184,0.25)", borderRadius: 12, padding: 10 }}>
+                  {gbpLocations.map((l) => (
+                    <label key={l.name} style={{ display: "flex", gap: 10, padding: "8px 6px" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!gbpSelectedLocations[l.name]}
+                        onChange={(e) =>
+                          setGbpSelectedLocations((prev) => ({ ...prev, [l.name]: e.target.checked }))
+                        }
+                        disabled={gbpLoading === "save"}
+                      />
+                      <span>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{l.title ?? "(Untitled location)"}</div>
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>{l.name}</div>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button onClick={gbpSaveSelectedLocations} disabled={gbpLoading !== null} style={buttonStyle}>
+                    {gbpLoading === "save" ? "Saving…" : "Save selected locations"}
+                  </button>
+                </div>
+
+                <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                  You can select multiple locations. Reviews will be ingested per-location once the GBP review access is available.
+                </div>
+              </div>
+            )}
+
+            {/* Divider between GBP and Places */}
+            <div style={{ marginTop: 16, borderTop: "1px solid rgba(148,163,184,0.18)", paddingTop: 16 }} />
+          </>
         )}
 
-        {/* Divider */}
-        <div style={{ marginTop: 16, borderTop: "1px solid rgba(148,163,184,0.18)", paddingTop: 16 }} />
-
-        {/* --------------------------- */}
-        {/* Places Section (existing)   */}
-        {/* --------------------------- */}
+        {/* ---------------------------------------- */}
+        {/* Places Section — always shown            */}
+        {/* ---------------------------------------- */}
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
-          Legacy: Google Places (limited reviews)
+          {GBP_ENABLED ? "Legacy: Google Places (limited reviews)" : "Connect your Google listing"}
         </div>
 
         <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
-          This is your current MVP integration. Google may only provide a limited sample of reviews here.
+          {GBP_ENABLED
+            ? "This is your current MVP integration. Google may only provide a limited sample of reviews here."
+            : "Search for your business listing and connect it to start drafting replies."}
         </div>
 
         <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Find your listing</div>
 
         <div style={{ opacity: 0.8, fontSize: 13, marginBottom: 12 }}>
-          Search using <strong>name + city</strong> (example: “Delfina Palo Alto”).
+          Search using <strong>name + city</strong> (example: "Delfina Palo Alto").
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -1001,7 +989,7 @@ export default function ConnectGooglePage() {
         </div>
 
         <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
-          We’ll show your reviews inside Review Concierge so you can draft replies in your voice.
+          We'll show your reviews inside Review Concierge so you can draft replies in your voice.
           You approve, edit, and post.
         </div>
       </div>
