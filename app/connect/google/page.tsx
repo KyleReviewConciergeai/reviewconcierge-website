@@ -198,6 +198,27 @@ export default function ConnectGooglePage() {
     }
   }
 
+  async function disconnectGoogle() {
+    const ok = window.confirm("Disconnect Google? You can reconnect at any time.");
+    if (!ok) return;
+
+    try {
+      const res = await fetch("/api/google/oauth/revoke", { method: "POST" });
+      const json = await res.json();
+
+      if (!res.ok || !json?.ok) {
+        showToast({ message: json?.error ?? "Failed to disconnect Google.", type: "error" }, 4200);
+        return;
+      }
+
+      setGbpOauthConnected(false);
+      setGbpOauthEmail(null);
+      showToast({ message: "Google disconnected successfully.", type: "success" }, 2200);
+    } catch (e: any) {
+      showToast({ message: e?.message ?? "Failed to disconnect Google.", type: "error" }, 4200);
+    }
+  }
+
   async function searchPlaces() {
     const q = placeSearchQuery.trim();
     if (!q || actionLoading) return;
@@ -563,7 +584,7 @@ export default function ConnectGooglePage() {
             </div>
           )}
 
-          <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+<div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button
               onClick={() => router.push("/dashboard")}
               style={buttonStyle}
@@ -593,6 +614,21 @@ export default function ConnectGooglePage() {
             >
               Change listing
             </button>
+
+            {GBP_ENABLED && gbpOauthConnected && (
+              <button
+                onClick={disconnectGoogle}
+                style={{
+                  ...buttonStyle,
+                  border: "1px solid rgba(248,113,113,0.45)",
+                  background: "rgba(127,29,29,0.25)",
+                  color: "#fca5a5",
+                }}
+                title="Disconnect Google"
+              >
+                Disconnect Google
+              </button>
+            )}
           </div>
 
           <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
