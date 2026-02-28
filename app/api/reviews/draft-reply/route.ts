@@ -521,17 +521,19 @@ function mustDoForRating(rating: number) {
   if (rating === 2) {
     return [
       ...base,
-      "Open with a short, human apology or acknowledgment (OK to use “Sorry about…” / “We’re sorry to hear…”).",
+      "Open with ONE short apology or acknowledgment in your first sentence only. Do NOT apologize again in any other sentence.",
       "Acknowledge disappointment calmly (no defensiveness).",
       "If inviting follow-up, keep it ONE short human line (no corporate framing).",
+      "Do NOT apologize more than once. One acknowledgment total.",
     ];
   }
 
   return [
     ...base,
-    "Open with a short, human apology or acknowledgment (OK to use “Sorry about…” / “We’re sorry to hear…”).",
+    "Open with ONE short apology or acknowledgment in your first sentence only. Do NOT apologize again in any other sentence.",
     "Be calm and direct. Avoid long apologies and PR language.",
     "If inviting follow-up, keep it ONE short line (email/phone), not legalistic.",
+    "Do NOT apologize more than once. One acknowledgment total.",
   ];
 }
 
@@ -950,6 +952,12 @@ if (!keyword || !DETAIL_HINT_RE.test(keyword)) {
   } else {
     nextParts = [replacement, ...parts];
   }
+
+// If we injected an apology, strip any duplicate apology from remaining sentences
+if (rating <= 2) {
+  const apologyRe = /\b(lo siento|disculp|perd[oó]n|lament|sorry|apologize|apolog)/i;
+  nextParts = [nextParts[0], ...nextParts.slice(1).filter(s => !apologyRe.test(s))];
+}
 
   const out = nextParts.join(" ").trim();
   return { text: out, enforced: true, keyword };
