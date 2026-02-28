@@ -107,7 +107,7 @@ function toneFromRating(r: number) {
 const DRAFT_RULES = [
   "Keep it 2–4 sentences.",
   "Sound like a real owner, not a brand.",
-  "Avoid corporate phrases like: 'we’re thrilled', 'we appreciate your feedback', 'valued guest'.",
+  "Avoid corporate phrases like: 'we're thrilled', 'we appreciate your feedback', 'valued guest'.",
   "If possible, reference one specific detail from the review (food, staff, vibe, timing).",
   "No emojis.",
   "Use at most one exclamation mark, and only for 5★ reviews.",
@@ -171,7 +171,12 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const [errorMessage, setErrorMessage] = useState<string>("");
 
   const [copied, setCopied] = useState(false);
+  // ✅ FIX: track live re-translation state
+  const [isTranslating, setIsTranslating] = useState(false);
+
   const copiedTimer = useRef<number | null>(null);
+  // ✅ FIX: debounce timer for live re-translation
+  const translateTimer = useRef<number | null>(null);
 
   const [version, setVersion] = useState<number>(0);
 
@@ -195,7 +200,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     draftHelp: "This is a starting point. Edit it freely so it feels like you.",
     finalLabel: "Copy-ready reply",
     finalPlaceholder: "Copy-ready reply will appear here…",
-    finalHelp: "This is what you’ll paste into Google Reviews. It matches the reviewer’s language.",
+    finalHelp: "This is what you'll paste into Google Reviews. It matches the reviewer's language.",
     btnDraft: "Draft a reply",
     btnDraftLoading: "Drafting…",
     btnAnother: "Draft another option",
@@ -204,8 +209,8 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     btnCopied: "Copied",
     statusDrafting: "Drafting…",
     statusReady: "Suggested",
-    statusError: "Couldn’t draft",
-    errorDefault: "Couldn’t draft a reply right now. Please try again.",
+    statusError: "Couldn't draft",
+    errorDefault: "Couldn't draft a reply right now. Please try again.",
     tip: "Tip: Copy the reply, then paste it into Google Reviews to post. Nothing is posted automatically.",
     selectedHint: "Selected review",
     clearSelection: "Clear selection",
@@ -252,7 +257,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         reviewId: String(d.reviewId ?? ""),
         businessId: d.businessId ? String(d.businessId) : null,
         text,
-        google_location_id: loc, // ✅ FIX: store location in selectedReview
+        google_location_id: loc,
         rating: typeof d.rating === "number" ? d.rating : null,
         authorName: d.authorName ?? null,
         createdAt: d.createdAt ?? null,
@@ -261,7 +266,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       };
 
       setSelectedReview(next);
-
       setReviewText(next.text);
 
       if (typeof next.rating === "number" && next.rating >= 1 && next.rating <= 5) {
@@ -296,6 +300,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return () => window.removeEventListener("rc:select-review", handler as EventListener);
   }, []);
 
+  // Cleanup copiedTimer on unmount
   useEffect(() => {
     return () => {
       if (copiedTimer.current) {
@@ -312,6 +317,31 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   const sameLang = useMemo(() => {
     return normLang(ownerLanguage) === normLang(replyLanguage);
   }, [ownerLanguage, replyLanguage]);
+
+  // ✅ FIX: Re-translate copy-ready reply whenever owner edits the draft
+  useEffect(() => {
+    if (sameLang) return;
+    if (!draft.trim()) return;
+
+    if (translateTimer.current) window.clearTimeout(translateTimer.current);
+
+    translateTimer.current = window.setTimeout(async () => {
+      try {
+        setIsTranslating(true);
+        const translated = await requestTranslate(draft, replyLanguage);
+        setFinalReply(translated);
+      } catch {
+        // silently fail — user still has the previous translation
+      } finally {
+        setIsTranslating(false);
+      }
+    }, 800);
+
+    return () => {
+      if (translateTimer.current) window.clearTimeout(translateTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, replyLanguage, sameLang]);
 
   async function requestTranslate(text: string, targetLanguage: string) {
     const { ok, json, status, rawText } = await fetchJson<TranslateReplyResponse>(
@@ -365,19 +395,19 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
   }
 
   async function patchReplyRecord(
-  id: string,
-  statusValue: "copied" | "posted",
-  google_location_id?: string
-) {
+    id: string,
+    statusValue: "copied" | "posted",
+    google_location_id?: string
+  ) {
     const { ok, json, status, rawText } = await fetchJson<any>("/api/reviews/replies", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-  id,
-  status: statusValue,
-  google_location_id: google_location_id?.trim() || "",
-  location_id: google_location_id?.trim() || "", // optional backwards-compat
-}),
+        id,
+        status: statusValue,
+        google_location_id: google_location_id?.trim() || "",
+        location_id: google_location_id?.trim() || "",
+      }),
     });
 
     if (!ok || !json?.ok) {
@@ -392,7 +422,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     return true;
   }
 
-  // fallback: if no replyRecordId exists for any reason, create a copied record on copy
   async function createCopiedReplyRecordFallback(params: {
     review_id: string;
     business_id: string;
@@ -483,7 +512,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
         setFinalReply("");
       }
 
-      // create a draft record (best-effort)
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
 
@@ -535,7 +563,6 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
     try {
       await navigator.clipboard.writeText(textToCopy);
 
-      // best-effort logging
       const review_id = selectedReview?.reviewId?.trim() || "";
       const business_id = selectedReview?.businessId?.trim() || "";
       const google_location_id = selectedReview?.google_location_id?.trim() || "";
@@ -816,7 +843,10 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
       {/* Copy-ready output (ONLY when different language) */}
       {!sameLang ? (
         <div style={{ marginTop: 14 }}>
-          <div style={labelStyle}>Copy-ready reply</div>
+          {/* ✅ FIX: show "Updating…" while re-translating after owner edits */}
+          <div style={labelStyle}>
+            Copy-ready reply{isTranslating ? " — Updating…" : ""}
+          </div>
 
           <textarea
             value={finalReply}
