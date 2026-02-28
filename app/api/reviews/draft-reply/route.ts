@@ -7,9 +7,9 @@ import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
 import crypto from "crypto";
 
-const PROMPT_VERSION = "draft-reply-v1";
-const BANNED_LIST_VERSION = "banned-v1";
-const POST_CLEAN_VERSION = "postclean-v2"; // ✅ B4
+const PROMPT_VERSION = "draft-reply-v2";
+const BANNED_LIST_VERSION = "banned-v2";
+const POST_CLEAN_VERSION = "postclean-v3";
 
 function sha256Hex(input: string) {
   return crypto.createHash("sha256").update(input ?? "", "utf8").digest("hex");
@@ -45,7 +45,7 @@ function stripEmojis(text: string) {
 }
 
 function removeQuotations(text: string) {
-  return text.replace(/["“”‘’]/g, "");
+  return text.replace(/["""'']/g, "");
 }
 
 function collapseWhitespace(text: string) {
@@ -64,7 +64,6 @@ function splitSentences(text: string) {
 function limitSentences(text: string, maxSentences: number) {
   const t = (text ?? "").trim();
   if (!t) return t;
-
   const parts = splitSentences(t);
   if (parts.length <= maxSentences) return t;
   return parts.slice(0, maxSentences).join(" ");
@@ -72,21 +71,20 @@ function limitSentences(text: string, maxSentences: number) {
 
 function languageInstruction(languageTag: string) {
   const tag = (languageTag || "en").toLowerCase();
-
   switch (tag) {
     case "en":
       return "Write in English. Natural, human, non-corporate.";
     case "es":
-      return "Write in Spanish. Natural Spanish, not a literal translation.";
+      return "Escribe en español. Español natural, no una traducción literal. Suena como una persona real, no una marca.";
     case "pt":
     case "pt-br":
-      return "Write in Portuguese. Natural Portuguese, not a literal translation.";
+      return "Escreva em português. Português natural, não uma tradução literal.";
     case "fr":
-      return "Write in French. Natural French, not a literal translation.";
+      return "Écris en français. Français naturel, pas une traduction littérale.";
     case "it":
-      return "Write in Italian. Natural Italian, not a literal translation.";
+      return "Scrivi in italiano. Italiano naturale, non una traduzione letterale.";
     case "de":
-      return "Write in German. Natural German, not a literal translation.";
+      return "Schreibe auf Deutsch. Natürliches Deutsch, keine wörtliche Übersetzung.";
     default:
       return `Write in the owner's preferred language (${languageTag}).`;
   }
@@ -106,59 +104,7 @@ const DEFAULT_VOICE = {
   tone: "warm" as const,
   brevity: "short" as const,
   formality: "professional" as const,
-  things_to_avoid: [
-    "Thank you for your feedback",
-    "We appreciate your feedback",
-    "We appreciate your thoughts",
-    "We appreciate your comments",
-    "Thank you for taking the time",
-    "Thank you for sharing",
-    "We strive",
-    "We will look into this",
-    "We take this seriously",
-    "Please accept our apologies",
-    "valued customer",
-    "valued guest",
-    "expectations",
-    "did not meet expectations",
-    "didn't meet expectations",
-    "fell short",
-    "acknowledge",
-    "we understand",
-    "we hear your",
-    "we recognize",
-    "it's disappointing to hear",
-    "it's concerning to hear",
-    "we'll keep that in mind",
-    "keep your feedback in mind",
-    "refine our",
-    "enhance our",
-    "it sounds like",
-    "it seems like",
-    "we aim to",
-    "we aim for",
-    "we strive to",
-    "our goal is to",
-    "we work hard to",
-    "we regret",
-    "we were busy",
-    "we're busy",
-    "we are busy",
-    "our team was busy",
-    "it was a busy night",
-    "it was a busy day",
-    "we were overwhelmed",
-    "we're overwhelmed",
-    "we are overwhelmed",
-    "our team was overwhelmed",
-    "we were slammed",
-    "we were swamped",
-    "we were short-staffed",
-    "we were short staffed",
-    "we were understaffed",
-    "short-staffed",
-    "understaffed",
-  ],
+  things_to_avoid: [] as string[],
   allow_exclamation: false,
 };
 
@@ -171,7 +117,6 @@ type OrgReplySettings = {
 async function loadOrgReplySettings(): Promise<OrgReplySettings> {
   try {
     const { supabase, organizationId } = await requireOrgContext();
-
     const { data, error } = await supabase
       .from("organizations")
       .select("owner_language, reply_tone, reply_signature")
@@ -195,7 +140,6 @@ async function loadOrgReplySettings(): Promise<OrgReplySettings> {
 async function loadVoiceProfile(): Promise<VoiceProfile> {
   try {
     const { supabase, organizationId } = await requireOrgContext();
-
     const { data, error } = await supabase
       .from("org_voice_profile")
       .select("reply_as,tone,brevity,formality,things_to_avoid,allow_exclamation")
@@ -209,9 +153,6 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
   }
 }
 
-/**
- * Voice samples (A4 selection already present in this file)
- */
 type VoiceSampleRow = {
   id: string;
   sample_text: string;
@@ -255,16 +196,13 @@ function jaccard(a: Set<string>, b: Set<string>) {
 function scoreLength(text: string) {
   const L = (text || "").length;
   if (!L) return 0;
-
   const min = 80;
   const idealLo = 110;
   const idealHi = 420;
   const hardMax = 700;
-
   if (L < min) return clamp01(L / min) * 0.4;
   if (L >= idealLo && L <= idealHi) return 1.0;
   if (L > hardMax) return 0.2;
-
   const decay = 1 - (L - idealHi) / (hardMax - idealHi);
   return clamp01(decay);
 }
@@ -273,55 +211,76 @@ function scoreSpecificity(text: string) {
   const raw = text || "";
   const tokens = tokenize(raw);
   if (tokens.length === 0) return 0;
-
   const unique = new Set(tokens);
   const uniqRatio = unique.size / tokens.length;
-
   const hasDigit = /\d/.test(raw);
   const hasCapWord = /\b[A-Z][a-z]{2,}\b/.test(raw);
-  const hasDetailMarker = /\b(today|tonight|yesterday|weekend|morning|afternoon|evening)\b/i.test(
-    raw
-  );
-
+  const hasDetailMarker = /\b(today|tonight|yesterday|weekend|morning|afternoon|evening)\b/i.test(raw);
   const base = clamp01((uniqRatio - 0.35) / 0.35);
   const bonus = (hasDigit ? 0.15 : 0) + (hasCapWord ? 0.12 : 0) + (hasDetailMarker ? 0.08 : 0);
-
   return clamp01(base + bonus);
 }
 
-function scoreAntiTemplate(text: string, avoidPhrases: string[]) {
+function scoreAntiTemplate(text: string) {
   const t = (text || "").toLowerCase();
   let penalty = 0;
 
-  for (const p of avoidPhrases) {
-    const pp = String(p || "").trim();
-    if (!pp) continue;
-    const re = new RegExp(`\\b${escapeRegex(pp.toLowerCase())}\\b`, "i");
-    if (re.test(t)) penalty += 0.35;
+  const templatePhrases = [
+    // EN
+    "thank you for your feedback",
+    "we appreciate your feedback",
+    "we appreciate your thoughts",
+    "we appreciate your comments",
+    "thank you for taking the time",
+    "thank you for sharing",
+    "we strive",
+    "we will look into this",
+    "we take this seriously",
+    "please accept our apologies",
+    "valued customer",
+    "valued guest",
+    "did not meet expectations",
+    "fell short of",
+    "we understand your frustration",
+    // ES
+    "entendemos tu frustración",
+    "lamentamos profundamente",
+    "nos disculpamos sinceramente",
+    "agradecemos tu comentario",
+    "agradecemos tu opinión",
+    "tomaremos en cuenta",
+    "trabajamos para mejorar",
+    // PT
+    "agradecemos o seu comentário",
+    "agradecemos o seu feedback",
+    "agradecemos sua opinião",
+    "lamentamos profundamente",
+    "pedimos desculpas sinceramente",
+    "entendemos a sua frustração",
+    "entendemos sua frustração",
+    "levamos isso muito a sério",
+    "trabalharemos para melhorar",
+    "nos esforçamos",
+    "esperamos vê-lo em breve",
+    "esperamos recebê-lo novamente",
+  ];
+
+  for (const p of templatePhrases) {
+    if (t.includes(p)) penalty += 0.35;
   }
 
-  if (/\b(book now|special offer|promo|discount|follow us|check out|visit our)\b/i.test(t))
-    penalty += 0.35;
-
+  if (/\b(book now|special offer|promo|discount|follow us|check out|visit our)\b/i.test(t)) penalty += 0.35;
   if ((t.match(/[!¡]/g) ?? []).length >= 2) penalty += 0.15;
-
-  if (/\b(we hope to see you again|hope to see you soon|come back soon)\b/i.test(t))
-    penalty += 0.08;
-
-  if (/\b(valued (customer|guest)|your satisfaction|our commitment)\b/i.test(t))
-    penalty += 0.25;
 
   return clamp01(1 - penalty);
 }
 
-function scoreSample(cleanedText: string, avoidPhrases: string[]) {
+function scoreSample(cleanedText: string) {
   const L = scoreLength(cleanedText);
   const S = scoreSpecificity(cleanedText);
-  const A = scoreAntiTemplate(cleanedText, avoidPhrases);
-
+  const A = scoreAntiTemplate(cleanedText);
   const sent = splitSentences(cleanedText).length;
   const sentScore = sent >= 1 && sent <= 3 ? 1 : sent === 4 ? 0.7 : 0.45;
-
   return 0.48 * A + 0.26 * L + 0.18 * S + 0.08 * sentScore;
 }
 
@@ -330,44 +289,33 @@ async function loadVoiceSamplesForOrg(opts?: {
   maxCharsEach?: number;
   maxTotalChars?: number;
 }): Promise<{ samples: string[]; sampleIds: string[] }> {
-  const maxItems = opts?.maxItems ?? 7;
+  const maxItems = opts?.maxItems ?? 5;
   const maxCharsEach = opts?.maxCharsEach ?? 420;
-  const maxTotalChars = opts?.maxTotalChars ?? 2400;
+  const maxTotalChars = opts?.maxTotalChars ?? 1800;
 
   try {
     const { supabase, organizationId } = await requireOrgContext();
-
-    const candidateLimit = 50;
 
     const { data, error } = await supabase
       .from("org_voice_samples")
       .select("id,sample_text,created_at")
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false })
-      .limit(candidateLimit);
+      .limit(50);
 
     if (error) return { samples: [], sampleIds: [] };
 
     const rows = (data ?? []) as VoiceSampleRow[];
-
-    const avoidPhrases = (DEFAULT_VOICE.things_to_avoid ?? [])
-      .map((x) => String(x))
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 120);
 
     const candidates = rows
       .map((r) => {
         const raw = cleanString(r.sample_text, 5000);
         const clipped = truncateForPrompt(raw, maxCharsEach);
         const normalized = collapseWhitespace(removeQuotations(stripEmojis(clipped)));
-        const cleaned = normalized;
-        if (!cleaned) return null;
-
-        const score = scoreSample(cleaned, avoidPhrases);
-        const tokenSet = new Set(tokenize(cleaned));
-
-        return { id: r.id, cleaned, score, tokenSet, created_at: r.created_at ?? "" };
+        if (!normalized) return null;
+        const score = scoreSample(normalized);
+        const tokenSet = new Set(tokenize(normalized));
+        return { id: r.id, cleaned: normalized, score, tokenSet, created_at: r.created_at ?? "" };
       })
       .filter(Boolean) as Array<{
       id: string;
@@ -389,34 +337,15 @@ async function loadVoiceSamplesForOrg(opts?: {
 
     for (const c of candidates) {
       if (selected.length >= Math.max(1, Math.min(maxItems, 12))) break;
-
       const nextLen = c.cleaned.length + 10;
       if (total + nextLen > maxTotalChars) continue;
-
       let tooSimilar = false;
       for (const s of selected) {
-        if (jaccard(c.tokenSet, s.tokenSet) >= 0.78) {
-          tooSimilar = true;
-          break;
-        }
+        if (jaccard(c.tokenSet, s.tokenSet) >= 0.78) { tooSimilar = true; break; }
       }
       if (tooSimilar) continue;
-
       selected.push({ id: c.id, cleaned: c.cleaned, tokenSet: c.tokenSet });
       total += nextLen;
-    }
-
-    if (selected.length < Math.min(maxItems, 3)) {
-      for (const c of candidates) {
-        if (selected.length >= Math.max(1, Math.min(maxItems, 12))) break;
-        if (selected.some((s) => s.id === c.id)) continue;
-
-        const nextLen = c.cleaned.length + 10;
-        if (total + nextLen > maxTotalChars) continue;
-
-        selected.push({ id: c.id, cleaned: c.cleaned, tokenSet: c.tokenSet });
-        total += nextLen;
-      }
     }
 
     return {
@@ -475,174 +404,12 @@ function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoicePr
 }
 
 function sentencePolicyForRating(rating: number) {
-  if (rating >= 5) return 4;
-  if (rating === 4) return 3;
-  if (rating === 3) return 3;
-  if (rating === 2) return 3;
+  if (rating >= 4) return 3;
   return 3;
 }
 
-function mustDoForRating(rating: number) {
-  const base = [
-    "Write 2–4 short sentences max (follow sentence limit below).",
-    "Sentence 1 MUST reference exactly one concrete detail from the review (dish, staff moment, timing, vibe, service detail).",
-    "Sound like a real owner writing quickly on Google (not a brand statement).",
-    "Use plain language. No PR tone. No templates.",
-    "Do NOT invent details. Only reference what the reviewer actually wrote.",
-    "Do NOT quote the review text.",
-    "No emojis.",
-  ];
-
-  if (rating >= 5) {
-    return [
-      ...base,
-      "Be appreciative but grounded (no hype, no marketing).",
-      "Close with a simple, low-pressure welcome back (not salesy).",
-    ];
-  }
-
-  if (rating === 4) {
-    return [
-      ...base,
-      "If there’s a small issue hinted, acknowledge it briefly in plain language (no corporate phrasing).",
-      "Close with a simple welcome back.",
-    ];
-  }
-
-  if (rating === 3) {
-    return [
-      ...base,
-      "Thank them plainly for the honest review (no corporate phrasing).",
-      "Reflect the mixed experience in a solution-oriented way.",
-      "Invite one detail if helpful (short).",
-    ];
-  }
-
-  if (rating === 2) {
-    return [
-      ...base,
-      "Open with ONE short apology or acknowledgment in your first sentence only. Do NOT apologize again in any other sentence.",
-      "Acknowledge disappointment calmly (no defensiveness).",
-      "If inviting follow-up, keep it ONE short human line (no corporate framing).",
-      "Do NOT apologize more than once. One acknowledgment total.",
-    ];
-  }
-
-  return [
-    ...base,
-    "Open with ONE short apology or acknowledgment in your first sentence only. Do NOT apologize again in any other sentence.",
-    "Be calm and direct. Avoid long apologies and PR language.",
-    "If inviting follow-up, keep it ONE short line (email/phone), not legalistic.",
-    "Do NOT apologize more than once. One acknowledgment total.",
-  ];
-}
-
-function mustNotForRating(rating: number) {
-  const base = [
-    "Do NOT mention AI, automation, internal processes, investigations, or policies.",
-    "Do NOT offer refunds/discounts/compensation.",
-    "Do NOT promise future changes or guarantees (no 'we will make sure', 'we will improve').",
-    "Do NOT admit legal fault.",
-    "Do NOT use corporate filler or templated empathy.",
-    "Do NOT use exclamation points unless explicitly allowed (rule below).",
-  ];
-
-  if (rating >= 4) {
-    return [...base, "Do NOT over-apologize. Only apologize if the guest clearly had a problem."];
-  }
-
-  if (rating <= 2) {
-    return [
-      ...base,
-      "Do NOT be playful or joking.",
-      "Do NOT argue with the reviewer.",
-      "Do NOT blame the customer.",
-      "Do NOT explain the cause (busy/overwhelmed/short-staffed/etc.) unless the reviewer explicitly mentioned it.",
-      "Do NOT justify or excuse the issue with operational context.",
-    ];
-  }
-
-  return base;
-}
-
-function styleLines(params: {
-  voice: ReturnType<typeof normalizeVoice>;
-  org_reply_tone_raw: string;
-  reply_signature: string | null;
-  clientTone?: VoiceProfile["tone"] | null;
-  rating: number;
-}) {
-  const { voice, org_reply_tone_raw, reply_signature, clientTone, rating } = params;
-
-  const who =
-    voice.reply_as === "owner"
-      ? 'Reply as the owner using "I".'
-      : voice.reply_as === "manager"
-      ? 'Reply as the manager using "I".'
-      : 'Reply as the business using "we".';
-
-  const orgTone = (org_reply_tone_raw || "").toLowerCase().trim();
-  const effectiveFormality = orgTone === "professional" ? "professional" : voice.formality;
-
-  const toneLine =
-    voice.tone === "warm"
-      ? "Default tone: warm, real, calm."
-      : voice.tone === "neutral"
-      ? "Default tone: steady, human, not overly emotional."
-      : voice.tone === "direct"
-      ? "Default tone: direct, respectful, concise."
-      : "Default tone: lightly playful but still respectful.";
-
-  const clientToneLine =
-    clientTone === "warm"
-      ? "User tone override: warm, human, not salesy."
-      : clientTone === "neutral"
-      ? "User tone override: neutral, calm, straightforward."
-      : clientTone === "direct"
-      ? "User tone override: direct, concise, respectful."
-      : clientTone === "playful"
-      ? "User tone override: lightly playful (ONLY if appropriate)."
-      : "";
-
-  const brevityLine = voice.brevity === "short" ? "Brevity: short." : "Brevity: medium-short.";
-
-  const formalityLine =
-    effectiveFormality === "casual"
-      ? "Formality: casual (still respectful)."
-      : "Formality: professional (not stiff).";
-
-  const signatureLine = reply_signature
-    ? `Signature: end with “— ${reply_signature}”.`
-    : "Signature: none.";
-
-  const exclamationLine = voice.allow_exclamation
-    ? rating >= 5
-      ? "Exclamation points allowed sparingly (max 1), only if it feels natural."
-      : "Exclamation points allowed sparingly (max 1) if it feels natural."
-    : "No exclamation points.";
-
-  return [who, toneLine, clientToneLine, brevityLine, formalityLine, signatureLine, exclamationLine]
-    .filter(Boolean)
-    .join("\n- ");
-}
-
-function buildAvoidList(voice: ReturnType<typeof normalizeVoice>) {
-  const avoid = Array.isArray(voice.things_to_avoid) ? voice.things_to_avoid : [];
-  const list = avoid.map((s) => cleanString(s, 80)).filter(Boolean).slice(0, 60);
-  if (!list.length) return "";
-  return list.join(" | ");
-}
-
-function buildVoiceSamplesBlock(samples: string[]) {
-  if (!samples || samples.length === 0) return "";
-
-  const lines = samples.map((s, i) => `SAMPLE ${i + 1}: ${s}`);
-  return `
-VOICE SAMPLES (STYLE REFERENCE ONLY):
-- These are examples of how the owner writes. Use them to match cadence, word choice, and vibe.
-- Do NOT copy any sentence verbatim. Do NOT reuse unique phrases. Use as inspiration only.
-${lines.map((l) => `- ${l}`).join("\n")}
-`.trim();
+function normLang(tag: string) {
+  return (tag || "").trim().toLowerCase().split("-")[0];
 }
 
 function buildPrompt(params: {
@@ -651,7 +418,6 @@ function buildPrompt(params: {
   owner_language: string;
   review_text: string;
   voice: ReturnType<typeof normalizeVoice>;
-  org_reply_tone_raw: string;
   reply_signature: string | null;
   client_tone?: VoiceProfile["tone"] | null;
   client_rules?: string[];
@@ -663,95 +429,155 @@ function buildPrompt(params: {
     owner_language,
     review_text,
     voice,
-    org_reply_tone_raw,
     reply_signature,
-    client_tone,
     client_rules,
     voice_samples,
   } = params;
 
-  const maxSentences = sentencePolicyForRating(rating);
-  const mustDo = mustDoForRating(rating);
-  const mustNot = mustNotForRating(rating);
+  const who =
+    voice.reply_as === "owner" || voice.reply_as === "manager"
+      ? 'Reply using "I" as the owner.'
+      : 'Reply using "we" as the business.';
 
-  const avoidList = buildAvoidList(voice);
-  const voiceProfile = styleLines({
-    voice,
-    org_reply_tone_raw,
-    reply_signature,
-    clientTone: client_tone ?? null,
-    rating,
-  });
+  const langInstruction = languageInstruction(owner_language);
+  const lang = normLang(owner_language);
 
-  const userRules =
-    client_rules && client_rules.length
-      ? ["USER RULES (highest priority):", ...client_rules.map((r) => `- ${r}`)].join("\n")
+  // Multilingual banned phrases — catches corporate filler in any supported language
+  const universalBanned = [
+    // EN
+    "thank you for your feedback",
+    "we appreciate your feedback",
+    "we appreciate your thoughts",
+    "we appreciate your comments",
+    "thank you for taking the time",
+    "thank you for sharing",
+    "we strive",
+    "we will look into this",
+    "we take this seriously",
+    "please accept our apologies",
+    "valued customer",
+    "valued guest",
+    "did not meet expectations",
+    "fell short of",
+    "we understand your frustration",
+    "we hear you",
+    "we recognize",
+    "it's disappointing to hear",
+    "it's concerning to hear",
+    "we'll keep that in mind",
+    "we aim to",
+    "we strive to",
+    "our goal is to",
+    "we work hard to",
+    "we regret",
+    "we were busy",
+    "short-staffed",
+    "understaffed",
+    // ES
+    "gracias por tu comentario",
+    "gracias por tu opinión",
+    "agradecemos tu comentario",
+    "agradecemos tu opinión",
+    "agradecemos tu feedback",
+    "lamentamos profundamente",
+    "nos disculpamos sinceramente",
+    "nos disculpamos profundamente",
+    "entendemos tu frustración",
+    "entendemos tu decepción",
+    "tomamos esto muy en serio",
+    "tomaremos en cuenta",
+    "trabajamos para mejorar",
+    "nos esforzamos",
+    "nuestro objetivo es",
+    "esperamos verte pronto",
+    "esperamos que nos des otra oportunidad",
+    // PT
+    "agradecemos o seu comentário",
+    "agradecemos o seu feedback",
+    "lamentamos profundamente",
+    "pedimos desculpas sinceramente",
+    "entendemos a sua frustração",
+    "nos esforçamos",
+    // FR
+    "merci pour votre commentaire",
+    "nous vous remercions",
+    "nous nous excusons sincèrement",
+    "nous comprenons votre frustration",
+    "nous nous efforçons",
+  ].join(" | ");
+
+  const exclamationRule = voice.allow_exclamation
+    ? "Max 1 exclamation point, only if it feels completely natural."
+    : "No exclamation points.";
+
+  const signatureRule = reply_signature
+    ? `End your reply with: — ${reply_signature}`
+    : "";
+
+  const voiceSamplesBlock =
+    voice_samples && voice_samples.length > 0
+      ? `TONE REFERENCE — match this writing style, do not copy sentences:\n${voice_samples.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
       : "";
 
-  const voiceSamplesBlock = buildVoiceSamplesBlock(voice_samples ?? []);
-
-  const lowStarExtra =
-    rating <= 2
-      ? [
-          "LOW-STAR RULE (critical):",
-          "- You MAY apologize up front.",
-          "- You MUST NOT explain 'why it happened' (busy/overwhelmed/short-staffed/etc.) unless the reviewer explicitly said that.",
-          "- Never justify with operational constraints.",
-        ].join("\n")
+  const userRulesBlock =
+    client_rules && client_rules.length > 0
+      ? `ADDITIONAL RULES:\n${client_rules.map((r) => `- ${r}`).join("\n")}`
       : "";
 
-  return `
-You are writing a public reply to a Google review.
+  // Rating-specific guidance (concise and direct)
+  let ratingGuidance = "";
+  if (rating >= 5) {
+    ratingGuidance = `This is a 5-star review. Be warm and genuine. Reference one specific thing they mentioned. Close with a simple, low-pressure welcome back. Do NOT be over-the-top or use marketing language.`;
+  } else if (rating === 4) {
+    ratingGuidance = `This is a 4-star review. Be appreciative. If they hinted at something that could be better, acknowledge it briefly and naturally. Close simply.`;
+  } else if (rating === 3) {
+    ratingGuidance = `This is a 3-star review. Thank them plainly for the honest feedback. Acknowledge the mixed experience in a calm, solution-oriented way. Do not be defensive.`;
+  } else if (rating === 2) {
+    ratingGuidance = `This is a 2-star review. Open with a brief, genuine acknowledgment of the specific problem they had. Do NOT apologize more than once. Do NOT explain operational reasons (busy, understaffed, etc.) unless they mentioned it. Be calm and direct.`;
+  } else {
+    ratingGuidance = `This is a 1-star review. Open with a brief, genuine acknowledgment of the specific problem. ONE apology only — do not repeat it. Do not be defensive. Do not explain why it happened. Keep it short and human. If inviting follow-up, one short line only.`;
+  }
 
-VOICE PROFILE:
-- ${voiceProfile}
+  return `You are the owner of ${business_name}, replying to a ${rating}/5 Google review.
+${who}
 
-HARD CONSTRAINTS (follow exactly):
-- Max sentences: ${maxSentences}
+Write 2–3 short sentences. Sound like a real person writing on their phone — not a PR team, not a template, not a chatbot.
+
+${langInstruction}
+
+RULES (follow exactly):
+- 2–3 sentences MAX
+- Reference one specific detail from the review — do NOT invent anything
+- Do NOT apologize more than once
+- Do NOT use corporate filler or template phrases
+- Do NOT quote the review text back
+- Do NOT mention AI, internal processes, or policies
+- Do NOT promise future changes ("we will improve", "we will make sure")
+- Do NOT offer refunds, discounts, or compensation
+- ${exclamationRule}
 - No emojis
-- No quotes from the review
-- Do not invent details
-- Output ONLY the reply text (no labels, no bullet points)
+- Output ONLY the reply text — no labels, no preamble
 
-${lowStarExtra ? `${lowStarExtra}\n` : ""}
+BANNED PHRASES (do not use any of these, even partially or translated):
+${universalBanned}
 
-MUST DO:
-${mustDo.map((x) => `- ${x}`).join("\n")}
+${ratingGuidance}
 
-MUST NOT DO:
-${mustNot.map((x) => `- ${x}`).join("\n")}
-
-BANNED PHRASES / AI-TELLS (do not use any of these, even partially):
-${avoidList ? `- ${avoidList}` : "- (none)"}
-
-${voiceSamplesBlock ? `${voiceSamplesBlock}\n` : ""}
-
-${userRules ? `${userRules}\n` : ""}
-
-LANGUAGE:
-- ${languageInstruction(owner_language)}
-- Draft in the OWNER language.
-
-BUSINESS: ${business_name}
-RATING: ${rating}/5
-
-REVIEW:
+${voiceSamplesBlock ? voiceSamplesBlock + "\n" : ""}${userRulesBlock ? userRulesBlock + "\n" : ""}${signatureRule ? signatureRule + "\n" : ""}
+REVIEW (${rating}/5):
 """
 ${review_text}
 """
 
-Return ONLY the reply text.
-`.trim();
+Reply:`.trim();
 }
 
 function appendSignatureIfMissing(reply: string, signature: string | null) {
   const sig = cleanString(signature, 80);
   if (!sig) return reply;
-
   const normalized = reply.toLowerCase();
   const marker = `— ${sig}`.toLowerCase();
   if (normalized.includes(marker)) return reply;
-
   return `${reply.trim()}\n— ${sig}`.trim();
 }
 
@@ -759,6 +585,8 @@ function stripTemplatedOpeners(text: string) {
   let t = (text ?? "").trim();
   const patterns: RegExp[] = [
     /^\s*(thank you( so much)?( for (your|the) (review|feedback|kind words))?)[,!.]\s*/i,
+    /^\s*(gracias por (tu|su|el|la) (comentario|opinión|feedback|reseña))[,!.]\s*/i,
+    /^\s*(agradecemos (tu|su) (comentario|opinión|feedback))[,!.]\s*/i,
     /^\s*(we (really )?appreciate( you| your)?( taking the time)?)[,!.]\s*/i,
     /^\s*(it\s+(sounds|seems)\s+like)[,!.]?\s*/i,
     /^\s*(we\s+regret(\s+that)?)[,!.]?\s*/i,
@@ -775,10 +603,7 @@ function sanitizeCorporatePhrases(text: string) {
   t = t.replace(/\bwe\s+strive\s+to\b/gi, "we try to");
   t = t.replace(/\bour\s+goal\s+is\s+to\b/gi, "we want to");
   t = t.replace(/\bwe\s+work\s+hard\s+to\b/gi, "we try to");
-  t = t.replace(
-    /\bwe\s+take\s+(your\s+)?(feedback|concerns|complaint|complaints|comments)\s+(very\s+)?seriously\b[, ]*/gi,
-    ""
-  );
+  t = t.replace(/\bwe\s+take\s+(your\s+)?(feedback|concerns|complaint|complaints|comments)\s+(very\s+)?seriously\b[, ]*/gi, "");
   t = t.replace(/\bwe\s+regret(\s+that)?\b/gi, "sorry");
   t = t.replace(/\s+,/g, ",");
   t = t.replace(/\s+\./g, ".");
@@ -797,10 +622,7 @@ function capitalizeIfNeeded(text: string) {
 }
 
 function reviewerMentionsCapacityExcuse(reviewText: string) {
-  const r = (reviewText ?? "").toLowerCase();
-  return /(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped|packed|crowded)/i.test(
-    r
-  );
+  return /(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped|packed|crowded)/i.test(reviewText ?? "");
 }
 
 function removeExcuseSentencesIfInvented(params: {
@@ -812,7 +634,6 @@ function removeExcuseSentencesIfInvented(params: {
   const t = (reply ?? "").trim();
   if (!t) return t;
   if (rating > 2) return t;
-
   if (reviewerMentionsCapacityExcuse(review_text)) return t;
 
   const excuseRe = /\b(busy|overwhelmed|understaffed|under-staffed|short[-\s]?staffed|slammed|swamped)\b/i;
@@ -821,161 +642,35 @@ function removeExcuseSentencesIfInvented(params: {
   return kept.length === 0 ? t : kept.join(" ").trim();
 }
 
-/* =========================
-   ✅ B4: First-sentence detail enforcement + closer cleanup
-   ========================= */
-
-   const STOPWORDS = new Set(
-    [
-      "the","and","for","with","this","that","was","were","are","is","to","of","in","on","at","it",
-      "we","i","you","they","them","our","your","my","me","a","an","as","but","so","very","really",
-      "just","too","not","no","yes","had","have","has","be","been","from","again","back","there",
-      "here","great","good","nice","love","loved","amazing","awesome","best","worst","bad","okay",
-      "food","service","such","place","overall","also","quite","little","much","more","some","than",
-      "when","what","how","all","out","its","one","can","get","got","said","even","well","went",
-      "like","did","dont","doesnt","wasnt","werent","isnt","about","would","could","should","their","cute","lovely","beautiful","wonderful","fantastic","excellent","perfect","clean","busy","full"
-    ]
-  );
-
-const DETAIL_HINT_RE =
-  /\b(server|staff|team|host|bartender|barista|chef|manager|wine|coffee|espresso|cocktail|beer|pizza|pasta|steak|sushi|taco|burger|salad|dessert|cake|ice cream|breakfast|brunch|lunch|dinner|table|patio|music|vibe|atmosphere|reservation|wait|line|checkout|price|portion|parking|bathroom|restroom|clean|location)\b/i;
-
-function pickDetailKeyword(reviewText: string) {
-  const t = (reviewText ?? "").trim();
-  if (!t) return null;
-
-  // Prefer a known “detail hint” term if present
-  const m = t.match(DETAIL_HINT_RE);
-  if (m && m[0]) return m[0].trim();
-
-  // Otherwise pick a decent non-stopword token (length >= 4)
-  const tokens = tokenize(t);
-  const candidates = tokens
-    .filter((w) => w.length >= 4)
-    .filter((w) => !STOPWORDS.has(w))
-    .slice(0, 80);
-
-  if (candidates.length === 0) return null;
-
-  // Slight preference: earlier words often are the detail
-  return candidates[0];
-}
-
-function firstSentenceMentionsKeyword(reply: string, keyword: string) {
+function removeDuplicateApology(reply: string, rating: number): string {
+  if (rating > 3) return reply;
   const parts = splitSentences(reply);
-  if (parts.length === 0) return false;
-  const first = parts[0].toLowerCase();
-  return first.includes(keyword.toLowerCase());
-}
+  if (parts.length <= 1) return reply;
 
-function isGenericFirstSentence(s: string) {
-  const t = (s ?? "").toLowerCase();
-  // Very light heuristic: first sentence that is basically gratitude with no specifics
-  return (
-    /\b(thank you|thanks|appreciate)\b/.test(t) &&
-    !DETAIL_HINT_RE.test(t) &&
-    t.length <= 120
-  );
-}
+  // Multilingual apology detection
+  const apologyRe = /\b(sorry|apologize|apolog|lo siento|disculp|perd[oó]n|lament|sinto muito|desculp|désolé|mi dispiace|es tut mir leid)\b/i;
 
-function buildFirstSentenceWithKeyword(params: {
-  keyword: string;
-  rating: number;
-  owner_language: string;
-  voice: ReturnType<typeof normalizeVoice>;
-}) {
-  const { keyword, rating, owner_language, voice } = params;
-  const lang = normLang(owner_language);
+  let apologyCount = 0;
+  const kept = parts.filter((s) => {
+    if (apologyRe.test(s)) {
+      apologyCount++;
+      return apologyCount <= 1; // keep only the first apology sentence
+    }
+    return true;
+  });
 
-  const whoWe = voice.reply_as === "we";
-  const subj = whoWe ? "We" : "I";
-
-  // Keep it safe: mention ONLY the keyword, no invented claims.
-  if (lang === "es") {
-    if (rating <= 2) return `Lamentamos lo de ${keyword}.`;
-    return `Gracias por mencionar ${keyword}.`;
-  }
-  if (lang === "pt") {
-    if (rating <= 2) return `Sinto muito pelo problema com ${keyword}.`;
-    return `Obrigado(a) por mencionar ${keyword}.`;
-  }
-  if (lang === "fr") {
-    if (rating <= 2) return `Désolé pour le souci avec ${keyword}.`;
-    return `Merci d’avoir mentionné ${keyword}.`;
-  }
-  if (lang === "it") {
-    if (rating <= 2) return `Mi dispiace per il problema con ${keyword}.`;
-    return `Grazie per aver menzionato ${keyword}.`;
-  }
-  if (lang === "de") {
-    if (rating <= 2) return `Es tut mir leid wegen ${keyword}.`;
-    return `Danke, dass du ${keyword} erwähnt hast.`;
-  }
-
-  // default EN
-  if (rating <= 2) return `${subj}’re sorry about the ${keyword}.`.replace("I’re", "I’m");
-  return `Thanks for mentioning the ${keyword}.`;
-}
-
-function normLang(tag: string) {
-  return (tag || "").trim().toLowerCase().split("-")[0];
-}
-
-function enforceFirstSentenceDetail(params: {
-  reply: string;
-  review_text: string;
-  rating: number;
-  owner_language: string;
-  voice: ReturnType<typeof normalizeVoice>;
-}) {
-  const { reply, review_text, rating, owner_language, voice } = params;
-
-  const keyword = pickDetailKeyword(review_text);
-if (!keyword || !DETAIL_HINT_RE.test(keyword)) {
-  return { text: reply, enforced: false, keyword: null };
-}
-
-  const parts = splitSentences(reply);
-  if (parts.length === 0) return { text: reply, enforced: false, keyword };
-
-  if (firstSentenceMentionsKeyword(reply, keyword)) {
-    return { text: reply, enforced: false, keyword };
-  }
-
-  const first = parts[0];
-  const replacement = buildFirstSentenceWithKeyword({ keyword, rating, owner_language, voice });
-
-  // If the first sentence is generic, replace it. Otherwise, prepend (safer).
-  let nextParts: string[] = [];
-  if (isGenericFirstSentence(first)) {
-    nextParts = [replacement, ...parts.slice(1)];
-  } else {
-    nextParts = [replacement, ...parts];
-  }
-
-// If we injected an apology, strip any duplicate apology from remaining sentences
-if (rating <= 2) {
-  const apologyRe = /\b(lo siento|disculp|perd[oó]n|lament|sorry|apologize|apolog)/i;
-  nextParts = [nextParts[0], ...nextParts.slice(1).filter(s => !apologyRe.test(s))];
-}
-
-  const out = nextParts.join(" ").trim();
-  return { text: out, enforced: true, keyword };
+  return kept.join(" ").trim() || reply;
 }
 
 const REPETITIVE_CLOSER_RE =
-  /\b(hope to see you again|hope to see you soon|see you again soon|come back soon|visit us again|we look forward to (?:seeing|welcoming) you)\b/i;
+  /\b(hope to see you again|hope to see you soon|see you again soon|come back soon|visit us again|we look forward to (?:seeing|welcoming) you|esperamos verte pronto|esperamos verte de nuevo|esperamos que (nos |)visites de nuevo)\b/i;
 
 function stripRepetitiveClosers(reply: string, rating: number) {
-  // Only apply for positive reviews, where closers tend to get template-y.
   if (rating < 4) return { text: reply, stripped: false };
-
   const parts = splitSentences(reply);
-  if (parts.length <= 2) return { text: reply, stripped: false }; // already short
-
+  if (parts.length <= 2) return { text: reply, stripped: false };
   const kept = parts.filter((s) => !REPETITIVE_CLOSER_RE.test(s));
   if (kept.length === parts.length) return { text: reply, stripped: false };
-
   const out = kept.join(" ").trim();
   return { text: out || reply, stripped: true };
 }
@@ -989,7 +684,7 @@ export async function POST(req: Request) {
           ok: false,
           upgradeRequired: true,
           status: sub.status,
-          error: "Your plan isn’t active yet. Subscribe to draft replies.",
+          error: "Your plan isn't active yet. Subscribe to draft replies.",
         },
         { status: 402 }
       );
@@ -1001,14 +696,10 @@ export async function POST(req: Request) {
     const business_name = cleanString((body as any)?.business_name, 200);
     const reviewer_language = cleanLanguage((body as any)?.language);
     const rating = parseRating((body as any)?.rating);
-
     const debug = !!(body as any)?.debug;
 
-    // Future-proof identifiers (optional)
     const review_id = cleanString((body as any)?.review_id, 80) || null;
     const google_review_id = cleanString((body as any)?.google_review_id, 140) || null;
-
-    // ✅ C1: accept google_location_id or location_id
     const google_location_id =
       cleanString((body as any)?.google_location_id, 240) ||
       cleanString((body as any)?.location_id, 240) ||
@@ -1029,11 +720,11 @@ export async function POST(req: Request) {
     const clientRules = parseClientRules((body as any)?.rules);
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
-      if (!apiKey) {
+    if (!apiKey) {
       return NextResponse.json(
-       { ok: false, error: "Missing ANTHROPIC_API_KEY in server env. Add in Vercel and redeploy." },
-       { status: 500 }
-     );
+        { ok: false, error: "Missing ANTHROPIC_API_KEY in server env. Add in Vercel and redeploy." },
+        { status: 500 }
+      );
     }
 
     const orgSettings = await loadOrgReplySettings();
@@ -1042,14 +733,13 @@ export async function POST(req: Request) {
     const reply_signature = orgSettings.reply_signature ?? null;
 
     const { samples: voiceSamples, sampleIds: voiceSampleIds } = await loadVoiceSamplesForOrg({
-      maxItems: 7,
+      maxItems: 5,
       maxCharsEach: 420,
-      maxTotalChars: 2400,
+      maxTotalChars: 1800,
     });
 
     const orgVoice = await loadVoiceProfile();
     const merged = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
-
     const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
 
     const voice = normalizeVoice({
@@ -1057,7 +747,7 @@ export async function POST(req: Request) {
       tone: (merged as any)?.tone ? (merged as any).tone : toneFromOrg,
     });
 
-    const temperature = rating <= 2 ? 0.15 : 0.25;
+    const temperature = rating <= 2 ? 0.2 : 0.3;
     const model = "claude-haiku-4-5-20251001";
 
     const prompt = buildPrompt({
@@ -1066,7 +756,6 @@ export async function POST(req: Request) {
       owner_language,
       review_text,
       voice,
-      org_reply_tone_raw,
       reply_signature,
       client_tone: clientTone,
       client_rules: clientRules,
@@ -1083,20 +772,17 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model,
         temperature,
-        max_tokens: 260,
-        system:
-          "You write short, human-sounding public review replies for local businesses. Follow constraints exactly. Output only the reply text.",
+        max_tokens: 280,
+        system: `You are the owner of a hospitality business writing short, human replies to Google reviews. You write the way a real person texts — specific, warm, and never corporate. Follow all constraints exactly. Output only the reply text, nothing else.`,
         messages: [{ role: "user", content: prompt }],
       }),
       cache: "no-store",
     });
-    
+
     const rawText = await upstream.text();
     let upstreamJson: any = null;
-    try {
-      upstreamJson = JSON.parse(rawText);
-    } catch {}
-    
+    try { upstreamJson = JSON.parse(rawText); } catch {}
+
     if (!upstream.ok) {
       return NextResponse.json(
         {
@@ -1108,38 +794,23 @@ export async function POST(req: Request) {
         { status: 502 }
       );
     }
-    
+
     const contentRaw = upstreamJson?.content?.[0]?.text ?? "";
     let content = safeTrimReply(String(contentRaw));
 
-    // Basic cleanup
+    // Post-processing pipeline
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
-
-    // Deterministic “no-template” enforcement
     content = stripTemplatedOpeners(content);
     content = sanitizeCorporatePhrases(content);
     content = capitalizeIfNeeded(content);
-
-    // HARD: remove invented excuse sentences for 1–2★ unless reviewer said it
     content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
+    content = removeDuplicateApology(content, rating);
 
-    // ✅ B4: First sentence must reference a detail (keyword-only, no invented facts)
-    const firstEnforce = enforceFirstSentenceDetail({
-      reply: content,
-      review_text,
-      rating,
-      owner_language,
-      voice,
-    });
-    content = firstEnforce.text;
-
-    // ✅ B4: strip repetitive closers on 4–5★ (when redundant)
     const closerStrip = stripRepetitiveClosers(content, rating);
     content = closerStrip.text;
 
-    // Sentence enforcement
     content = limitSentences(content, sentencePolicyForRating(rating));
 
     // Exclamation enforcement
@@ -1150,15 +821,11 @@ export async function POST(req: Request) {
       const exCount = (content.match(/[!¡]/g) ?? []).length;
       if (exCount > 1) {
         let seen = 0;
-        content = content.replace(/[!¡]/g, (m) => {
-          seen += 1;
-          return seen === 1 ? m : ".";
-        });
+        content = content.replace(/[!¡]/g, (m) => { seen += 1; return seen === 1 ? m : "."; });
         content = content.replace(/\.\.+/g, ".").trim();
       }
     }
 
-    // Signature enforcement
     content = appendSignatureIfMissing(content, reply_signature);
 
     if (!content) {
@@ -1168,20 +835,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // ✅ B1/C1: audit log insert (best-effort)
+    // Audit log (best-effort)
     try {
       const { supabase, organizationId } = await requireOrgContext();
-
       const reviewHash = sha256Hex(review_text);
       const promptFingerprint = sha256Hex(
-        [
-          PROMPT_VERSION,
-          BANNED_LIST_VERSION,
-          POST_CLEAN_VERSION,
-          model,
-          String(temperature),
-          voiceSampleIds.join(","),
-        ].join("|")
+        [PROMPT_VERSION, BANNED_LIST_VERSION, POST_CLEAN_VERSION, model, String(temperature), voiceSampleIds.join(",")].join("|")
       );
 
       const auditRow: any = {
@@ -1198,14 +857,12 @@ export async function POST(req: Request) {
         review_id: review_id,
         google_review_id: google_review_id,
         google_location_id: google_location_id,
-        location_id: google_location_id, // compatibility
+        location_id: google_location_id,
       };
 
       if (
         auditRow.review_id &&
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          auditRow.review_id
-        )
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(auditRow.review_id)
       ) {
         auditRow.review_id = null;
       }
@@ -1230,8 +887,6 @@ export async function POST(req: Request) {
             ? {
                 enforcement: {
                   post_clean_version: POST_CLEAN_VERSION,
-                  keyword: firstEnforce.keyword,
-                  first_sentence_enforced: firstEnforce.enforced,
                   closer_stripped: closerStrip.stripped,
                 },
               }
