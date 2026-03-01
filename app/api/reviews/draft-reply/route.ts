@@ -7,9 +7,9 @@ import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
 import crypto from "crypto";
 
-const PROMPT_VERSION = "draft-reply-v2";
-const BANNED_LIST_VERSION = "banned-v2";
-const POST_CLEAN_VERSION = "postclean-v3";
+const PROMPT_VERSION = "draft-reply-v3";
+const BANNED_LIST_VERSION = "banned-v3";
+const POST_CLEAN_VERSION = "postclean-v4";
 
 function sha256Hex(input: string) {
   return crypto.createHash("sha256").update(input ?? "", "utf8").digest("hex");
@@ -67,6 +67,70 @@ function limitSentences(text: string, maxSentences: number) {
   const parts = splitSentences(t);
   if (parts.length <= maxSentences) return t;
   return parts.slice(0, maxSentences).join(" ");
+}
+
+// ─── Apostrophe repair ────────────────────────────────────────────────────────
+// Two-pass fix: targeted contractions first, then a broader pattern sweep.
+// This is the safety net — the prompt enforces it upstream, this catches slip-through.
+function fixApostrophes(text: string): string {
+  let t = text;
+
+  // High-confidence targeted fixes (word-boundary safe)
+  const fixes: Array<[RegExp, string]> = [
+    // "we're" family
+    [/\bwere sorry\b/gi, "We're sorry"],
+    [/\bwere glad\b/gi, "We're glad"],
+    [/\bwere happy\b/gi, "We're happy"],
+    [/\bwere thrilled\b/gi, "We're thrilled"],
+    [/\bwere delighted\b/gi, "We're delighted"],
+    [/\bwere committed\b/gi, "We're committed"],
+    [/\bwere aware\b/gi, "We're aware"],
+    [/\bwere looking\b/gi, "We're looking"],
+    [/\bwere working\b/gi, "We're working"],
+    // "we'd" family
+    [/\bwed like\b/gi, "We'd like"],
+    [/\bwed love\b/gi, "We'd love"],
+    [/\bwed appreciate\b/gi, "We'd appreciate"],
+    [/\bwed be\b/gi, "We'd be"],
+    // "we've" family
+    [/\bweve\b/gi, "we've"],
+    // "I'm"
+    [/\bIm\b/g, "I'm"],
+    // Standard negative contractions
+    [/\bdidnt\b/gi, "didn't"],
+    [/\bdoesnt\b/gi, "doesn't"],
+    [/\bdidnt\b/gi, "didn't"],
+    [/\bwasnt\b/gi, "wasn't"],
+    [/\bwerent\b/gi, "weren't"],
+    [/\bwouldnt\b/gi, "wouldn't"],
+    [/\bcouldnt\b/gi, "couldn't"],
+    [/\bshouldnt\b/gi, "shouldn't"],
+    [/\bisnt\b/gi, "isn't"],
+    [/\barent\b/gi, "aren't"],
+    [/\bhasnt\b/gi, "hasn't"],
+    [/\bhavent\b/gi, "haven't"],
+    [/\bwont\b/gi, "won't"],
+    [/\bcant\b/gi, "can't"],
+    [/\bdont\b/gi, "don't"],
+    // "that's / it's / what's / there's"
+    [/\bthats\b/gi, "that's"],
+    [/\bwhats\b/gi, "what's"],
+    [/\btheres\b/gi, "there's"],
+    [/\bits a\b/g, "it's a"],
+    [/\bits not\b/gi, "it's not"],
+    [/\bits clear\b/gi, "it's clear"],
+    [/\bits been\b/gi, "it's been"],
+    // "you're"
+    [/\byoure\b/gi, "you're"],
+    // Spanish / PT common contractions that get dropped
+    [/\bno es\b/g, "no es"], // passthrough — already correct
+  ];
+
+  for (const [pattern, replacement] of fixes) {
+    t = t.replace(pattern, replacement);
+  }
+
+  return t;
 }
 
 function languageInstruction(languageTag: string) {
@@ -166,10 +230,6 @@ function truncateForPrompt(s: string, maxLen: number) {
   return t.slice(0, maxLen - 1).trimEnd() + "…";
 }
 
-function escapeRegex(s: string) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function clamp01(n: number) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
@@ -226,7 +286,6 @@ function scoreAntiTemplate(text: string) {
   let penalty = 0;
 
   const templatePhrases = [
-    // EN
     "thank you for your feedback",
     "we appreciate your feedback",
     "we appreciate your thoughts",
@@ -242,7 +301,6 @@ function scoreAntiTemplate(text: string) {
     "did not meet expectations",
     "fell short of",
     "we understand your frustration",
-    // ES
     "entendemos tu frustración",
     "lamentamos profundamente",
     "nos disculpamos sinceramente",
@@ -250,11 +308,9 @@ function scoreAntiTemplate(text: string) {
     "agradecemos tu opinión",
     "tomaremos en cuenta",
     "trabajamos para mejorar",
-    // PT
     "agradecemos o seu comentário",
     "agradecemos o seu feedback",
     "agradecemos sua opinião",
-    "lamentamos profundamente",
     "pedimos desculpas sinceramente",
     "entendemos a sua frustração",
     "entendemos sua frustração",
@@ -442,9 +498,8 @@ function buildPrompt(params: {
       : 'Reply using "we" as the business.';
 
   const langInstruction = languageInstruction(owner_language);
-  const lang = normLang(owner_language);
 
-  // Multilingual banned phrases — catches corporate filler in any supported language
+  // ─── Banned phrases ─────────────────────────────────────────────────────────
   const universalBanned = [
     // EN
     "thank you for your feedback",
@@ -530,7 +585,7 @@ function buildPrompt(params: {
       ? `ADDITIONAL RULES:\n${client_rules.map((r) => `- ${r}`).join("\n")}`
       : "";
 
-  // Rating-specific guidance (concise and direct)
+  // ─── Rating-specific guidance ────────────────────────────────────────────────
   let ratingGuidance = "";
   if (rating >= 5) {
     ratingGuidance = `This is a 5-star review. Be warm and genuine. Reference one specific thing they mentioned. Close with a simple, low-pressure welcome back. Do NOT be over-the-top or use marketing language.`;
@@ -548,30 +603,49 @@ function buildPrompt(params: {
   const reviewWordCount = review_text.trim().split(/\s+/).length;
   const maxSentences = reviewWordCount > 120 ? 4 : reviewWordCount > 60 ? 3 : 2;
 
-  return `You are the owner of ${business_name}, replying to a ${rating}/5 Google review.
+  return `You are the owner of ${business_name} — a hospitality business — writing a reply to a ${rating}/5 Google review on behalf of your establishment. This is a white-glove reputation management platform. Your reply represents the public face of the business.
 ${who}
 
 ${langInstruction}
 
-STEP 1 — Before writing anything, identify:
-- The reviewer's PRIMARY complaint or concern (the most important thing they said)
-- One specific word, phrase, or detail from their review that proves you actually read it
+═══ MANDATORY QUALITY RULES — READ BEFORE WRITING ═══
 
-STEP 2 — Write your reply using what you identified. Your reply must:
-- Name their primary concern specifically — not vaguely ("your experience") but concretely ("the wine quality," "the lack of depth in the wines," "the reservation confusion")
-- Use or reference the specific detail you identified — show you read it, not just skimmed it
-- Sound like a real owner writing on their phone, not a PR team
-- Be ${maxSentences} sentences MAX — but use all of them if the review is detailed and deserves it
-- NOT copy their exact sentences — paraphrase and engage, don't parrot
-- NOT apologize more than once
-- NOT use corporate filler, template phrases, or vague summaries
-- NOT mention AI, internal processes, or policies
-- NOT promise future changes
-- NOT offer refunds or compensation
+RULE 1 — GRAMMAR AND PUNCTUATION: NON-NEGOTIABLE
+Every contraction MUST include an apostrophe. There are no exceptions.
+✓ Correct: we're / we'd / didn't / that's / you're / wasn't / it's / we've / they're
+✗ Wrong:   were / wed / didnt / thats / youre / wasnt / its / weve / theyre
+
+Scan every word of your reply before outputting. If you see a missing apostrophe, rewrite the sentence. A reply with broken contractions will be rejected.
+
+Every sentence must be complete — a subject, a verb, and closing punctuation. No fragments. No half-thoughts.
+
+RULE 2 — SPECIFICITY: MIRROR THE GUEST'S EXACT DETAILS
+Read the review carefully. Identify the specific details the guest mentioned — a wait time, a dish name, a staff member, the table situation. Reference at least one specific detail in your reply.
+
+Generic: "We hear you on the wait."
+Specific: "Losing your table after seven minutes, then waiting over an hour for food, is not the experience we want anyone to have."
+
+Specificity proves the owner read the review. Vagueness proves they didn't.
+
+RULE 3 — WRITE LIKE A PERSON, NOT A PRESS RELEASE
+Complete, well-constructed sentences. Warm but not gushing. Direct but not cold.
+Avoid hollow filler that sounds like a call centre script.
+
+STEP 1 — Before writing, identify:
+- The reviewer's PRIMARY concern (the most specific thing they raised)
+- One concrete detail from their review (a number, a name, a specific item) that you will reference
+
+STEP 2 — Write your reply using what you identified:
+- Name their primary concern specifically — not "your experience" but "the hour-long wait" or "the missing desserts"
+- Reference the concrete detail you identified — prove you read it, not just skimmed it
+- Sound like a real owner writing on their phone, not a PR agency
+- ${maxSentences} sentences MAX — use all of them if the review is detailed
+- Do NOT copy their exact sentences — engage and paraphrase
+- Do NOT apologize more than once
 - ${exclamationRule}
 - No emojis
 
-BANNED PHRASES (do not use any of these, even partially or translated):
+BANNED PHRASES — do not use any of these, even partially or in translation:
 ${universalBanned}
 
 ${ratingGuidance}
@@ -582,7 +656,7 @@ REVIEW (${rating}/5):
 ${review_text}
 """
 
-Output ONLY the reply text. No labels, no preamble, no "Step 1/Step 2" in your output.`.trim();
+Output ONLY the reply text. No labels. No "Step 1/Step 2" in your output. No preamble. Just the reply — complete sentences, correct apostrophes, ready to paste into Google.`.trim();
 }
 
 function appendSignatureIfMissing(reply: string, signature: string | null) {
@@ -660,14 +734,13 @@ function removeDuplicateApology(reply: string, rating: number): string {
   const parts = splitSentences(reply);
   if (parts.length <= 1) return reply;
 
-  // Multilingual apology detection
   const apologyRe = /\b(sorry|apologize|apolog|lo siento|disculp|perd[oó]n|lament|sinto muito|desculp|désolé|mi dispiace|es tut mir leid)\b/i;
 
   let apologyCount = 0;
   const kept = parts.filter((s) => {
     if (apologyRe.test(s)) {
       apologyCount++;
-      return apologyCount <= 1; // keep only the first apology sentence
+      return apologyCount <= 1;
     }
     return true;
   });
@@ -786,7 +859,7 @@ export async function POST(req: Request) {
         model,
         temperature,
         max_tokens: 280,
-        system: `You are the owner of a hospitality business writing short, human replies to Google reviews. You write the way a real person texts — specific, warm, and never corporate. Follow all constraints exactly. Output only the reply text, nothing else.`,
+        system: `You are the owner of a hospitality business writing short, human replies to Google reviews on behalf of a white-glove reputation management platform. You write the way a real person would — specific, warm, direct, and never corporate. Every contraction must have an apostrophe (we're, didn't, that's, you're). Every sentence must be complete. Follow all constraints exactly. Output only the reply text, nothing else.`,
         messages: [{ role: "user", content: prompt }],
       }),
       cache: "no-store",
@@ -811,12 +884,13 @@ export async function POST(req: Request) {
     const contentRaw = upstreamJson?.content?.[0]?.text ?? "";
     let content = safeTrimReply(String(contentRaw));
 
-    // Post-processing pipeline
+    // ─── Post-processing pipeline ────────────────────────────────────────────
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
     content = stripTemplatedOpeners(content);
     content = sanitizeCorporatePhrases(content);
+    content = fixApostrophes(content);          // ← new: apostrophe repair pass
     content = capitalizeIfNeeded(content);
     content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
     content = removeDuplicateApology(content, rating);
@@ -849,7 +923,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Audit log (best-effort)
+    // ─── Audit log (best-effort) ─────────────────────────────────────────────
     try {
       const { supabase, organizationId } = await requireOrgContext();
       const reviewHash = sha256Hex(review_text);
