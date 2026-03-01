@@ -537,9 +537,9 @@ function buildPrompt(params: {
   } else if (rating === 3) {
     ratingGuidance = `This is a 3-star review. Thank them plainly for the honest feedback. Acknowledge the mixed experience in a calm, solution-oriented way. Do not be defensive.`;
   } else if (rating === 2) {
-    ratingGuidance = `This is a 2-star review. Open with a brief, genuine acknowledgment of the specific problem they had. Do NOT apologize more than once. Do NOT explain operational reasons (busy, understaffed, etc.) unless they mentioned it. Be calm and direct.`;
+    ratingGuidance = `This is a 2-star review. Open with a brief, genuine acknowledgment that names their specific complaint — not a vague summary of it. If they criticized the wine quality, say "the wines." If they criticized service, say "the service." Show you actually read their review. Do NOT apologize more than once. Do NOT explain operational reasons unless they mentioned it. Be calm and direct.`;
   } else {
-    ratingGuidance = `This is a 1-star review. Open with a brief, genuine acknowledgment of the specific problem. ONE apology only — do not repeat it. Do not be defensive. Do not explain why it happened. Keep it short and human. If inviting follow-up, one short line only.`;
+    ratingGuidance = `This is a 1-star review. Name their specific complaint in your opening — not vaguely ("your experience") but concretely ("the wine quality," "the bugs in the food," "the wait time"). ONE apology only. Do not be defensive. Do not explain why it happened. Keep it short and human. If inviting follow-up, one short line only.`;
   }
 
   return `You are the owner of ${business_name}, replying to a ${rating}/5 Google review.
@@ -551,10 +551,12 @@ ${langInstruction}
 
 RULES (follow exactly):
 - 2–3 sentences MAX
-- Reference one specific detail from the review — do NOT invent anything
+- Reflect the reviewer's specific concern back to them in your own words — name what they actually complained about, don't describe it vaguely
+- Do NOT copy their exact sentences, but DO show you read and understood their specific feedback
+- Do NOT use generic phrases like "your experience wasn't what you expected" — be specific about what the experience was
 - Do NOT apologize more than once
 - Do NOT use corporate filler or template phrases
-- Do NOT quote the review text back
+- Do NOT parrot word-for-word the review text back
 - Do NOT mention AI, internal processes, or policies
 - Do NOT promise future changes ("we will improve", "we will make sure")
 - Do NOT offer refunds, discounts, or compensation
