@@ -403,9 +403,11 @@ function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoicePr
   return tone;
 }
 
-function sentencePolicyForRating(rating: number) {
-  if (rating >= 4) return 3;
-  return 3;
+function sentencePolicyForRating(rating: number, reviewWordCount?: number) {
+  const words = reviewWordCount ?? 0;
+  if (words > 120) return 4;
+  if (words > 60) return 3;
+  return 2;
 }
 
 function normLang(tag: string) {
@@ -542,27 +544,32 @@ function buildPrompt(params: {
     ratingGuidance = `This is a 1-star review. Name their specific complaint in your opening — not vaguely ("your experience") but concretely ("the wine quality," "the bugs in the food," "the wait time"). ONE apology only. Do not be defensive. Do not explain why it happened. Keep it short and human. If inviting follow-up, one short line only.`;
   }
 
+  // Dynamic sentence limit based on review length
+  const reviewWordCount = review_text.trim().split(/\s+/).length;
+  const maxSentences = reviewWordCount > 120 ? 4 : reviewWordCount > 60 ? 3 : 2;
+
   return `You are the owner of ${business_name}, replying to a ${rating}/5 Google review.
 ${who}
 
-Write 2–3 short sentences. Sound like a real person writing on their phone — not a PR team, not a template, not a chatbot.
-
 ${langInstruction}
 
-RULES (follow exactly):
-- 2–3 sentences MAX
-- Reflect the reviewer's specific concern back to them in your own words — name what they actually complained about, don't describe it vaguely
-- Do NOT copy their exact sentences, but DO show you read and understood their specific feedback
-- Do NOT use generic phrases like "your experience wasn't what you expected" — be specific about what the experience was
-- Do NOT apologize more than once
-- Do NOT use corporate filler or template phrases
-- Do NOT parrot word-for-word the review text back
-- Do NOT mention AI, internal processes, or policies
-- Do NOT promise future changes ("we will improve", "we will make sure")
-- Do NOT offer refunds, discounts, or compensation
+STEP 1 — Before writing anything, identify:
+- The reviewer's PRIMARY complaint or concern (the most important thing they said)
+- One specific word, phrase, or detail from their review that proves you actually read it
+
+STEP 2 — Write your reply using what you identified. Your reply must:
+- Name their primary concern specifically — not vaguely ("your experience") but concretely ("the wine quality," "the lack of depth in the wines," "the reservation confusion")
+- Use or reference the specific detail you identified — show you read it, not just skimmed it
+- Sound like a real owner writing on their phone, not a PR team
+- Be ${maxSentences} sentences MAX — but use all of them if the review is detailed and deserves it
+- NOT copy their exact sentences — paraphrase and engage, don't parrot
+- NOT apologize more than once
+- NOT use corporate filler, template phrases, or vague summaries
+- NOT mention AI, internal processes, or policies
+- NOT promise future changes
+- NOT offer refunds or compensation
 - ${exclamationRule}
 - No emojis
-- Output ONLY the reply text — no labels, no preamble
 
 BANNED PHRASES (do not use any of these, even partially or translated):
 ${universalBanned}
@@ -575,7 +582,7 @@ REVIEW (${rating}/5):
 ${review_text}
 """
 
-Reply:`.trim();
+Output ONLY the reply text. No labels, no preamble, no "Step 1/Step 2" in your output.`.trim();
 }
 
 function appendSignatureIfMissing(reply: string, signature: string | null) {
@@ -817,7 +824,8 @@ export async function POST(req: Request) {
     const closerStrip = stripRepetitiveClosers(content, rating);
     content = closerStrip.text;
 
-    content = limitSentences(content, sentencePolicyForRating(rating));
+    const reviewWordCount = review_text.trim().split(/\s+/).length;
+    content = limitSentences(content, sentencePolicyForRating(rating, reviewWordCount));
 
     // Exclamation enforcement
     if (!voice.allow_exclamation) {
