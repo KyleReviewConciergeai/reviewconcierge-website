@@ -7,9 +7,11 @@ import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
 import crypto from "crypto";
 
-const PROMPT_VERSION = "draft-reply-v3";
-const BANNED_LIST_VERSION = "banned-v3";
-const POST_CLEAN_VERSION = "postclean-v4";
+const PROMPT_VERSION      = "draft-reply-v4";
+const BANNED_LIST_VERSION = "banned-v4";
+const POST_CLEAN_VERSION  = "postclean-v5";
+
+// ─── Basic utilities ──────────────────────────────────────────────────────────
 
 function sha256Hex(input: string) {
   return crypto.createHash("sha256").update(input ?? "", "utf8").digest("hex");
@@ -70,60 +72,57 @@ function limitSentences(text: string, maxSentences: number) {
 }
 
 // ─── Apostrophe repair ────────────────────────────────────────────────────────
-// Two-pass fix: targeted contractions first, then a broader pattern sweep.
-// This is the safety net — the prompt enforces it upstream, this catches slip-through.
+// The prompt enforces this at generation time. This is the safety net that catches
+// any contraction that slips through — runs as a post-processing step.
 function fixApostrophes(text: string): string {
   let t = text;
 
-  // High-confidence targeted fixes (word-boundary safe)
   const fixes: Array<[RegExp, string]> = [
     // "we're" family
-    [/\bwere sorry\b/gi, "We're sorry"],
-    [/\bwere glad\b/gi, "We're glad"],
-    [/\bwere happy\b/gi, "We're happy"],
-    [/\bwere thrilled\b/gi, "We're thrilled"],
+    [/\bwere sorry\b/gi,     "We're sorry"],
+    [/\bwere glad\b/gi,      "We're glad"],
+    [/\bwere happy\b/gi,     "We're happy"],
+    [/\bwere thrilled\b/gi,  "We're thrilled"],
     [/\bwere delighted\b/gi, "We're delighted"],
     [/\bwere committed\b/gi, "We're committed"],
-    [/\bwere aware\b/gi, "We're aware"],
-    [/\bwere looking\b/gi, "We're looking"],
-    [/\bwere working\b/gi, "We're working"],
+    [/\bwere aware\b/gi,     "We're aware"],
+    [/\bwere looking\b/gi,   "We're looking"],
+    [/\bwere working\b/gi,   "We're working"],
     // "we'd" family
-    [/\bwed like\b/gi, "We'd like"],
-    [/\bwed love\b/gi, "We'd love"],
+    [/\bwed like\b/gi,       "We'd like"],
+    [/\bwed love\b/gi,       "We'd love"],
     [/\bwed appreciate\b/gi, "We'd appreciate"],
-    [/\bwed be\b/gi, "We'd be"],
-    // "we've" family
-    [/\bweve\b/gi, "we've"],
-    // "I'm"
-    [/\bIm\b/g, "I'm"],
+    [/\bwed be\b/gi,         "We'd be"],
+    // "we've" / "I'm" / "I'd" / "I'll"
+    [/\bweve\b/gi,           "we've"],
+    [/\bIm\b/g,              "I'm"],
+    [/\bId like\b/g,         "I'd like"],
+    [/\bId love\b/g,         "I'd love"],
+    [/\bIll \b/g,            "I'll "],
     // Standard negative contractions
-    [/\bdidnt\b/gi, "didn't"],
-    [/\bdoesnt\b/gi, "doesn't"],
-    [/\bdidnt\b/gi, "didn't"],
-    [/\bwasnt\b/gi, "wasn't"],
-    [/\bwerent\b/gi, "weren't"],
-    [/\bwouldnt\b/gi, "wouldn't"],
-    [/\bcouldnt\b/gi, "couldn't"],
-    [/\bshouldnt\b/gi, "shouldn't"],
-    [/\bisnt\b/gi, "isn't"],
-    [/\barent\b/gi, "aren't"],
-    [/\bhasnt\b/gi, "hasn't"],
-    [/\bhavent\b/gi, "haven't"],
-    [/\bwont\b/gi, "won't"],
-    [/\bcant\b/gi, "can't"],
-    [/\bdont\b/gi, "don't"],
-    // "that's / it's / what's / there's"
-    [/\bthats\b/gi, "that's"],
-    [/\bwhats\b/gi, "what's"],
-    [/\btheres\b/gi, "there's"],
-    [/\bits a\b/g, "it's a"],
-    [/\bits not\b/gi, "it's not"],
-    [/\bits clear\b/gi, "it's clear"],
-    [/\bits been\b/gi, "it's been"],
-    // "you're"
-    [/\byoure\b/gi, "you're"],
-    // Spanish / PT common contractions that get dropped
-    [/\bno es\b/g, "no es"], // passthrough — already correct
+    [/\bdidnt\b/gi,          "didn't"],
+    [/\bdoesnt\b/gi,         "doesn't"],
+    [/\bwasnt\b/gi,          "wasn't"],
+    [/\bwerent\b/gi,         "weren't"],
+    [/\bwouldnt\b/gi,        "wouldn't"],
+    [/\bcouldnt\b/gi,        "couldn't"],
+    [/\bshouldnt\b/gi,       "shouldn't"],
+    [/\bisnt\b/gi,           "isn't"],
+    [/\barent\b/gi,          "aren't"],
+    [/\bhasnt\b/gi,          "hasn't"],
+    [/\bhavent\b/gi,         "haven't"],
+    [/\bwont\b/gi,           "won't"],
+    [/\bcant\b/gi,           "can't"],
+    [/\bdont\b/gi,           "don't"],
+    // "that's / it's / what's / there's / you're"
+    [/\bthats\b/gi,          "that's"],
+    [/\bwhats\b/gi,          "what's"],
+    [/\btheres\b/gi,         "there's"],
+    [/\bits a\b/g,           "it's a"],
+    [/\bits not\b/gi,        "it's not"],
+    [/\bits clear\b/gi,      "it's clear"],
+    [/\bits been\b/gi,       "it's been"],
+    [/\byoure\b/gi,          "you're"],
   ];
 
   for (const [pattern, replacement] of fixes) {
@@ -133,6 +132,20 @@ function fixApostrophes(text: string): string {
   return t;
 }
 
+// ─── Sentence capitalisation repair ──────────────────────────────────────────
+// Fixes the specific bug visible in the screenshot: lowercase letter after a
+// sentence-ending punctuation mark followed by a space.
+// Runs TWICE in the pipeline — once mid-stream, once as the final step.
+function fixSentenceCapitalisation(text: string): string {
+  if (!text) return text;
+  // Capitalise the first character of the whole string
+  let t = text.charAt(0).toUpperCase() + text.slice(1);
+  // Capitalise the first letter after ". " / "! " / "? " / ".\n" etc.
+  t = t.replace(/([.!?][\s]+)([a-z])/g, (_match, punct, letter) => punct + letter.toUpperCase());
+  return t;
+}
+
+// ─── Language instruction ─────────────────────────────────────────────────────
 function languageInstruction(languageTag: string) {
   const tag = (languageTag || "en").toLowerCase();
   switch (tag) {
@@ -153,6 +166,8 @@ function languageInstruction(languageTag: string) {
       return `Write in the owner's preferred language (${languageTag}).`;
   }
 }
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type VoiceProfile = {
   reply_as?: "owner" | "manager" | "we";
@@ -177,6 +192,8 @@ type OrgReplySettings = {
   reply_tone: string;
   reply_signature: string | null;
 };
+
+// ─── Supabase loaders ─────────────────────────────────────────────────────────
 
 async function loadOrgReplySettings(): Promise<OrgReplySettings> {
   try {
@@ -216,6 +233,8 @@ async function loadVoiceProfile(): Promise<VoiceProfile> {
     return {};
   }
 }
+
+// ─── Voice sample scoring / selection ────────────────────────────────────────
 
 type VoiceSampleRow = {
   id: string;
@@ -374,12 +393,12 @@ async function loadVoiceSamplesForOrg(opts?: {
         return { id: r.id, cleaned: normalized, score, tokenSet, created_at: r.created_at ?? "" };
       })
       .filter(Boolean) as Array<{
-      id: string;
-      cleaned: string;
-      score: number;
-      tokenSet: Set<string>;
-      created_at: string;
-    }>;
+        id: string;
+        cleaned: string;
+        score: number;
+        tokenSet: Set<string>;
+        created_at: string;
+      }>;
 
     if (candidates.length === 0) return { samples: [], sampleIds: [] };
 
@@ -412,6 +431,8 @@ async function loadVoiceSamplesForOrg(opts?: {
     return { samples: [], sampleIds: [] };
   }
 }
+
+// ─── Voice helpers ────────────────────────────────────────────────────────────
 
 function normalizeVoice(v?: VoiceProfile | null) {
   const vv = v ?? {};
@@ -466,10 +487,33 @@ function sentencePolicyForRating(rating: number, reviewWordCount?: number) {
   return 2;
 }
 
-function normLang(tag: string) {
-  return (tag || "").trim().toLowerCase().split("-")[0];
-}
-
+// ─── Prompt builder ───────────────────────────────────────────────────────────
+//
+// Research foundation underpinning this prompt:
+//
+// • Columbia Business School (Wu & Morwitz, 2025): Responses addressing BOTH the
+//   emotional AND factual specifics of a complaint produce the highest re-visit
+//   intention. Generic category summaries ("your experience") address neither.
+//
+// • Journal of Marketing Research: A single unanswered negative review on page one
+//   reduces purchase likelihood by 42%. A specific, human owner reply directly
+//   mitigates this effect.
+//
+// • Frontiers of Business Research in China (2020): Sincere, non-promotional
+//   responses strongly correlate with relationship quality and repurchase intention.
+//   Promotional content in replies does the opposite.
+//
+// • Service Recovery Paradox (McCollough & Bharadwaj; Coyle Hospitality 11,000-point
+//   study): A guest whose complaint is exceptionally handled becomes MORE loyal than
+//   a guest who never had a problem. Key variables: speed, empathy, specificity,
+//   perceived fairness. Empathy must come BEFORE explanation.
+//
+// • ScienceDirect (2025): Calm, accountable responses to negative reviews increase
+//   third-party purchase intent. Aggressive or defensive callouts reduce it.
+//
+// • Marriott LEARN / Broadmoor HEART / Starbucks LATTE frameworks all share the
+//   same sequence: Acknowledge emotionally first → then respond factually.
+//
 function buildPrompt(params: {
   business_name: string;
   rating: number;
@@ -494,12 +538,12 @@ function buildPrompt(params: {
 
   const who =
     voice.reply_as === "owner" || voice.reply_as === "manager"
-      ? 'Reply using "I" as the owner.'
-      : 'Reply using "we" as the business.';
+      ? 'Write in first-person singular ("I") as the owner.'
+      : 'Write in first-person plural ("we") as the business.';
 
   const langInstruction = languageInstruction(owner_language);
 
-  // ─── Banned phrases ─────────────────────────────────────────────────────────
+  // ── Banned phrases (EN / ES / PT / FR / IT / DE) ──────────────────────────
   const universalBanned = [
     // EN
     "thank you for your feedback",
@@ -565,99 +609,177 @@ function buildPrompt(params: {
     "nous nous excusons sincèrement",
     "nous comprenons votre frustration",
     "nous nous efforçons",
+    // IT / DE
+    "grazie per il tuo feedback",
+    "ci scusiamo sinceramente",
+    "ci impegniamo",
+    "danke für ihr feedback",
+    "wir entschuldigen uns aufrichtig",
+    "wir bemühen uns",
   ].join(" | ");
 
   const exclamationRule = voice.allow_exclamation
-    ? "Max 1 exclamation point, only if it feels completely natural."
-    : "No exclamation points.";
+    ? "Maximum 1 exclamation point, only if it is completely natural."
+    : "No exclamation points. Replace any with a period.";
 
   const signatureRule = reply_signature
-    ? `End your reply with: — ${reply_signature}`
+    ? `Close with: — ${reply_signature}`
     : "";
 
   const voiceSamplesBlock =
     voice_samples && voice_samples.length > 0
-      ? `TONE REFERENCE — match this writing style, do not copy sentences:\n${voice_samples.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
+      ? `VOICE REFERENCE — match this writing style only, do not copy content:\n${voice_samples.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
       : "";
 
   const userRulesBlock =
     client_rules && client_rules.length > 0
-      ? `ADDITIONAL RULES:\n${client_rules.map((r) => `- ${r}`).join("\n")}`
+      ? `OWNER-SPECIFIC RULES:\n${client_rules.map((r) => `- ${r}`).join("\n")}`
       : "";
 
-  // ─── Rating-specific guidance ────────────────────────────────────────────────
-  let ratingGuidance = "";
-  if (rating >= 5) {
-    ratingGuidance = `This is a 5-star review. Be warm and genuine. Reference one specific thing they mentioned. Close with a simple, low-pressure welcome back. Do NOT be over-the-top or use marketing language.`;
-  } else if (rating === 4) {
-    ratingGuidance = `This is a 4-star review. Be appreciative. If they hinted at something that could be better, acknowledge it briefly and naturally. Close simply.`;
-  } else if (rating === 3) {
-    ratingGuidance = `This is a 3-star review. Thank them plainly for the honest feedback. Acknowledge the mixed experience in a calm, solution-oriented way. Do not be defensive.`;
-  } else if (rating === 2) {
-    ratingGuidance = `This is a 2-star review. Open with a brief, genuine acknowledgment that names their specific complaint — not a vague summary of it. If they criticized the wine quality, say "the wines." If they criticized service, say "the service." Show you actually read their review. Do NOT apologize more than once. Do NOT explain operational reasons unless they mentioned it. Be calm and direct.`;
-  } else {
-    ratingGuidance = `This is a 1-star review. Name their specific complaint in your opening — not vaguely ("your experience") but concretely ("the wine quality," "the bugs in the food," "the wait time"). ONE apology only. Do not be defensive. Do not explain why it happened. Keep it short and human. If inviting follow-up, one short line only.`;
-  }
-
-  // Dynamic sentence limit based on review length
   const reviewWordCount = review_text.trim().split(/\s+/).length;
   const maxSentences = reviewWordCount > 120 ? 4 : reviewWordCount > 60 ? 3 : 2;
 
-  return `You are the owner of ${business_name} — a hospitality business — writing a reply to a ${rating}/5 Google review on behalf of your establishment. This is a white-glove reputation management platform. Your reply represents the public face of the business.
+  // ── Rating-calibrated response strategy ────────────────────────────────────
+  // Grounded in the Service Recovery Paradox and Columbia Business School research:
+  // emotional acknowledgment must precede factual response for maximum re-visit intent.
+  let ratingStrategy = "";
+  if (rating >= 5) {
+    ratingStrategy = `
+5-STAR STRATEGY — Warmth + specific mirroring + low-pressure return invite
+- Lead with warmth that mirrors something SPECIFIC they mentioned: a dish, a moment, a staff member by name.
+- Do not be effusive, over-the-top, or use marketing language. Genuine beats enthusiastic.
+- Close with a natural, low-pressure invitation to return.
+- Research basis: Reinforcing specific positive memories increases revisit likelihood (peak-end rule).`;
+  } else if (rating === 4) {
+    ratingStrategy = `
+4-STAR STRATEGY — Appreciation + gentle gap acknowledgment
+- Lead with genuine appreciation for the visit.
+- If the review hints at something imperfect, acknowledge it briefly and naturally — do not ignore it.
+- Close simply and warmly. Do not over-promise.`;
+  } else if (rating === 3) {
+    ratingStrategy = `
+3-STAR STRATEGY — Balanced, calm ownership
+- Acknowledge the mixed experience without defensiveness.
+- Take responsibility for the gap without over-explaining or making excuses.
+- Show you heard both what worked and what didn't — be specific about both.
+- Close with a calm, genuine note.`;
+  } else if (rating === 2) {
+    ratingStrategy = `
+2-STAR STRATEGY — Emotional acknowledgment first, then accountability
+- Research basis (Columbia Business School, Wu & Morwitz 2025): Responses that address BOTH
+  the emotional AND factual dimensions of a complaint produce the highest re-visit intention.
+  Emotional acknowledgment must come FIRST.
+- STEP 1 — Name what went wrong specifically. Not "your experience" — name the actual thing:
+  "the tour that was promised and never came," "being ignored when you asked for help,"
+  "the wine program not matching what we'd described." Mirror their exact words back.
+- STEP 2 — One clean sentence of accountability. No operational justifications.
+  No "we were busy." No "we were understaffed." Just ownership.
+- STEP 3 — Invite private resolution in one short sentence. Research shows moving to private
+  channels produces better outcomes than public exchanges (Morwitz, 2025).
+- ONE apology maximum. Repeating apologies signals guilt without rebuilding trust.
+- The reply should sound like an owner who is genuinely disappointed in themselves —
+  not defensive, not corporate, not over-apologetic.`;
+  } else {
+    ratingStrategy = `
+1-STAR STRATEGY — Direct, calm, specific accountability
+- Open by naming the specific failure concretely — not vaguely.
+  Use the reviewer's own words where possible: "the wine quality," "the promised tour that
+  never arrived," "waiting over an hour." If you write "your experience" you have failed.
+- ONE apology. Direct and human. Not "please accept our sincerest apologies" — just "I'm sorry."
+- Do not be defensive. Do not explain why it happened. Do not promise systemic change.
+- If appropriate, invite them to reach out directly — one sentence only, not a plea.
+- Dignity in brevity. Short, specific, accountable replies outperform long ones.
+- Research basis (ScienceDirect, 2025): Calm, accountable responses increase third-party
+  purchase intent. Aggressive or defensive replies reduce it.`;
+  }
+
+  return `You are the owner of "${business_name}" — a hospitality business — writing a public Google review reply. This reply is visible to every future reader, not just the reviewer. It represents the face and character of the business.
+
+ReviewConcierge is a white-glove reputation management platform. The quality standard here is enterprise-level.
+
 ${who}
 
 ${langInstruction}
 
-═══ MANDATORY QUALITY RULES — READ BEFORE WRITING ═══
+════════════════════════════════════════════════════
+  MANDATORY QUALITY STANDARDS — EVERY ONE MUST BE MET
+════════════════════════════════════════════════════
 
-RULE 1 — GRAMMAR AND PUNCTUATION: NON-NEGOTIABLE
-Every contraction MUST include an apostrophe. There are no exceptions.
-✓ Correct: we're / we'd / didn't / that's / you're / wasn't / it's / we've / they're
-✗ Wrong:   were / wed / didnt / thats / youre / wasnt / its / weve / theyre
+STANDARD 1 — GRAMMAR: NON-NEGOTIABLE. ZERO TOLERANCE.
 
-Scan every word of your reply before outputting. If you see a missing apostrophe, rewrite the sentence. A reply with broken contractions will be rejected.
+Every contraction MUST have an apostrophe. Read your output before submitting.
 
-Every sentence must be complete — a subject, a verb, and closing punctuation. No fragments. No half-thoughts.
+  ✓ CORRECT: we're / we'd / didn't / that's / you're / wasn't / it's / I'd / I'll / we've / can't / won't
+  ✗ BROKEN:  were  / wed  / didnt  / thats  / youre  / wasnt  / its  / Id  / Ill  / weve  / cant  / wont
 
-RULE 2 — SPECIFICITY: MIRROR THE GUEST'S EXACT DETAILS
-Read the review carefully. Identify the specific details the guest mentioned — a wait time, a dish name, a staff member, the table situation. Reference at least one specific detail in your reply.
+Every sentence MUST start with a capital letter. After every period, "!", or "?" followed by a space,
+the NEXT word must be capitalised.
 
-Generic: "We hear you on the wait."
-Specific: "Losing your table after seven minutes, then waiting over an hour for food, is not the experience we want anyone to have."
+  ✓ CORRECT: "I'm sorry that happened. You're right that the tour was promised and never arrived."
+  ✗ BROKEN:  "I'm sorry that happened. you're right that the tour was promised and never arrived."
 
-Specificity proves the owner read the review. Vagueness proves they didn't.
+Every sentence must be grammatically complete: subject + verb + closing punctuation. No fragments.
 
-RULE 3 — WRITE LIKE A PERSON, NOT A PRESS RELEASE
-Complete, well-constructed sentences. Warm but not gushing. Direct but not cold.
-Avoid hollow filler that sounds like a call centre script.
+Scan your reply word by word before outputting. Fix any broken contraction or uncapitalised sentence start.
 
-STEP 1 — Before writing, identify:
-- The reviewer's PRIMARY concern (the most specific thing they raised)
-- One concrete detail from their review (a number, a name, a specific item) that you will reference
+STANDARD 2 — SPECIFICITY: PROVE YOU READ THE REVIEW.
 
-STEP 2 — Write your reply using what you identified:
-- Name their primary concern specifically — not "your experience" but "the hour-long wait" or "the missing desserts"
-- Reference the concrete detail you identified — prove you read it, not just skimmed it
-- Sound like a real owner writing on their phone, not a PR agency
-- ${maxSentences} sentences MAX — use all of them if the review is detailed
-- Do NOT copy their exact sentences — engage and paraphrase
-- Do NOT apologize more than once
-- ${exclamationRule}
-- No emojis
+Reference at least ONE concrete detail from the review — a specific time, dish, staff interaction,
+promised service, or named incident. Do not summarise in categories.
 
-BANNED PHRASES — do not use any of these, even partially or in translation:
+  ✗ Generic (WRONG):  "We're sorry your experience didn't meet expectations."
+  ✓ Specific (RIGHT): "A wine tour that was promised and never arrived — that's on us."
+
+Research basis: Responses that address both emotional AND factual specifics produce the highest
+guest re-visit intention (Columbia Business School, Wu & Morwitz, 2025).
+
+STANDARD 3 — HUMAN VOICE. NOT A PRESS RELEASE.
+
+Write the way a thoughtful owner would text a trusted friend about what happened — warm, direct,
+accountable. Not corporate. Not scripted. Not hollow.
+
+Complete sentences. But human ones.
+
+STANDARD 4 — LENGTH: FEWER SENTENCES, MORE WEIGHT.
+
+${maxSentences} sentences MAXIMUM. A short, specific, human reply outperforms a long generic one.
+
+════════════════════════════════════════════════
+  BANNED PHRASES — NEVER USE. NOT EVEN PARTIALLY.
+════════════════════════════════════════════════
+
+These phrases signal AI-generated corporate filler and will erode owner credibility:
 ${universalBanned}
 
-${ratingGuidance}
+════════════════════════════════════
+  RATING STRATEGY
+════════════════════════════════════
+${ratingStrategy}
 
-${voiceSamplesBlock ? voiceSamplesBlock + "\n" : ""}${userRulesBlock ? userRulesBlock + "\n" : ""}${signatureRule ? signatureRule + "\n" : ""}
-REVIEW (${rating}/5):
-"""
+════════════════════════════════════
+  HARD CONSTRAINTS
+════════════════════════════════════
+- ${exclamationRule}
+- No emojis.
+- Do not promise internal changes ("we'll retrain staff", "we've updated our procedures").
+- Do not mention AI, automation, or systems.
+- Do not offer refunds or compensation.
+- Do not use placeholder text like [name] or [business name].
+- Do not copy the reviewer's sentences — paraphrase and engage.
+- One apology only, regardless of rating.
+
+${voiceSamplesBlock ? voiceSamplesBlock + "\n\n" : ""}${userRulesBlock ? userRulesBlock + "\n\n" : ""}${signatureRule ? signatureRule + "\n\n" : ""}════════════════════════════════════
+  THE REVIEW (${rating}/5 stars)
+════════════════════════════════════
 ${review_text}
-"""
 
-Output ONLY the reply text. No labels. No "Step 1/Step 2" in your output. No preamble. Just the reply — complete sentences, correct apostrophes, ready to paste into Google.`.trim();
+────────────────────────────────────
+Write the reply now.
+Complete sentences. Correct apostrophes. Every sentence capitalised. Specific. Human.
+Output ONLY the reply — no labels, no preamble, no explanation.`.trim();
 }
+
+// ─── Post-processing helpers ──────────────────────────────────────────────────
 
 function appendSignatureIfMissing(reply: string, signature: string | null) {
   const sig = cleanString(signature, 80);
@@ -698,14 +820,6 @@ function sanitizeCorporatePhrases(text: string) {
   t = t.replace(/\s+\?/g, "?");
   t = collapseWhitespace(t);
   return t.trim();
-}
-
-function capitalizeIfNeeded(text: string) {
-  const t = (text ?? "").trim();
-  if (!t) return t;
-  const first = t.charAt(0);
-  if (first >= "a" && first <= "z") return first.toUpperCase() + t.slice(1);
-  return t;
 }
 
 function reviewerMentionsCapacityExcuse(reviewText: string) {
@@ -761,6 +875,8 @@ function stripRepetitiveClosers(reply: string, rating: number) {
   return { text: out || reply, stripped: true };
 }
 
+// ─── Route handler ────────────────────────────────────────────────────────────
+
 export async function POST(req: Request) {
   try {
     const sub = await requireActiveSubscription();
@@ -778,14 +894,14 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
 
-    const review_text = cleanString((body as any)?.review_text, 5000);
-    const business_name = cleanString((body as any)?.business_name, 200);
+    const review_text       = cleanString((body as any)?.review_text, 5000);
+    const business_name     = cleanString((body as any)?.business_name, 200);
     const reviewer_language = cleanLanguage((body as any)?.language);
-    const rating = parseRating((body as any)?.rating);
-    const debug = !!(body as any)?.debug;
+    const rating            = parseRating((body as any)?.rating);
+    const debug             = !!(body as any)?.debug;
 
-    const review_id = cleanString((body as any)?.review_id, 80) || null;
-    const google_review_id = cleanString((body as any)?.google_review_id, 140) || null;
+    const review_id          = cleanString((body as any)?.review_id, 80) || null;
+    const google_review_id   = cleanString((body as any)?.google_review_id, 140) || null;
     const google_location_id =
       cleanString((body as any)?.google_location_id, 240) ||
       cleanString((body as any)?.location_id, 240) ||
@@ -802,8 +918,8 @@ export async function POST(req: Request) {
     }
 
     const clientToneRaw = parseClientTone((body as any)?.tone);
-    const clientTone = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
-    const clientRules = parseClientRules((body as any)?.rules);
+    const clientTone    = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
+    const clientRules   = parseClientRules((body as any)?.rules);
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -813,10 +929,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const orgSettings = await loadOrgReplySettings();
-    const owner_language = orgSettings.owner_language || "en";
+    const orgSettings        = await loadOrgReplySettings();
+    const owner_language     = orgSettings.owner_language || "en";
     const org_reply_tone_raw = orgSettings.reply_tone || "warm";
-    const reply_signature = orgSettings.reply_signature ?? null;
+    const reply_signature    = orgSettings.reply_signature ?? null;
 
     const { samples: voiceSamples, sampleIds: voiceSampleIds } = await loadVoiceSamplesForOrg({
       maxItems: 5,
@@ -825,7 +941,7 @@ export async function POST(req: Request) {
     });
 
     const orgVoice = await loadVoiceProfile();
-    const merged = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
+    const merged   = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
     const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
 
     const voice = normalizeVoice({
@@ -833,8 +949,9 @@ export async function POST(req: Request) {
       tone: (merged as any)?.tone ? (merged as any).tone : toneFromOrg,
     });
 
-    const temperature = rating <= 2 ? 0.2 : 0.3;
-    const model = "claude-haiku-4-5-20251001";
+    // Lower temperature = fewer grammar drift / contraction failures
+    const temperature = rating <= 2 ? 0.15 : 0.25;
+    const model       = "claude-haiku-4-5-20251001";
 
     const prompt = buildPrompt({
       business_name,
@@ -843,8 +960,8 @@ export async function POST(req: Request) {
       review_text,
       voice,
       reply_signature,
-      client_tone: clientTone,
-      client_rules: clientRules,
+      client_tone:   clientTone,
+      client_rules:  clientRules,
       voice_samples: voiceSamples,
     });
 
@@ -858,8 +975,16 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model,
         temperature,
-        max_tokens: 280,
-        system: `You are the owner of a hospitality business writing short, human replies to Google reviews on behalf of a white-glove reputation management platform. You write the way a real person would — specific, warm, direct, and never corporate. Every contraction must have an apostrophe (we're, didn't, that's, you're). Every sentence must be complete. Follow all constraints exactly. Output only the reply text, nothing else.`,
+        max_tokens: 300,
+        system: [
+          "You are a professional hospitality reputation manager writing Google review replies for a white-glove concierge service.",
+          "You write as the business owner — specific, warm, accountable, and never corporate.",
+          "CRITICAL GRAMMAR RULES that must never be violated:",
+          "1. Every contraction must have an apostrophe: we're / didn't / that's / you're / I'd / I'll / won't / can't / we've.",
+          "2. Every sentence must begin with a capital letter. After every period, '! ', or '? ', the next word is capitalised.",
+          "3. Every sentence must be grammatically complete — subject, verb, end punctuation. No fragments.",
+          "4. Output ONLY the reply text. No labels, no preamble, no explanation.",
+        ].join(" "),
         messages: [{ role: "user", content: prompt }],
       }),
       cache: "no-store",
@@ -884,14 +1009,14 @@ export async function POST(req: Request) {
     const contentRaw = upstreamJson?.content?.[0]?.text ?? "";
     let content = safeTrimReply(String(contentRaw));
 
-    // ─── Post-processing pipeline ────────────────────────────────────────────
+    // ── Post-processing pipeline (order matters) ──────────────────────────────
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
     content = stripTemplatedOpeners(content);
     content = sanitizeCorporatePhrases(content);
-    content = fixApostrophes(content);          // ← new: apostrophe repair pass
-    content = capitalizeIfNeeded(content);
+    content = fixApostrophes(content);                // apostrophe repair
+    content = fixSentenceCapitalisation(content);     // capitalisation repair — first pass
     content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
     content = removeDuplicateApology(content, rating);
 
@@ -914,6 +1039,9 @@ export async function POST(req: Request) {
       }
     }
 
+    // Final capitalisation pass — catches anything introduced by prior steps
+    content = fixSentenceCapitalisation(content);
+
     content = appendSignatureIfMissing(content, reply_signature);
 
     if (!content) {
@@ -923,7 +1051,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // ─── Audit log (best-effort) ─────────────────────────────────────────────
+    // ── Audit log (best-effort) ───────────────────────────────────────────────
     try {
       const { supabase, organizationId } = await requireOrgContext();
       const reviewHash = sha256Hex(review_text);
@@ -932,20 +1060,20 @@ export async function POST(req: Request) {
       );
 
       const auditRow: any = {
-        organization_id: organizationId,
-        rating: Math.round(Number(rating)),
-        review_hash: reviewHash,
-        prompt_fingerprint: promptFingerprint,
-        prompt_version: PROMPT_VERSION,
+        organization_id:     organizationId,
+        rating:              Math.round(Number(rating)),
+        review_hash:         reviewHash,
+        prompt_fingerprint:  promptFingerprint,
+        prompt_version:      PROMPT_VERSION,
         banned_list_version: BANNED_LIST_VERSION,
         model,
         temperature,
-        voice_sample_count: voiceSampleIds.length,
-        voice_sample_ids: voiceSampleIds,
-        review_id: review_id,
-        google_review_id: google_review_id,
-        google_location_id: google_location_id,
-        location_id: google_location_id,
+        voice_sample_count:  voiceSampleIds.length,
+        voice_sample_ids:    voiceSampleIds,
+        review_id:           review_id,
+        google_review_id:    google_review_id,
+        google_location_id:  google_location_id,
+        location_id:         google_location_id,
       };
 
       if (
@@ -968,14 +1096,14 @@ export async function POST(req: Request) {
         meta: {
           owner_language,
           reviewer_language,
-          reply_tone: org_reply_tone_raw,
-          reply_signature: reply_signature ?? null,
+          reply_tone:         org_reply_tone_raw,
+          reply_signature:    reply_signature ?? null,
           google_location_id: google_location_id ?? null,
           ...(debug
             ? {
                 enforcement: {
                   post_clean_version: POST_CLEAN_VERSION,
-                  closer_stripped: closerStrip.stripped,
+                  closer_stripped:    closerStrip.stripped,
                 },
               }
             : {}),
