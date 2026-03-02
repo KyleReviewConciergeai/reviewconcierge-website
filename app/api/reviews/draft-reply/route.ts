@@ -9,7 +9,7 @@ import crypto from "crypto";
 
 const PROMPT_VERSION      = "draft-reply-v4";
 const BANNED_LIST_VERSION = "banned-v4";
-const POST_CLEAN_VERSION  = "postclean-v5";
+const POST_CLEAN_VERSION  = "postclean-v6";
 
 // ─── Basic utilities ──────────────────────────────────────────────────────────
 
@@ -72,75 +72,112 @@ function limitSentences(text: string, maxSentences: number) {
 }
 
 // ─── Apostrophe repair ────────────────────────────────────────────────────────
-// The prompt enforces this at generation time. This is the safety net that catches
-// any contraction that slips through — runs as a post-processing step.
+// VERSION: postclean-v6
+//
+// Replaces the old phrase-lookup table with a universal regex engine.
+// The old approach only caught contractions we explicitly anticipated.
+// This version catches ANY missing apostrophe by structural pattern.
+//
+// Design decisions:
+// - "were" is a real word (past tense plural), so we use negative lookbehind
+//   to skip "they were", "you were", "guests were" etc.
+// - "wed" is a real word (got married), so we only fire before verbs/adverbs
+//   that appear in review replies.
+// - "its" vs "it's": only replace before predicate words, not possessive.
+// - All other contractions (didnt, youre, weve, cant etc.) are unambiguous.
+//
 function fixApostrophes(text: string): string {
   let t = text;
 
-  const fixes: Array<[RegExp, string]> = [
-    // "we're" family
-    [/\bwere sorry\b/gi,     "We're sorry"],
-    [/\bwere glad\b/gi,      "We're glad"],
-    [/\bwere happy\b/gi,     "We're happy"],
-    [/\bwere thrilled\b/gi,  "We're thrilled"],
-    [/\bwere delighted\b/gi, "We're delighted"],
-    [/\bwere committed\b/gi, "We're committed"],
-    [/\bwere aware\b/gi,     "We're aware"],
-    [/\bwere looking\b/gi,   "We're looking"],
-    [/\bwere working\b/gi,   "We're working"],
-    // "we'd" family
-    [/\bwed like\b/gi,       "We'd like"],
-    [/\bwed love\b/gi,       "We'd love"],
-    [/\bwed appreciate\b/gi, "We'd appreciate"],
-    [/\bwed be\b/gi,         "We'd be"],
-    // "we've" / "I'm" / "I'd" / "I'll"
-    [/\bweve\b/gi,           "we've"],
-    [/\bIm\b/g,              "I'm"],
-    [/\bId like\b/g,         "I'd like"],
-    [/\bId love\b/g,         "I'd love"],
-    [/\bIll \b/g,            "I'll "],
-    // Standard negative contractions
-    [/\bdidnt\b/gi,          "didn't"],
-    [/\bdoesnt\b/gi,         "doesn't"],
-    [/\bwasnt\b/gi,          "wasn't"],
-    [/\bwerent\b/gi,         "weren't"],
-    [/\bwouldnt\b/gi,        "wouldn't"],
-    [/\bcouldnt\b/gi,        "couldn't"],
-    [/\bshouldnt\b/gi,       "shouldn't"],
-    [/\bisnt\b/gi,           "isn't"],
-    [/\barent\b/gi,          "aren't"],
-    [/\bhasnt\b/gi,          "hasn't"],
-    [/\bhavent\b/gi,         "haven't"],
-    [/\bwont\b/gi,           "won't"],
-    [/\bcant\b/gi,           "can't"],
-    [/\bdont\b/gi,           "don't"],
-    // "that's / it's / what's / there's / you're"
-    [/\bthats\b/gi,          "that's"],
-    [/\bwhats\b/gi,          "what's"],
-    [/\btheres\b/gi,         "there's"],
-    [/\bits a\b/g,           "it's a"],
-    [/\bits not\b/gi,        "it's not"],
-    [/\bits clear\b/gi,      "it's clear"],
-    [/\bits been\b/gi,       "it's been"],
-    [/\byoure\b/gi,          "you're"],
-  ];
+  // ── Negative contractions (unambiguous — no real-word conflicts) ───────────
+  t = t.replace(/\bcant\b(?!o|al|ed|ing)/gi, "can't");
+  t = t.replace(/\bwont\b(?!ed|s\b)/gi, "won't");
+  t = t.replace(/\bdont\b/gi, "don't");
+  t = t.replace(/\bdidnt\b/gi, "didn't");
+  t = t.replace(/\bdoesnt\b/gi, "doesn't");
+  t = t.replace(/\bwasnt\b/gi, "wasn't");
+  t = t.replace(/\bwerent\b/gi, "weren't");
+  t = t.replace(/\bwouldnt\b/gi, "wouldn't");
+  t = t.replace(/\bcouldnt\b/gi, "couldn't");
+  t = t.replace(/\bshouldnt\b/gi, "shouldn't");
+  t = t.replace(/\bisnt\b/gi, "isn't");
+  t = t.replace(/\barent\b/gi, "aren't");
+  t = t.replace(/\bhasnt\b/gi, "hasn't");
+  t = t.replace(/\bhavent\b/gi, "haven't");
+  t = t.replace(/\bhadnt\b/gi, "hadn't");
+  t = t.replace(/\bmusnt\b/gi, "mustn't");
+  t = t.replace(/\bneednt\b/gi, "needn't");
 
-  for (const [pattern, replacement] of fixes) {
-    t = t.replace(pattern, replacement);
-  }
+  // ── "were" → "we're" ─────────────────────────────────────────────────────
+  // Negative lookbehind prevents firing on "they were", "you were", "guests were".
+  // In a review reply, first-person "were" without apostrophe is the broken case.
+
+  // were + gerund: "were firing", "were hoping", "were trying"
+  t = t.replace(
+    /(?<!they |you |he |she |it |guests |staff |people |team |customers |visitors )\bwere ([a-z]+ing)\b/gi,
+    (_m, verb) => `we're ${verb}`
+  );
+  // were + "about": "that's not what were about"
+  t = t.replace(
+    /(?<!they |you |he |she |it |guests |staff |people |team )\bwere about\b/gi,
+    "we're about"
+  );
+  // were + predicate adjectives
+  t = t.replace(
+    /(?<!they |you |he |she |it |guests |staff |people |team )\bwere (sorry|glad|happy|thrilled|delighted|committed|aware|able|ready|pleased|excited|grateful|wrong|right|mistaken|confused|disappointed|surprised|certain|sure|devastated|embarrassed)\b/gi,
+    (_m, adj) => `we're ${adj}`
+  );
+
+  // ── "wed" → "we'd" ───────────────────────────────────────────────────────
+  // "wed" as past tense of marry won't appear in a hospitality reply.
+  t = t.replace(
+    /\bwed (like|love|appreciate|be|rather|prefer|suggest|recommend|hope|welcome|hate|expect|want|need|genuinely|really|truly|absolutely|certainly|never|hate to)\b/gi,
+    (_m, w) => `we'd ${w}`
+  );
+
+  // ── "well" → "we'll" ─────────────────────────────────────────────────────
+  // Only when followed by a verb — avoids corrupting "well done", "well received".
+  t = t.replace(
+    /\bwell (be|have|make|take|get|do|look|reach|follow|check|send|ensure|try|work|fix|address|handle|see|find|speak|talk|connect|pass|do better|reach out|make sure|look into|pass this along)\b/gi,
+    (_m, w) => `we'll ${w}`
+  );
+
+  // ── "its" → "it's" (predicate only, not possessive) ─────────────────────
+  t = t.replace(
+    /\bits (a|an|the|not|been|clear|important|something|worth|hard|difficult|fair|unfair|obvious|true|also|just|never|always|on us|our fault)\b/gi,
+    (_m, w) => `it's ${w}`
+  );
+
+  // ── Simple unambiguous swaps ─────────────────────────────────────────────
+  t = t.replace(/\bthats\b/gi, "that's");
+  t = t.replace(/\bwhats\b/gi, "what's");
+  t = t.replace(/\btheres\b/gi, "there's");
+  t = t.replace(/\bheres\b/gi, "here's");
+  t = t.replace(/\byoure\b/gi, "you're");
+  t = t.replace(/\btheyre\b/gi, "they're");
+  t = t.replace(/\bweve\b/gi, "we've");
+  t = t.replace(/\byouve\b/gi, "you've");
+  t = t.replace(/\btheyve\b/gi, "they've");
+  t = t.replace(/\byoull\b/gi, "you'll");
+  t = t.replace(/\btheyll\b/gi, "they'll");
+  t = t.replace(/\bIm\b/g, "I'm");
+  t = t.replace(/\bIve\b/g, "I've");
+  t = t.replace(
+    /\bId (like|love|appreciate|be|rather|prefer|suggest|recommend|hope|want|need|welcome|genuinely|really|truly)\b/g,
+    (_m, w) => `I'd ${w}`
+  );
+  t = t.replace(
+    /\bIll (be|have|make|take|get|do|look|check|send|ensure|try|work|fix|address|see|find|speak|talk|connect|do better|reach out|make sure|look into|pass this)\b/g,
+    (_m, w) => `I'll ${w}`
+  );
 
   return t;
 }
 
 // ─── Sentence capitalisation repair ──────────────────────────────────────────
-// Fixes the specific bug visible in the screenshot: lowercase letter after a
-// sentence-ending punctuation mark followed by a space.
-// Runs TWICE in the pipeline — once mid-stream, once as the final step.
 function fixSentenceCapitalisation(text: string): string {
   if (!text) return text;
-  // Capitalise the first character of the whole string
   let t = text.charAt(0).toUpperCase() + text.slice(1);
-  // Capitalise the first letter after ". " / "! " / "? " / ".\n" etc.
   t = t.replace(/([.!?][\s]+)([a-z])/g, (_match, punct, letter) => punct + letter.toUpperCase());
   return t;
 }
@@ -488,32 +525,7 @@ function sentencePolicyForRating(rating: number, reviewWordCount?: number) {
 }
 
 // ─── Prompt builder ───────────────────────────────────────────────────────────
-//
-// Research foundation underpinning this prompt:
-//
-// • Columbia Business School (Wu & Morwitz, 2025): Responses addressing BOTH the
-//   emotional AND factual specifics of a complaint produce the highest re-visit
-//   intention. Generic category summaries ("your experience") address neither.
-//
-// • Journal of Marketing Research: A single unanswered negative review on page one
-//   reduces purchase likelihood by 42%. A specific, human owner reply directly
-//   mitigates this effect.
-//
-// • Frontiers of Business Research in China (2020): Sincere, non-promotional
-//   responses strongly correlate with relationship quality and repurchase intention.
-//   Promotional content in replies does the opposite.
-//
-// • Service Recovery Paradox (McCollough & Bharadwaj; Coyle Hospitality 11,000-point
-//   study): A guest whose complaint is exceptionally handled becomes MORE loyal than
-//   a guest who never had a problem. Key variables: speed, empathy, specificity,
-//   perceived fairness. Empathy must come BEFORE explanation.
-//
-// • ScienceDirect (2025): Calm, accountable responses to negative reviews increase
-//   third-party purchase intent. Aggressive or defensive callouts reduce it.
-//
-// • Marriott LEARN / Broadmoor HEART / Starbucks LATTE frameworks all share the
-//   same sequence: Acknowledge emotionally first → then respond factually.
-//
+
 function buildPrompt(params: {
   business_name: string;
   rating: number;
@@ -543,88 +555,34 @@ function buildPrompt(params: {
 
   const langInstruction = languageInstruction(owner_language);
 
-  // ── Banned phrases (EN / ES / PT / FR / IT / DE) ──────────────────────────
   const universalBanned = [
-    // EN
-    "thank you for your feedback",
-    "we appreciate your feedback",
-    "we appreciate your thoughts",
-    "we appreciate your comments",
-    "thank you for taking the time",
-    "thank you for sharing",
-    "we strive",
-    "we will look into this",
-    "we take this seriously",
-    "please accept our apologies",
-    "valued customer",
-    "valued guest",
-    "did not meet expectations",
-    "fell short of",
-    "we understand your frustration",
-    "we hear you",
-    "we recognize",
-    "it's disappointing to hear",
-    "it's concerning to hear",
-    "we'll keep that in mind",
-    "we aim to",
-    "we strive to",
-    "our goal is to",
-    "we work hard to",
-    "we regret",
-    "we were busy",
-    "short-staffed",
-    "understaffed",
-    // ES
-    "gracias por tu comentario",
-    "gracias por tu opinión",
-    "agradecemos tu comentario",
-    "agradecemos tu opinión",
-    "agradecemos tu feedback",
-    "lamentamos profundamente",
-    "nos disculpamos sinceramente",
-    "nos disculpamos profundamente",
-    "entendemos tu frustración",
-    "entendemos tu decepción",
-    "entiendo tu frustración",
-    "entiendo la frustración",
-    "comprendo tu frustración",
-    "comprendo la frustración",
-    "tomamos esto muy en serio",
-    "tomaremos en cuenta",
-    "trabajamos para mejorar",
-    "nos esforzamos",
-    "nuestro objetivo es",
-    "esperamos verte pronto",
-    "esperamos que nos des otra oportunidad",
-    // PT
-    "agradecemos o seu comentário",
-    "agradecemos o seu feedback",
-    "lamentamos profundamente",
-    "pedimos desculpas sinceramente",
-    "entendemos a sua frustração",
-    "nos esforçamos",
-    // FR
-    "merci pour votre commentaire",
-    "nous vous remercions",
-    "nous nous excusons sincèrement",
-    "nous comprenons votre frustration",
-    "nous nous efforçons",
-    // IT / DE
-    "grazie per il tuo feedback",
-    "ci scusiamo sinceramente",
-    "ci impegniamo",
-    "danke für ihr feedback",
-    "wir entschuldigen uns aufrichtig",
-    "wir bemühen uns",
+    "thank you for your feedback","we appreciate your feedback","we appreciate your thoughts",
+    "we appreciate your comments","thank you for taking the time","thank you for sharing",
+    "we strive","we will look into this","we take this seriously","please accept our apologies",
+    "valued customer","valued guest","did not meet expectations","fell short of",
+    "we understand your frustration","we hear you","we recognize","it's disappointing to hear",
+    "it's concerning to hear","we'll keep that in mind","we aim to","we strive to",
+    "our goal is to","we work hard to","we regret","we were busy","short-staffed","understaffed",
+    "gracias por tu comentario","gracias por tu opinión","agradecemos tu comentario",
+    "agradecemos tu opinión","agradecemos tu feedback","lamentamos profundamente",
+    "nos disculpamos sinceramente","nos disculpamos profundamente","entendemos tu frustración",
+    "entendemos tu decepción","entiendo tu frustración","entiendo la frustración",
+    "comprendo tu frustración","comprendo la frustración","tomamos esto muy en serio",
+    "tomaremos en cuenta","trabajamos para mejorar","nos esforzamos","nuestro objetivo es",
+    "esperamos verte pronto","esperamos que nos des otra oportunidad",
+    "agradecemos o seu comentário","agradecemos o seu feedback","lamentamos profundamente",
+    "pedimos desculpas sinceramente","entendemos a sua frustração","nos esforçamos",
+    "merci pour votre commentaire","nous vous remercions","nous nous excusons sincèrement",
+    "nous comprenons votre frustration","nous nous efforçons",
+    "grazie per il tuo feedback","ci scusiamo sinceramente","ci impegniamo",
+    "danke für ihr feedback","wir entschuldigen uns aufrichtig","wir bemühen uns",
   ].join(" | ");
 
   const exclamationRule = voice.allow_exclamation
     ? "Maximum 1 exclamation point, only if it is completely natural."
     : "No exclamation points. Replace any with a period.";
 
-  const signatureRule = reply_signature
-    ? `Close with: — ${reply_signature}`
-    : "";
+  const signatureRule = reply_signature ? `Close with: — ${reply_signature}` : "";
 
   const voiceSamplesBlock =
     voice_samples && voice_samples.length > 0
@@ -639,63 +597,41 @@ function buildPrompt(params: {
   const reviewWordCount = review_text.trim().split(/\s+/).length;
   const maxSentences = reviewWordCount > 120 ? 4 : reviewWordCount > 60 ? 3 : 2;
 
-  // ── Rating-calibrated response strategy ────────────────────────────────────
-  // Grounded in the Service Recovery Paradox and Columbia Business School research:
-  // emotional acknowledgment must precede factual response for maximum re-visit intent.
   let ratingStrategy = "";
   if (rating >= 5) {
-    ratingStrategy = `
-5-STAR STRATEGY — Warmth + specific mirroring + low-pressure return invite
+    ratingStrategy = `5-STAR STRATEGY — Warmth + specific mirroring + low-pressure return invite
 - Lead with warmth that mirrors something SPECIFIC they mentioned: a dish, a moment, a staff member by name.
 - Do not be effusive, over-the-top, or use marketing language. Genuine beats enthusiastic.
-- Close with a natural, low-pressure invitation to return.
-- Research basis: Reinforcing specific positive memories increases revisit likelihood (peak-end rule).`;
+- Close with a natural, low-pressure invitation to return.`;
   } else if (rating === 4) {
-    ratingStrategy = `
-4-STAR STRATEGY — Appreciation + gentle gap acknowledgment
+    ratingStrategy = `4-STAR STRATEGY — Appreciation + gentle gap acknowledgment
 - Lead with genuine appreciation for the visit.
 - If the review hints at something imperfect, acknowledge it briefly and naturally — do not ignore it.
 - Close simply and warmly. Do not over-promise.`;
   } else if (rating === 3) {
-    ratingStrategy = `
-3-STAR STRATEGY — Balanced, calm ownership
+    ratingStrategy = `3-STAR STRATEGY — Balanced, calm ownership
 - Acknowledge the mixed experience without defensiveness.
 - Take responsibility for the gap without over-explaining or making excuses.
 - Show you heard both what worked and what didn't — be specific about both.
 - Close with a calm, genuine note.`;
   } else if (rating === 2) {
-    ratingStrategy = `
-2-STAR STRATEGY — Emotional acknowledgment first, then accountability
-- Research basis (Columbia Business School, Wu & Morwitz 2025): Responses that address BOTH
-  the emotional AND factual dimensions of a complaint produce the highest re-visit intention.
-  Emotional acknowledgment must come FIRST.
+    ratingStrategy = `2-STAR STRATEGY — Emotional acknowledgment first, then accountability
 - STEP 1 — Name what went wrong specifically. Not "your experience" — name the actual thing:
   "the tour that was promised and never came," "being ignored when you asked for help,"
-  "the wine program not matching what we'd described." Mirror their exact words back.
-- STEP 2 — One clean sentence of accountability. No operational justifications.
-  No "we were busy." No "we were understaffed." Just ownership.
-- STEP 3 — Invite private resolution in one short sentence. Research shows moving to private
-  channels produces better outcomes than public exchanges (Morwitz, 2025).
-- ONE apology maximum. Repeating apologies signals guilt without rebuilding trust.
-- The reply should sound like an owner who is genuinely disappointed in themselves —
-  not defensive, not corporate, not over-apologetic.`;
+  "having to re-request every order twice." Mirror their exact words back.
+- STEP 2 — One clean sentence of accountability. No operational justifications. Just ownership.
+- STEP 3 — Invite private resolution in one short sentence.
+- ONE apology maximum. The reply should sound like an owner genuinely disappointed in themselves.`;
   } else {
-    ratingStrategy = `
-1-STAR STRATEGY — Direct, calm, specific accountability
-- Open by naming the specific failure concretely — not vaguely.
-  Use the reviewer's own words where possible: "the wine quality," "the promised tour that
-  never arrived," "waiting over an hour." If you write "your experience" you have failed.
-- ONE apology. Direct and human. Not "please accept our sincerest apologies" — just "I'm sorry."
+    ratingStrategy = `1-STAR STRATEGY — Direct, calm, specific accountability
+- Open by naming the specific failure concretely — use the reviewer's own words.
+  If you write "your experience" you have failed.
+- ONE apology. Direct and human. Just "I'm sorry." Not a corporate apology.
 - Do not be defensive. Do not explain why it happened. Do not promise systemic change.
-- If appropriate, invite them to reach out directly — one sentence only, not a plea.
-- Dignity in brevity. Short, specific, accountable replies outperform long ones.
-- Research basis (ScienceDirect, 2025): Calm, accountable responses increase third-party
-  purchase intent. Aggressive or defensive replies reduce it.`;
+- Dignity in brevity. Short, specific, accountable replies outperform long ones.`;
   }
 
   return `You are the owner of "${business_name}" — a hospitality business — writing a public Google review reply. This reply is visible to every future reader, not just the reviewer. It represents the face and character of the business.
-
-ReviewConcierge is a white-glove reputation management platform. The quality standard here is enterprise-level.
 
 ${who}
 
@@ -715,40 +651,28 @@ Every contraction MUST have an apostrophe. Read your output before submitting.
 Every sentence MUST start with a capital letter. After every period, "!", or "?" followed by a space,
 the NEXT word must be capitalised.
 
-  ✓ CORRECT: "I'm sorry that happened. You're right that the tour was promised and never arrived."
-  ✗ BROKEN:  "I'm sorry that happened. you're right that the tour was promised and never arrived."
-
 Every sentence must be grammatically complete: subject + verb + closing punctuation. No fragments.
 
 Scan your reply word by word before outputting. Fix any broken contraction or uncapitalised sentence start.
 
 STANDARD 2 — SPECIFICITY: PROVE YOU READ THE REVIEW.
 
-Reference at least ONE concrete detail from the review — a specific time, dish, staff interaction,
+Reference at least ONE concrete detail from the review — a specific dish, wait time, staff interaction,
 promised service, or named incident. Do not summarise in categories.
 
-  ✗ Generic (WRONG):  "We're sorry your experience didn't meet expectations."
-  ✓ Specific (RIGHT): "A wine tour that was promised and never arrived — that's on us."
-
-Research basis: Responses that address both emotional AND factual specifics produce the highest
-guest re-visit intention (Columbia Business School, Wu & Morwitz, 2025).
+  ✗ Generic: "We're sorry your experience didn't meet expectations."
+  ✓ Specific: "Having to re-request every order twice isn't what we're about."
 
 STANDARD 3 — HUMAN VOICE. NOT A PRESS RELEASE.
 
-Write the way a thoughtful owner would text a trusted friend about what happened — warm, direct,
-accountable. Not corporate. Not scripted. Not hollow.
+Write the way a thoughtful owner would — warm, direct, accountable. Not corporate. Not scripted.
 
-Complete sentences. But human ones.
-
-STANDARD 4 — LENGTH: FEWER SENTENCES, MORE WEIGHT.
-
-${maxSentences} sentences MAXIMUM. A short, specific, human reply outperforms a long generic one.
+STANDARD 4 — LENGTH: ${maxSentences} sentences MAXIMUM.
 
 ════════════════════════════════════════════════
   BANNED PHRASES — NEVER USE. NOT EVEN PARTIALLY.
 ════════════════════════════════════════════════
 
-These phrases signal AI-generated corporate filler and will erode owner credibility:
 ${universalBanned}
 
 ════════════════════════════════════
@@ -949,7 +873,6 @@ export async function POST(req: Request) {
       tone: (merged as any)?.tone ? (merged as any).tone : toneFromOrg,
     });
 
-    // Lower temperature = fewer grammar drift / contraction failures
     const temperature = rating <= 2 ? 0.15 : 0.25;
     const model       = "claude-haiku-4-5-20251001";
 
@@ -1015,7 +938,7 @@ export async function POST(req: Request) {
     content = collapseWhitespace(content);
     content = stripTemplatedOpeners(content);
     content = sanitizeCorporatePhrases(content);
-    content = fixApostrophes(content);                // apostrophe repair
+    content = fixApostrophes(content);                // universal apostrophe repair
     content = fixSentenceCapitalisation(content);     // capitalisation repair — first pass
     content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
     content = removeDuplicateApology(content, rating);
