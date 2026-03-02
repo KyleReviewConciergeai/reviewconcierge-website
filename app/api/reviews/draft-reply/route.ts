@@ -7,9 +7,54 @@ import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
 import crypto from "crypto";
 
-const PROMPT_VERSION      = "draft-reply-v4";
-const BANNED_LIST_VERSION = "banned-v4";
-const POST_CLEAN_VERSION  = "postclean-v6";
+const PROMPT_VERSION      = "draft-reply-v6";
+const BANNED_LIST_VERSION = "banned-v5";
+const POST_CLEAN_VERSION  = "postclean-v8";
+
+// ─── Research references (informational — traceable decisions) ─────────────────
+//
+// [R1] Ravichandran & Deng (2022) "Effects of Managerial Response to Negative
+//      Reviews on Future Review Valence and Complaints" — Information Systems
+//      Research. Procedural complaints → rational cues outperform emotional.
+//      Interpersonal complaints → emotional acknowledgment outperforms rational.
+//
+// [R2] Liu et al. (2021) "To be similar or to be different? The effect of hotel
+//      managers' rote response on subsequent reviews" — Tourism Management.
+//      Rote/boilerplate responses decrease subsequent review volume and lower
+//      future review valence. Independent hotels hurt more than chains.
+//
+// [R3] 2025 Vietnamese Mekong Delta study — "Satisfaction with response: The
+//      impact on potential customers' perceived service quality and intent to
+//      stay." Full, customized responses yield the highest satisfaction and
+//      perceived service quality. Rote content significantly underperforms.
+//
+// [R4] Wu & Morwitz (Columbia Business School, 2025) — Integrated reviews
+//      (combining emotional + rational elements) produce 5–10× higher odds of
+//      recommending the business. Responses should mirror this: acknowledge
+//      emotion AND address factual specifics.
+//
+// [R5] 2025 ScienceDirect — "This is inequity!" — Subjective reviews benefit
+//      from faster, empathetic responses. Objective/factual reviews benefit from
+//      more thoughtful, detail-oriented replies.
+//
+// [R6] Widewail SEO strategy (industry best practice, validated by Moz local
+//      ranking factors) — Naturally include business name/category keywords in
+//      positive review responses (Google bolds them). Avoid keywords in negative
+//      review responses to prevent Google from surfacing them.
+//
+// [R7] Proserpio & Zervas (2017); HBR — Businesses that respond consistently
+//      to reviews receive ~12% more reviews. 95% of consumers read reviews
+//      before booking. 77% of travelers more likely to book when business
+//      responds to positive reviews.
+//
+// [R8] Spiegel Research Center — Ratings between 4.2–4.5 are more likely to
+//      lead to a sale than perfect 5.0 (avoids "too good to be true" effect).
+//      Google filters out <4.0 from "best X near me" queries.
+//
+// [R9] Service recovery literature consensus — For negative reviews, invite
+//      private/offline resolution. Do not litigate issues publicly. Prospective
+//      customers observe how you handle conflict.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─── Basic utilities ──────────────────────────────────────────────────────────
 
@@ -72,20 +117,8 @@ function limitSentences(text: string, maxSentences: number) {
 }
 
 // ─── Apostrophe repair ────────────────────────────────────────────────────────
-// VERSION: postclean-v6
-//
-// Replaces the old phrase-lookup table with a universal regex engine.
-// The old approach only caught contractions we explicitly anticipated.
-// This version catches ANY missing apostrophe by structural pattern.
-//
-// Design decisions:
-// - "were" is a real word (past tense plural), so we use negative lookbehind
-//   to skip "they were", "you were", "guests were" etc.
-// - "wed" is a real word (got married), so we only fire before verbs/adverbs
-//   that appear in review replies.
-// - "its" vs "it's": only replace before predicate words, not possessive.
-// - All other contractions (didnt, youre, weve, cant etc.) are unambiguous.
-//
+// VERSION: postclean-v7 (universal regex engine — see postclean-v6 notes)
+
 function fixApostrophes(text: string): string {
   let t = text;
   t = t.replace(/\byoud\b/gi, "you'd");
@@ -110,34 +143,26 @@ function fixApostrophes(text: string): string {
   t = t.replace(/\bneednt\b/gi, "needn't");
 
   // ── "were" → "we're" ─────────────────────────────────────────────────────
-  // Negative lookbehind prevents firing on "they were", "you were", "guests were".
-  // In a review reply, first-person "were" without apostrophe is the broken case.
-
-  // were + gerund: "were firing", "were hoping", "were trying"
   t = t.replace(
     /(?<!they |you |he |she |it |guests |staff |people |team |customers |visitors )\bwere ([a-z]+ing)\b/gi,
     (_m, verb) => `we're ${verb}`
   );
-  // were + "about": "that's not what were about"
   t = t.replace(
     /(?<!they |you |he |she |it |guests |staff |people |team )\bwere about\b/gi,
     "we're about"
   );
-  // were + predicate adjectives
   t = t.replace(
     /(?<!they |you |he |she |it |guests |staff |people |team )\bwere (sorry|glad|happy|thrilled|delighted|committed|aware|able|ready|pleased|excited|grateful|wrong|right|mistaken|confused|disappointed|surprised|certain|sure|devastated|embarrassed)\b/gi,
     (_m, adj) => `we're ${adj}`
   );
 
   // ── "wed" → "we'd" ───────────────────────────────────────────────────────
-  // "wed" as past tense of marry won't appear in a hospitality reply.
   t = t.replace(
     /\bwed (like|love|appreciate|be|rather|prefer|suggest|recommend|hope|welcome|hate|expect|want|need|genuinely|really|truly|absolutely|certainly|never|hate to)\b/gi,
     (_m, w) => `we'd ${w}`
   );
 
   // ── "well" → "we'll" ─────────────────────────────────────────────────────
-  // Only when followed by a verb — avoids corrupting "well done", "well received".
   t = t.replace(
     /\bwell (be|have|make|take|get|do|look|reach|follow|check|send|ensure|try|work|fix|address|handle|see|find|speak|talk|connect|pass|do better|reach out|make sure|look into|pass this along)\b/gi,
     (_m, w) => `we'll ${w}`
@@ -205,6 +230,81 @@ function languageInstruction(languageTag: string) {
   }
 }
 
+// ─── Failure-type classifier ──────────────────────────────────────────────────
+// Research basis: [R1] Ravichandran & Deng (2022, ISR) — procedural complaints
+// benefit from rational cues; interpersonal complaints benefit from emotional
+// acknowledgment. This classifier drives the strategy split in 1–2 star prompts.
+
+type FailureType = "procedural" | "interpersonal" | "mixed";
+
+function classifyFailureType(reviewText: string): FailureType {
+  const t = (reviewText || "").toLowerCase();
+
+  const proceduralSignals = [
+    /\b(wait(ed|ing)?|took (too )?long|slow service|never (came|arrived|showed))\b/,
+    /\b(wrong (order|item|dish|table)|missing (item|order|dish))\b/,
+    /\b(reservation|booking|cancelled|no show|double.?booked)\b/,
+    /\b(charged|overcharged|billing|invoice|price|expensive|cost)\b/,
+    /\b(promised|told us|said (they|it) would|never delivered)\b/,
+    /\b(cold (food|dish|meal)|reheated|undercooked|overcooked|raw)\b/,
+    /\b(incomplete|wrong item|wrong order)\b/,
+  ];
+
+  const interpersonalSignals = [
+    /\b(rude|condescending|dismissive|disrespectful|unprofessional)\b/,
+    /\b(ignored|ignored us|no one (came|helped|acknowledged))\b/,
+    /\b(attitude|eye roll|rolled (their )?eyes|snapped|snappy)\b/,
+    /\b(made (us|me) feel|felt (unwelcome|ignored|dismissed|judged|embarrassed))\b/,
+    /\b(didn.t (apologize|acknowledge|care))\b/,
+    /\b(talked (down|to us)|spoke (rudely|harshly))\b/,
+  ];
+
+  const proceduralHits = proceduralSignals.filter((re) => re.test(t)).length;
+  const interpersonalHits = interpersonalSignals.filter((re) => re.test(t)).length;
+
+  if (proceduralHits === 0 && interpersonalHits === 0) return "mixed";
+  if (proceduralHits > 0 && interpersonalHits === 0) return "procedural";
+  if (interpersonalHits > 0 && proceduralHits === 0) return "interpersonal";
+  return "mixed";
+}
+
+// ─── Review style classifier (NEW) ───────────────────────────────────────────
+// Research basis: [R5] 2025 ScienceDirect — subjective/emotional reviews benefit
+// from empathetic replies; objective/factual reviews benefit from thoughtful,
+// detail-oriented replies. [R4] Columbia (Wu & Morwitz) — integrated responses
+// (emotional + rational) outperform either alone by 5–10×.
+//
+// Returns "subjective" | "objective" | "integrated" to inform strategy.
+
+type ReviewStyle = "subjective" | "objective" | "integrated";
+
+function classifyReviewStyle(reviewText: string): ReviewStyle {
+  const t = (reviewText || "").toLowerCase();
+
+  const subjectiveSignals = [
+    /\b(felt|feeling|feel|angry|frustrated|upset|disappointed|disgusted|horrible|awful|terrible|worst|loved|amazing|incredible|fantastic|wonderful|best|beautiful)\b/,
+    /[!]{2,}/,
+    /\b(never again|last time|ruined|destroyed|heartbroken|devastated)\b/,
+    /\b(can't believe|couldn't believe|unbelievable|unacceptable|ridiculous)\b/,
+  ];
+
+  const objectiveSignals = [
+    /\b(\d+ (minutes|hours|mins|hrs|days))\b/,
+    /\$\d+|\d+\s*(dollars|euros|pesos)/,
+    /\b(ordered|received|arrived|checked in|checked out|booked|reserved)\b/,
+    /\b(specifically|exactly|precisely|on (monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i,
+    /\b(table|room|floor|server|waiter|waitress|host|hostess|manager)\b/,
+  ];
+
+  const subjectiveHits = subjectiveSignals.filter((re) => re.test(t)).length;
+  const objectiveHits = objectiveSignals.filter((re) => re.test(t)).length;
+
+  if (subjectiveHits > 0 && objectiveHits > 0) return "integrated";
+  if (subjectiveHits > objectiveHits) return "subjective";
+  if (objectiveHits > subjectiveHits) return "objective";
+  return "integrated";
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type VoiceProfile = {
@@ -229,6 +329,7 @@ type OrgReplySettings = {
   owner_language: string;
   reply_tone: string;
   reply_signature: string | null;
+  business_category?: string | null;
 };
 
 // ─── Supabase loaders ─────────────────────────────────────────────────────────
@@ -238,21 +339,22 @@ async function loadOrgReplySettings(): Promise<OrgReplySettings> {
     const { supabase, organizationId } = await requireOrgContext();
     const { data, error } = await supabase
       .from("organizations")
-      .select("owner_language, reply_tone, reply_signature")
+      .select("owner_language, reply_tone, reply_signature, business_category")
       .eq("id", organizationId)
       .maybeSingle();
 
     if (error || !data) {
-      return { owner_language: "en", reply_tone: "warm", reply_signature: null };
+      return { owner_language: "en", reply_tone: "warm", reply_signature: null, business_category: null };
     }
 
     return {
       owner_language: cleanLanguage((data as any).owner_language),
       reply_tone: cleanString((data as any).reply_tone, 40) || "warm",
       reply_signature: cleanString((data as any).reply_signature, 80) || null,
+      business_category: cleanString((data as any).business_category, 80) || null,
     };
   } catch {
-    return { owner_language: "en", reply_tone: "warm", reply_signature: null };
+    return { owner_language: "en", reply_tone: "warm", reply_signature: null, business_category: null };
   }
 }
 
@@ -525,6 +627,56 @@ function sentencePolicyForRating(rating: number, reviewWordCount?: number) {
   return 2;
 }
 
+// ─── SEO keyword helper (NEW) ────────────────────────────────────────────────
+// Research basis: [R6] Widewail — Include business name + category keywords
+// naturally in positive (4–5 star) responses. Google bolds matched keywords
+// in review responses, improving local search visibility. For negative (1–2
+// star) responses, AVOID keywords to prevent Google from surfacing them.
+
+function buildSeoInstruction(params: {
+  rating: number;
+  business_name: string;
+  business_category?: string | null;
+}): string {
+  const { rating, business_name, business_category } = params;
+
+  if (rating >= 4) {
+    const categoryHint = business_category
+      ? ` and the type of experience ("${business_category}")`
+      : "";
+    return `SEO NOTE (for search visibility): Naturally mention the business name "${business_name}"${categoryHint} once in the reply. Do NOT force it — weave it in where it reads naturally. Example: "That's exactly what we aim for at ${business_name}." This helps Google surface the reply for local searches.`;
+  }
+
+  if (rating <= 2) {
+    return `SEO NOTE: Do NOT mention the business name, location, or category in this reply. Keep the response free of searchable keywords — you do not want Google to surface negative review responses in search results.`;
+  }
+
+  // 3-star: neutral — no special SEO instruction
+  return "";
+}
+
+// ─── Review style instruction (NEW) ──────────────────────────────────────────
+// Research basis: [R5] Subjective reviews → empathetic reply first; objective
+// reviews → detail-oriented reply. [R4] Integrated approach always wins.
+
+function buildStyleInstruction(reviewStyle: ReviewStyle, failureType: FailureType, rating: number): string {
+  if (rating >= 4) return ""; // style classification mainly matters for negative/mixed
+
+  if (reviewStyle === "subjective") {
+    return `REVIEW STYLE: This review is emotionally driven. Lead with genuine emotional acknowledgment before addressing any specifics. The reviewer needs to feel heard first.`;
+  }
+
+  if (reviewStyle === "objective") {
+    if (failureType === "procedural") {
+      return `REVIEW STYLE: This review is fact-based and specific. Match their precision — acknowledge the exact facts they cited, then take clear ownership. Rational cues outperform emotional ones for procedural complaints (ISR 2022).`;
+    }
+    return `REVIEW STYLE: This review is fact-based. Address their specific points directly and concretely. Show you read the details.`;
+  }
+
+  // integrated
+  return `REVIEW STYLE: This review mixes emotion and facts. Mirror that: acknowledge how they felt AND address the specific issue. Integrated responses (emotional + rational) are the most effective at rebuilding trust.`;
+}
+
 // ─── Prompt builder ───────────────────────────────────────────────────────────
 
 function buildPrompt(params: {
@@ -537,6 +689,9 @@ function buildPrompt(params: {
   client_tone?: VoiceProfile["tone"] | null;
   client_rules?: string[];
   voice_samples?: string[];
+  failure_type?: FailureType;
+  review_style?: ReviewStyle;
+  business_category?: string | null;
 }) {
   const {
     business_name,
@@ -547,6 +702,9 @@ function buildPrompt(params: {
     reply_signature,
     client_rules,
     voice_samples,
+    failure_type = "mixed",
+    review_style = "integrated",
+    business_category = null,
   } = params;
 
   const who =
@@ -564,6 +722,8 @@ function buildPrompt(params: {
     "we understand your frustration","we hear you","we recognize","it's disappointing to hear",
     "it's concerning to hear","we'll keep that in mind","we aim to","we strive to",
     "our goal is to","we work hard to","we regret","we were busy","short-staffed","understaffed",
+    "i'd like to hear more about what happened","tell us more about your experience",
+    "please share more details","we'd love to learn more about what went wrong",
     "gracias por tu comentario","gracias por tu opinión","agradecemos tu comentario",
     "agradecemos tu opinión","agradecemos tu feedback","lamentamos profundamente",
     "nos disculpamos sinceramente","nos disculpamos profundamente","entendemos tu frustración",
@@ -598,44 +758,99 @@ function buildPrompt(params: {
   const reviewWordCount = review_text.trim().split(/\s+/).length;
   const maxSentences = reviewWordCount > 120 ? 4 : reviewWordCount > 60 ? 3 : 2;
 
+  // ── SEO instruction [R6] ──────────────────────────────────────────────────
+  const seoInstruction = buildSeoInstruction({ rating, business_name, business_category });
+
+  // ── Review style instruction [R4, R5] ─────────────────────────────────────
+  const styleInstruction = buildStyleInstruction(review_style, failure_type, rating);
+
+  // ── Anti-rote diversity instruction [R2] ──────────────────────────────────
+  const antiRoteBlock = `ANTI-REPETITION (critical for perceived authenticity):
+- Do NOT start with "Thank you" or any greeting formula.
+- Vary your opening: start with a specific detail, an acknowledgment, a reflection, or
+  jump straight into the substance. Every reply must feel like a one-off, not a template.
+- Research proves that rote/boilerplate responses DECREASE future review volume and LOWER
+  future ratings. Prospective customers can detect templated language instantly.`;
+
+  // ── Dual-audience instruction [R3, R7] ─────────────────────────────────────
+  const dualAudienceBlock = `AUDIENCE AWARENESS (critical):
+This reply is public. It will be read by:
+1. The reviewer — who wants to feel heard and respected.
+2. Prospective customers — who are deciding whether to visit based on how you handle feedback.
+Write for BOTH audiences simultaneously. Prospective customers care most about:
+- Whether you sound like a real person (not a brand).
+- Whether you take accountability (for negatives) or show genuine warmth (for positives).
+- Whether this feels like a place run by people who care.`;
+
   let ratingStrategy = "";
   if (rating >= 5) {
-    ratingStrategy = `5-STAR STRATEGY — Warmth + specific mirroring + low-pressure return invite
-- Lead with warmth that mirrors something SPECIFIC they mentioned: a dish, a moment, a staff member by name.
-- Do not be effusive, over-the-top, or use marketing language. Genuine beats enthusiastic.
-- Close with a natural, low-pressure invitation to return.`;
+    // [R4] Integrated: acknowledge the feeling AND mirror the specific detail.
+    // [R6] SEO: naturally include business name.
+    // [R7] Return invitation drives repeat visits.
+    ratingStrategy = `5-STAR STRATEGY — Specific mirroring + warmth + natural return invite
+- Lead by mirroring something SPECIFIC they mentioned: a dish, a moment, a staff name, a detail.
+- Combine warmth (emotional) with the specific fact (rational) — integrated responses
+  are 5–10× more effective at driving recommendations than either alone.
+- Close with a natural, low-pressure invitation to return. Make it specific if possible:
+  "next time you're in the neighborhood" or reference a season/event — not a generic
+  "hope to see you again."
+- Do NOT be effusive or over-the-top. Genuine beats enthusiastic.`;
   } else if (rating === 4) {
-    ratingStrategy = `4-STAR STRATEGY — Appreciation + gentle gap acknowledgment
-- Lead with genuine appreciation for the visit.
-- If the review hints at something imperfect, acknowledge it briefly and naturally — do not ignore it.
-- Close simply and warmly. Do not over-promise.`;
+    // [R3] Full, customized response yields highest satisfaction.
+    // [R4] Integrated: acknowledge what worked AND the gap.
+    ratingStrategy = `4-STAR STRATEGY — Appreciation + gentle gap acknowledgment + specific warmth
+- Lead with genuine appreciation — but make it SPECIFIC to what they enjoyed.
+- If the review hints at something imperfect, acknowledge it briefly and naturally.
+  Do not ignore it — prospective customers notice when owners dodge the gap.
+- Close simply and warmly with a specific detail, not a generic closer.
+- Do not over-promise improvements. Calm confidence reads better than defensiveness.`;
   } else if (rating === 3) {
-    ratingStrategy = `3-STAR STRATEGY — Balanced, calm ownership
+    // [R1] Mixed complaints need balanced rational + emotional approach.
+    // [R4] Integrated style.
+    // [R9] Invite private resolution for the negative parts.
+    ratingStrategy = `3-STAR STRATEGY — Balanced, calm ownership + specific acknowledgment
 - Acknowledge the mixed experience without defensiveness.
+- Name BOTH what worked and what didn't — be specific about each. Prospective customers
+  reading this want to see that you heard the nuance, not that you gave a generic response.
 - Take responsibility for the gap without over-explaining or making excuses.
-- Show you heard both what worked and what didn't — be specific about both.
-- Close with a calm, genuine note.`;
+- If the gap is actionable, invite them to reach out directly: provide a channel
+  (email or phone) so resolution happens privately.
+- Close with a calm, genuine note — not a marketing close.`;
   } else if (rating === 2) {
-    ratingStrategy = `2-STAR STRATEGY — Emotional acknowledgment first, then accountability
+    // [R1] Procedural → rational cues. Interpersonal → emotional cues.
+    // [R5] Match the review style.
+    // [R9] Invite private resolution.
+    // [R6] No SEO keywords in negative responses.
+    ratingStrategy = `2-STAR STRATEGY — ${failure_type === "procedural" ? "Direct accountability (rational-first)" : failure_type === "interpersonal" ? "Emotional acknowledgment first, then accountability" : "Emotional acknowledgment + direct accountability"}
 - If the reviewer explicitly mentions price or value, acknowledge it directly.
   "Extremely expensive" combined with food failures is a compounded grievance —
   the price makes every failure worse and must not be ignored.
 - Do not invite the guest to "tell you more" or "share what happened" —
   they already did. Instead invite direct contact to resolve it:
-  "Please reach out to us directly" not "I'd like to hear more about what happened."
-- STEP 1 — Name what went wrong specifically. Not "your experience" — name the actual thing:
-  "the tour that was promised and never came," "being ignored when you asked for help,"
-  "having to re-request every order twice." Mirror their exact words back.
-- STEP 2 — One clean sentence of accountability. No operational justifications. Just ownership.
-- STEP 3 — Invite private resolution in one short sentence.
-- ONE apology maximum. The reply should sound like an owner genuinely disappointed in themselves.`;
+  "Please reach out to us directly at [channel]" not "I'd like to hear more."
+${failure_type === "procedural" ? `- PROCEDURAL FAILURE: Lead with the specific operational fact that went wrong.
+  Name it concretely. Then one sentence of clean ownership. Rational precision
+  outperforms emotional language for process failures.` : ""}${failure_type === "interpersonal" ? `- INTERPERSONAL FAILURE: Lead with genuine emotional acknowledgment —
+  name how the interaction made them feel. Then one sentence of accountability.
+  Emotional acknowledgment outperforms rational language for interpersonal failures.` : ""}${failure_type === "mixed" ? `- MIXED FAILURE: Acknowledge both the emotional impact AND the operational
+  specifics. Lead with whichever the reviewer emphasized more.` : ""}
+- ONE apology maximum. Direct and human. Not corporate.
+- Invite private resolution in one short sentence.
+- The reply should sound like an owner genuinely disappointed in themselves.`;
   } else {
+    // 1-star: [R1], [R5], [R9]
     ratingStrategy = `1-STAR STRATEGY — Direct, calm, specific accountability
 - Open by naming the specific failure concretely — use the reviewer's own words.
   If you write "your experience" you have failed.
+${failure_type === "procedural" ? `- PROCEDURAL FAILURE: Be precise and factual. Name the broken process or
+  promise. One clear sentence of ownership. Rational cues drive better outcomes.` : ""}${failure_type === "interpersonal" ? `- INTERPERSONAL FAILURE: Name how the interaction made them feel. Show you
+  understand the human impact, not just the operational failure.` : ""}${failure_type === "mixed" ? `- MIXED: Address both the emotional and operational dimensions.` : ""}
 - ONE apology. Direct and human. Just "I'm sorry." Not a corporate apology.
 - Do not be defensive. Do not explain why it happened. Do not promise systemic change.
-- Dignity in brevity. Short, specific, accountable replies outperform long ones.`;
+- Invite private resolution: provide a way to reach you directly.
+- Dignity in brevity. Short, specific, accountable replies outperform long ones.
+- Remember: prospective customers reading this want to see how you handle your worst
+  moments. Calm accountability is the strongest possible signal.`;
   }
 
   return `You are the owner of "${business_name}" — a hospitality business — writing a public Google review reply. This reply is visible to every future reader, not just the reviewer. It represents the face and character of the business.
@@ -676,6 +891,14 @@ Write the way a thoughtful owner would — warm, direct, accountable. Not corpor
 
 STANDARD 4 — LENGTH: ${maxSentences} sentences MAXIMUM.
 
+════════════════════════════════════════════════════
+  AUDIENCE & ANTI-REPETITION
+════════════════════════════════════════════════════
+
+${dualAudienceBlock}
+
+${antiRoteBlock}
+
 ════════════════════════════════════════════════
   BANNED PHRASES — NEVER USE. NOT EVEN PARTIALLY.
 ════════════════════════════════════════════════
@@ -687,7 +910,7 @@ ${universalBanned}
 ════════════════════════════════════
 ${ratingStrategy}
 
-════════════════════════════════════
+${styleInstruction ? `════════════════════════════════════\n  REVIEW STYLE ADAPTATION\n════════════════════════════════════\n${styleInstruction}\n` : ""}${seoInstruction ? `════════════════════════════════════\n  SEO\n════════════════════════════════════\n${seoInstruction}\n` : ""}════════════════════════════════════
   HARD CONSTRAINTS
 ════════════════════════════════════
 - ${exclamationRule}
@@ -698,6 +921,7 @@ ${ratingStrategy}
 - Do not use placeholder text like [name] or [business name].
 - Do not copy the reviewer's sentences — paraphrase and engage.
 - One apology only, regardless of rating.
+${rating <= 2 ? "- For negative reviews: invite private/offline resolution (email or phone). Do not litigate publicly.\n- Do not ask the reviewer to \"share more\" or \"tell us what happened\" — they already did." : ""}
 
 ${voiceSamplesBlock ? voiceSamplesBlock + "\n\n" : ""}${userRulesBlock ? userRulesBlock + "\n\n" : ""}${signatureRule ? signatureRule + "\n\n" : ""}════════════════════════════════════
   THE REVIEW (${rating}/5 stars)
@@ -745,6 +969,9 @@ function sanitizeCorporatePhrases(text: string) {
   t = t.replace(/\bwe\s+work\s+hard\s+to\b/gi, "we try to");
   t = t.replace(/\bwe\s+take\s+(your\s+)?(feedback|concerns|complaint|complaints|comments)\s+(very\s+)?seriously\b[, ]*/gi, "");
   t = t.replace(/\bwe\s+regret(\s+that)?\b/gi, "sorry");
+  // [R2] Strip "tell me more" / "share more" patterns — reviewer already shared.
+  t = t.replace(/\b(i'd|we'd|i would|we would)\s+(like|love)\s+to\s+(hear|learn|know)\s+more\s+about\s+what\s+happened\b[.,!]?\s*/gi, "");
+  t = t.replace(/\bplease\s+(share|tell)\s+(us|me)\s+more\s+(about|details)\b[.,!]?\s*/gi, "");
   t = t.replace(/\s+,/g, ",");
   t = t.replace(/\s+\./g, ".");
   t = t.replace(/\s+!/g, "!");
@@ -806,6 +1033,24 @@ function stripRepetitiveClosers(reply: string, rating: number) {
   return { text: out || reply, stripped: true };
 }
 
+// ─── SEO keyword stripping for negative responses (NEW) [R6] ────────────────
+// For 1–2 star replies, remove any accidental inclusion of the business name.
+// Widewail's proven strategy: don't give Google keywords to associate with
+// negative content.
+
+function stripBusinessNameFromNegativeReply(reply: string, rating: number, businessName: string): string {
+  if (rating > 2) return reply;
+  if (!businessName) return reply;
+
+  const escaped = businessName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const nameRe = new RegExp(`\\b${escaped}\\b`, "gi");
+  let t = reply.replace(nameRe, "").trim();
+  t = collapseWhitespace(t);
+  // Clean up orphaned punctuation from removal
+  t = t.replace(/\s+,/g, ",").replace(/\s+\./g, ".").replace(/^\s*[,.]/, "").trim();
+  return t;
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
@@ -864,6 +1109,7 @@ export async function POST(req: Request) {
     const owner_language     = orgSettings.owner_language || "en";
     const org_reply_tone_raw = orgSettings.reply_tone || "warm";
     const reply_signature    = orgSettings.reply_signature ?? null;
+    const business_category  = orgSettings.business_category ?? null;
 
     const { samples: voiceSamples, sampleIds: voiceSampleIds } = await loadVoiceSamplesForOrg({
       maxItems: 5,
@@ -880,6 +1126,10 @@ export async function POST(req: Request) {
       tone: (merged as any)?.tone ? (merged as any).tone : toneFromOrg,
     });
 
+    // ── Classifiers ──────────────────────────────────────────────────────────
+    const failureType = classifyFailureType(review_text);
+    const reviewStyle = classifyReviewStyle(review_text);
+
     const temperature = rating <= 2 ? 0.15 : 0.25;
     const model       = "claude-haiku-4-5-20251001";
 
@@ -890,9 +1140,12 @@ export async function POST(req: Request) {
       review_text,
       voice,
       reply_signature,
-      client_tone:   clientTone,
-      client_rules:  clientRules,
-      voice_samples: voiceSamples,
+      client_tone:       clientTone,
+      client_rules:      clientRules,
+      voice_samples:     voiceSamples,
+      failure_type:      failureType,
+      review_style:      reviewStyle,
+      business_category: business_category,
     });
 
     const upstream = await fetch("https://api.anthropic.com/v1/messages", {
@@ -914,6 +1167,8 @@ export async function POST(req: Request) {
           "2. Every sentence must begin with a capital letter. After every period, '! ', or '? ', the next word is capitalised.",
           "3. Every sentence must be grammatically complete — subject, verb, end punctuation. No fragments.",
           "4. Output ONLY the reply text. No labels, no preamble, no explanation.",
+          "5. NEVER start with 'Thank you' or any greeting formula. Start with substance.",
+          "6. This reply is read by prospective customers deciding whether to visit. Write accordingly.",
         ].join(" "),
         messages: [{ role: "user", content: prompt }],
       }),
@@ -952,6 +1207,9 @@ export async function POST(req: Request) {
 
     const closerStrip = stripRepetitiveClosers(content, rating);
     content = closerStrip.text;
+
+    // [R6] Strip business name from negative replies for SEO protection
+    content = stripBusinessNameFromNegativeReply(content, rating, business_name);
 
     const reviewWordCount = review_text.trim().split(/\s+/).length;
     content = limitSentences(content, sentencePolicyForRating(rating, reviewWordCount));
@@ -1004,6 +1262,8 @@ export async function POST(req: Request) {
         google_review_id:    google_review_id,
         google_location_id:  google_location_id,
         location_id:         google_location_id,
+        failure_type:        failureType,
+        review_style:        reviewStyle,
       };
 
       if (
@@ -1029,11 +1289,14 @@ export async function POST(req: Request) {
           reply_tone:         org_reply_tone_raw,
           reply_signature:    reply_signature ?? null,
           google_location_id: google_location_id ?? null,
+          failure_type:       failureType,
+          review_style:       reviewStyle,
           ...(debug
             ? {
                 enforcement: {
                   post_clean_version: POST_CLEAN_VERSION,
                   closer_stripped:    closerStrip.stripped,
+                  business_category:  business_category,
                 },
               }
             : {}),
