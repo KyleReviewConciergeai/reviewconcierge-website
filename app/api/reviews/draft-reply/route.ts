@@ -88,6 +88,7 @@ function limitSentences(text: string, maxSentences: number) {
 //
 function fixApostrophes(text: string): string {
   let t = text;
+  t = t.replace(/\byoud\b/gi, "you'd");
 
   // ── Negative contractions (unambiguous — no real-word conflicts) ───────────
   t = t.replace(/\bcant\b(?!o|al|ed|ing)/gi, "can't");
@@ -616,6 +617,12 @@ function buildPrompt(params: {
 - Close with a calm, genuine note.`;
   } else if (rating === 2) {
     ratingStrategy = `2-STAR STRATEGY — Emotional acknowledgment first, then accountability
+- If the reviewer explicitly mentions price or value, acknowledge it directly.
+  "Extremely expensive" combined with food failures is a compounded grievance —
+  the price makes every failure worse and must not be ignored.
+- Do not invite the guest to "tell you more" or "share what happened" —
+  they already did. Instead invite direct contact to resolve it:
+  "Please reach out to us directly" not "I'd like to hear more about what happened."
 - STEP 1 — Name what went wrong specifically. Not "your experience" — name the actual thing:
   "the tour that was promised and never came," "being ignored when you asked for help,"
   "having to re-request every order twice." Mirror their exact words back.
