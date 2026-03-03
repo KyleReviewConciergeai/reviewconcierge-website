@@ -155,6 +155,11 @@ function fixApostrophes(text: string): string {
     /(?<!they |you |he |she |it |guests |staff |people |team )\bwere (sorry|glad|happy|thrilled|delighted|committed|aware|able|ready|pleased|excited|grateful|wrong|right|mistaken|confused|disappointed|surprised|certain|sure|devastated|embarrassed)\b/gi,
     (_m, adj) => `we're ${adj}`
   );
+  // were + adverb + predicate adjective: "were genuinely sorry", "were truly glad"
+  t = t.replace(
+    /(?<!they |you |he |she |it |guests |staff |people |team )\bwere (genuinely|truly|really|so|very|deeply|sincerely|absolutely|honestly|incredibly) (sorry|glad|happy|thrilled|delighted|committed|aware|able|ready|pleased|excited|grateful|wrong|right|mistaken|confused|disappointed|surprised|certain|sure|devastated|embarrassed)\b/gi,
+    (_m, adv, adj) => `we're ${adv} ${adj}`
+  );
 
   // ── "wed" → "we'd" ───────────────────────────────────────────────────────
   t = t.replace(
@@ -184,6 +189,13 @@ function fixApostrophes(text: string): string {
   t = t.replace(/\bweve\b/gi, "we've");
   t = t.replace(/\byouve\b/gi, "you've");
   t = t.replace(/\btheyve\b/gi, "they've");
+  t = t.replace(/\bshouldve\b/gi, "should've");
+  t = t.replace(/\bcouldve\b/gi, "could've");
+  t = t.replace(/\bwouldve\b/gi, "would've");
+  t = t.replace(/\bmightve\b/gi, "might've");
+  t = t.replace(/\bmustve\b/gi, "must've");
+  t = t.replace(/\bsomeones\b/gi, "someone's");
+  t = t.replace(/\beveryones\b/gi, "everyone's");
   t = t.replace(/\byoull\b/gi, "you'll");
   t = t.replace(/\btheyll\b/gi, "they'll");
   t = t.replace(/\bIm\b/g, "I'm");
@@ -210,23 +222,59 @@ function fixSentenceCapitalisation(text: string): string {
 
 // ─── Language instruction ─────────────────────────────────────────────────────
 function languageInstruction(languageTag: string) {
-  const tag = (languageTag || "en").toLowerCase();
+  const tag = (languageTag || "en").toLowerCase().trim();
+  // Handle regional variants: "es-ar" -> "es", "pt-br" stays "pt-br"
+  const base = tag.split("-")[0];
+
   switch (tag) {
     case "en":
+    case "en-us":
+    case "en-gb":
+    case "en-au":
       return "Write in English. Natural, human, non-corporate.";
     case "es":
-      return "Escribe en español. Español natural, no una traducción literal. Suena como una persona real, no una marca.";
+    case "es-ar":
+    case "es-mx":
+    case "es-es":
+    case "es-cl":
+    case "es-co":
+    case "es-pe":
+      return "Escribe en espa\u00f1ol. Espa\u00f1ol natural, no una traducci\u00f3n literal. Suena como una persona real, no una marca.";
     case "pt":
     case "pt-br":
-      return "Escreva em português. Português natural, não uma tradução literal.";
+    case "pt-pt":
+      return "Escreva em portugu\u00eas. Portugu\u00eas natural, n\u00e3o uma tradu\u00e7\u00e3o literal.";
     case "fr":
-      return "Écris en français. Français naturel, pas une traduction littérale.";
+    case "fr-fr":
+    case "fr-ca":
+      return "\u00c9cris en fran\u00e7ais. Fran\u00e7ais naturel, pas une traduction litt\u00e9rale.";
+    case "it":
+    case "it-it":
+      return "Scrivi in italiano. Italiano naturale, non una traduzione letterale.";
+    case "de":
+    case "de-de":
+    case "de-at":
+    case "de-ch":
+      return "Schreibe auf Deutsch. Nat\u00fcrliches Deutsch, keine w\u00f6rtliche \u00dcbersetzung.";
+    default:
+      break;
+  }
+
+  // Fallback: check base language code if full tag didn't match
+  switch (base) {
+    case "es":
+      return "Escribe en espa\u00f1ol. Espa\u00f1ol natural, no una traducci\u00f3n literal. Suena como una persona real, no una marca.";
+    case "pt":
+      return "Escreva em portugu\u00eas. Portugu\u00eas natural, n\u00e3o uma tradu\u00e7\u00e3o literal.";
+    case "fr":
+      return "\u00c9cris en fran\u00e7ais. Fran\u00e7ais naturel, pas une traduction litt\u00e9rale.";
     case "it":
       return "Scrivi in italiano. Italiano naturale, non una traduzione letterale.";
     case "de":
-      return "Schreibe auf Deutsch. Natürliches Deutsch, keine wörtliche Übersetzung.";
+      return "Schreibe auf Deutsch. Nat\u00fcrliches Deutsch, keine w\u00f6rtliche \u00dcbersetzung.";
     default:
-      return `Write in the owner's preferred language (${languageTag}).`;
+      // For any other language: instruct clearly so the model doesn't default to English
+      return `Write the reply in ${languageTag}. Use natural, human phrasing in that language \u2014 not a translation from English. Sound like a real person, not a brand.`;
   }
 }
 
@@ -337,9 +385,11 @@ type OrgReplySettings = {
 async function loadOrgReplySettings(): Promise<OrgReplySettings> {
   try {
     const { supabase, organizationId } = await requireOrgContext();
+
+    // Core settings — only columns guaranteed to exist in the schema
     const { data, error } = await supabase
       .from("organizations")
-      .select("owner_language, reply_tone, reply_signature, business_category")
+      .select("owner_language, reply_tone, reply_signature")
       .eq("id", organizationId)
       .maybeSingle();
 
@@ -347,11 +397,27 @@ async function loadOrgReplySettings(): Promise<OrgReplySettings> {
       return { owner_language: "en", reply_tone: "warm", reply_signature: null, business_category: null };
     }
 
+    // business_category loaded separately so a missing column never
+    // poisons the core settings load (breaks language, tone, signature).
+    let business_category: string | null = null;
+    try {
+      const { data: catData, error: catErr } = await supabase
+        .from("organizations")
+        .select("business_category")
+        .eq("id", organizationId)
+        .maybeSingle();
+      if (!catErr && catData) {
+        business_category = cleanString((catData as any).business_category, 80) || null;
+      }
+    } catch {
+      // Column does not exist yet — silently skip
+    }
+
     return {
       owner_language: cleanLanguage((data as any).owner_language),
       reply_tone: cleanString((data as any).reply_tone, 40) || "warm",
       reply_signature: cleanString((data as any).reply_signature, 80) || null,
-      business_category: cleanString((data as any).business_category, 80) || null,
+      business_category,
     };
   } catch {
     return { owner_language: "en", reply_tone: "warm", reply_signature: null, business_category: null };
