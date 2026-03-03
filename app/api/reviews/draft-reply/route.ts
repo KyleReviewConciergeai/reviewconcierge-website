@@ -737,6 +737,7 @@ function buildPrompt(params: {
     "nous comprenons votre frustration","nous nous efforçons",
     "grazie per il tuo feedback","ci scusiamo sinceramente","ci impegniamo",
     "danke für ihr feedback","wir entschuldigen uns aufrichtig","wir bemühen uns",
+    "that's on us","thats on us","that is on us","it's on us","its on us",
   ].join(" | ");
 
   const exclamationRule = voice.allow_exclamation
@@ -815,7 +816,10 @@ Write for BOTH audiences simultaneously. Prospective customers care most about:
 - Take responsibility for the gap without over-explaining or making excuses.
 - If the gap is actionable, invite them to reach out directly: provide a channel
   (email or phone) so resolution happens privately.
-- Close with a calm, genuine note — not a marketing close.`;
+- Close with a calm, genuine note — not a marketing close.
+- VARY YOUR ACCOUNTABILITY LANGUAGE: Never use "that's on us." Rotate between
+  phrasing like "we missed the mark on...", "we should have done better with...",
+  "that wasn't good enough," or simply name the gap without a stock phrase.`;
   } else if (rating === 2) {
     // [R1] Procedural → rational cues. Interpersonal → emotional cues.
     // [R5] Match the review style.
@@ -836,7 +840,10 @@ ${failure_type === "procedural" ? `- PROCEDURAL FAILURE: Lead with the specific 
   specifics. Lead with whichever the reviewer emphasized more.` : ""}
 - ONE apology maximum. Direct and human. Not corporate.
 - Invite private resolution in one short sentence.
-- The reply should sound like an owner genuinely disappointed in themselves.`;
+- The reply should sound like an owner genuinely disappointed in themselves.
+- VARY YOUR ACCOUNTABILITY LANGUAGE: Never use "that's on us." Rotate between
+  phrasing like "we missed the mark on...", "we should have done better with...",
+  "that wasn't good enough," or simply name the gap without a stock phrase.`;
   } else {
     // 1-star: [R1], [R5], [R9]
     ratingStrategy = `1-STAR STRATEGY — Direct, calm, specific accountability
@@ -850,7 +857,10 @@ ${failure_type === "procedural" ? `- PROCEDURAL FAILURE: Be precise and factual.
 - Invite private resolution: provide a way to reach you directly.
 - Dignity in brevity. Short, specific, accountable replies outperform long ones.
 - Remember: prospective customers reading this want to see how you handle your worst
-  moments. Calm accountability is the strongest possible signal.`;
+  moments. Calm accountability is the strongest possible signal.
+- VARY YOUR ACCOUNTABILITY LANGUAGE: Never use "that's on us." Rotate between
+  phrasing like "we missed the mark," "we should have done better," "that wasn't
+  good enough," or simply name the failure directly without a stock phrase.`;
   }
 
   return `You are the owner of "${business_name}" — a hospitality business — writing a public Google review reply. This reply is visible to every future reader, not just the reviewer. It represents the face and character of the business.
@@ -972,6 +982,10 @@ function sanitizeCorporatePhrases(text: string) {
   // [R2] Strip "tell me more" / "share more" patterns — reviewer already shared.
   t = t.replace(/\b(i'd|we'd|i would|we would)\s+(like|love)\s+to\s+(hear|learn|know)\s+more\s+about\s+what\s+happened\b[.,!]?\s*/gi, "");
   t = t.replace(/\bplease\s+(share|tell)\s+(us|me)\s+more\s+(about|details)\b[.,!]?\s*/gi, "");
+  // Strip repetitive accountability crutch: "that's on us" and variants
+  t = t.replace(/\bthat[''\u2019]?s on us\b[.,]?\s*/gi, "");
+  t = t.replace(/\bthat is on us\b[.,]?\s*/gi, "");
+  t = t.replace(/\bit[''\u2019]?s on us\b[.,]?\s*/gi, "");
   t = t.replace(/\s+,/g, ",");
   t = t.replace(/\s+\./g, ".");
   t = t.replace(/\s+!/g, "!");
@@ -1169,6 +1183,7 @@ export async function POST(req: Request) {
           "4. Output ONLY the reply text. No labels, no preamble, no explanation.",
           "5. NEVER start with 'Thank you' or any greeting formula. Start with substance.",
           "6. This reply is read by prospective customers deciding whether to visit. Write accordingly.",
+          "7. Never use the phrase 'that's on us' or 'it's on us' — vary accountability language every time.",
         ].join(" "),
         messages: [{ role: "user", content: prompt }],
       }),
