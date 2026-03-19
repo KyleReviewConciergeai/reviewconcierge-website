@@ -9,7 +9,7 @@ const LOCALE_COOKIE = "rc_locale";
 
 // ✅ Hosted on Vercel Blob (public URL)
 const DEMO_VIDEO_URL =
-  "https://r0sironssiim51vb.public.blob.vercel-storage.com/demo.mp4";
+ "https://r0sironssiim51vb.public.blob.vercel-storage.com/demo-casa-lola-es.mp4";
 
 const DEMO_POSTER_URL =
   process.env.NEXT_PUBLIC_DEMO_POSTER_URL ||
