@@ -101,7 +101,7 @@ export default function Home() {
       heroCard: {
         title: "Draft replies that sound like you",
         body:
-          "Pull recent Google reviews into one place and generate owner-voice drafts you can post in minutes.",
+          "Stop staring at a blank screen. Connect your Google listing, see your reviews in one place, and get a draft reply in your voice — ready in seconds.",
         bullets: [
           "Connect your Google Place ID",
           "Sync a recent sample of reviews (up to 10 today)",
@@ -213,7 +213,7 @@ export default function Home() {
       pricing: {
         title: "Early-access pricing",
         intro:
-          "Founders pilot pricing for early customers. Simple subscription to enable Google sync.",
+          "Simple, honest pricing. Try it free for 30 days — no card needed, no setup fees. Cancel anytime.",
         plan: "Founders Pilot",
         price: "$49",
         per: "/ month",
@@ -277,7 +277,7 @@ subtitleB:
       heroCard: {
         title: "Borradores que suenan como tú",
         body:
-          "Trae reseñas recientes de Google a un solo lugar y genera borradores con voz de dueño en minutos.",
+          "Dejá de quedarte en blanco. Conectá tu perfil de Google, mirá tus reseñas en un solo lugar y recibí un borrador en tu voz — listo en segundos.",
         bullets: [
           "Conecta tu Place ID de Google",
           "Sincroniza una muestra reciente (hasta 10 hoy)",
@@ -388,7 +388,7 @@ subtitleB:
       pricing: {
         title: "Precios de acceso temprano",
         intro:
-          "Precio founders/piloto para los primeros clientes. Suscripción simple para habilitar la sincronización con Google.",
+          "Precios simples y transparentes. Probalo gratis por 30 días — sin tarjeta, sin costos de setup. Cancelá cuando quieras.",
         plan: "Founders Pilot",
         price: "$49",
         per: "/ mes",
@@ -452,7 +452,7 @@ subtitleB:
       heroCard: {
         title: "Rascunhos que soam como você",
         body:
-          "Traga avaliações recentes do Google para um só lugar e gere rascunhos com voz do proprietário em minutos.",
+          "Pare de ficar em branco. Conecte seu perfil do Google, veja suas avaliações em um só lugar e receba um rascunho com sua voz — pronto em segundos.",
         bullets: [
           "Conecte seu Place ID do Google",
           "Sincronize uma amostra recente (até 10 hoje)",
@@ -563,7 +563,7 @@ subtitleB:
       pricing: {
         title: "Preços de acesso antecipado",
         intro:
-          "Preço founders/piloto para clientes iniciais. Assinatura simples para habilitar o sync com Google.",
+          "Preços simples e transparentes. Experimente grátis por 30 dias — sem cartão, sem taxas de setup. Cancele quando quiser.",
         plan: "Founders Pilot",
         price: "$49",
         per: "/ mês",
