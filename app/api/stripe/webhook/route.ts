@@ -120,7 +120,7 @@ async function upsertOrgSubscriptionFromSub(
     stripe_customer_id: customerId,
     stripe_subscription_id: sub.id,
     stripe_price_id: priceId,
-    status: sub.status, // "trialing" should show up here for your 14-day trial
+    status: sub.status, // "trialing" should show up here for your 30-day trial
     current_period_end: currentPeriodEnd
       ? new Date(currentPeriodEnd * 1000).toISOString()
       : null,

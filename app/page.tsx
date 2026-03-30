@@ -93,7 +93,7 @@ export default function Home() {
         "Supports English, Spanish, Portuguese, French, Italian, German, and more.",
       cta: {
         primary: "Get started",
-        trial: "2-week free trial",
+        trial: "30-day free trial",
         waitlist: "Join waitlist",
         already: "Already have an account?",
         micro: "Never auto-posts. Cancel anytime.",
@@ -124,7 +124,7 @@ export default function Home() {
             "Turn a bad review into a second chance",
           ],
           foot:
-            "14-day free trial. No setup fees. Cancel anytime.",
+            "30-day free trial. No setup fees. Cancel anytime.",
         },
       },
       demo: {
@@ -218,7 +218,7 @@ export default function Home() {
         price: "$49",
         per: "/ month",
         bullets: [
-          "14-day free trial — no credit card required",
+          "30-day free trial — no credit card required",
           "Draft replies for any Google review in seconds",
           "Replies in 6 languages including Spanish & Portuguese",
           "Never auto-posts — you approve everything",
@@ -269,7 +269,7 @@ subtitleB:
   "Compatible con inglés, español, portugués, francés, italiano y alemán.",
       cta: {
         primary: "Empezar",
-        trial: "Prueba gratis 2 semanas",
+        trial: "Prueba gratis 30 días",
         waitlist: "Sumarme a la lista",
         already: "¿Ya tienes cuenta?",
         micro: "Nunca auto-publica. Cancela cuando quieras.",
@@ -300,7 +300,7 @@ subtitleB:
             "Convierte una mala reseña en una segunda oportunidad",
           ],
           foot:
-            "14 días de prueba gratis. Sin costos de setup. Cancela cuando quieras.",
+            "30 días de prueba gratis. Sin costos de setup. Cancela cuando quieras.",
         },
       },
       demo: {
@@ -393,7 +393,7 @@ subtitleB:
         price: "$49",
         per: "/ mes",
         bullets: [
-          "14 días de prueba gratis — sin tarjeta de crédito",
+          "30 días de prueba gratis — sin tarjeta de crédito",
           "Borradores para cualquier reseña de Google en segundos",
           "Respuestas en 6 idiomas incluyendo español y portugués",
           "Nunca publica solo — vos aprobás todo",
@@ -444,7 +444,7 @@ subtitleB:
   "Compatível com inglês, espanhol, português, francês, italiano e alemão.",
       cta: {
         primary: "Começar",
-        trial: "Teste grátis 2 semanas",
+        trial: "Teste grátis 30 dias",
         waitlist: "Entrar na lista",
         already: "Já tem conta?",
         micro: "Nunca autoposta. Cancele quando quiser.",
@@ -475,7 +475,7 @@ subtitleB:
             "Transforme uma avaliação ruim em segunda chance",
           ],
           foot:
-            "14 dias de teste grátis. Sem taxas de setup. Cancele quando quiser.",
+            "30 dias de teste grátis. Sem taxas de setup. Cancele quando quiser.",
         },
       },
       demo: {
@@ -568,7 +568,7 @@ subtitleB:
         price: "$49",
         per: "/ mês",
         bullets: [
-          "14 dias de teste grátis — sem cartão de crédito",
+          "30 dias de teste grátis — sem cartão de crédito",
           "Rascunhos para qualquer avaliação do Google em segundos",
           "Respostas em 6 idiomas incluindo espanhol e português",
           "Nunca posta sozinho — você aprova tudo",

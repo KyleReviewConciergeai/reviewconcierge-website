@@ -34,7 +34,7 @@ export default function SubscribeButton() {
         opacity: loading ? 0.7 : 1,
         minWidth: 160,
       }}
-      title="Start your 14-day free trial"
+      title="Start your 30-day free trial"
     >
       {loading ? "Starting trial…" : "Start free trial"}
     </button>
