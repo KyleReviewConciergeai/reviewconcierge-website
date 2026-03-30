@@ -18,7 +18,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.reviewconcierg
 
 // If you want a trial operationally, keep it here without marketing it in UI.
 // Set to 0 or undefined to disable trial.
-const TRIAL_DAYS = Number(process.env.STRIPE_TRIAL_DAYS ?? "14");
+const TRIAL_DAYS = Number(process.env.STRIPE_TRIAL_DAYS ?? "30");
 
 const stripe = STRIPE_SECRET_KEY
   ? new Stripe(STRIPE_SECRET_KEY, {
