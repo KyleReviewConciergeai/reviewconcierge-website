@@ -85,10 +85,10 @@ export default function Home() {
         getStarted: "Get started",
       },
       badge: "Built for restaurants, cafés, wineries & tours",
-        h1a: "Most owners never reply to reviews.",
-        h1b: "That silence is costing you customers.",
+        h1a: "You know you should respond to that review.",
+        h1b: "You just don't know what to say.",
       subtitleA:
-       "Review Concierge drafts short, human replies in your voice — so you can respond to every review in minutes without sounding generic or spending an hour staring at a blank screen.",
+       "ReviewConcierge drafts the reply in your voice — warm, specific, ready in seconds. You stay in control. You just skip the hard part.",
       subtitleB:
         "Supports English, Spanish, Portuguese, French, Italian, German, and more.",
       cta: {
@@ -261,10 +261,10 @@ export default function Home() {
         getStarted: "Empezar",
       },
       badge: "Para restaurantes, cafés, bodegas y tours",
-      h1a: "La mayoría de los dueños nunca responde reseñas.",
-h1b: "Ese silencio te está costando clientes.",
+      h1a: "Sabes que deberías responder esa reseña.",
+h1b: "Solo que no sabes qué decir.",
 subtitleA:
-  "Review Concierge redacta respuestas cortas con tu voz — para que puedas responder cada reseña en minutos sin sonar genérico ni quedarte en blanco.",
+  "ReviewConcierge redacta la respuesta en tu voz — cálida, específica, lista en segundos. Tú decides qué publicar. Solo te saltas la parte difícil.",
 subtitleB:
   "Compatible con inglés, español, portugués, francés, italiano y alemán.",
       cta: {
@@ -436,10 +436,10 @@ subtitleB:
         getStarted: "Começar",
       },
       badge: "Para restaurantes, cafés, vinícolas e tours",
-      h1a: "A maioria dos donos nunca responde avaliações.",
-h1b: "Esse silêncio está custando clientes.",
+      h1a: "Você sabe que deveria responder aquela avaliação.",
+h1b: "Só não sabe o que dizer.",
 subtitleA:
-  "O Review Concierge cria respostas curtas com sua voz — para que você responda cada avaliação em minutos sem parecer genérico nem ficar sem palavras.",
+  "O ReviewConcierge redige a resposta com sua voz — calorosa, específica, pronta em segundos. Você decide o que publicar. Só pula a parte difícil.",
 subtitleB:
   "Compatível com inglês, espanhol, português, francês, italiano e alemão.",
       cta: {
