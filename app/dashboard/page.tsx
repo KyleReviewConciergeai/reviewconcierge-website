@@ -1091,6 +1091,98 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Connect business card — shown when user hasn't connected a business yet */}
+      {showConnectCard && (
+        <div
+          style={{
+            border: "1px solid rgba(148,163,184,0.25)",
+            borderRadius: 16,
+            padding: 24,
+            background: "rgba(2,6,23,0.55)",
+            color: "rgba(226,232,240,0.95)",
+            marginTop: 18,
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
+            Connect your Google business listing
+          </div>
+          <div style={{ opacity: 0.85, fontSize: 14, marginBottom: 16, lineHeight: 1.5 }}>
+            To start drafting replies to your reviews, connect your Google Business Profile. We&rsquo;ll show your reviews here so you can draft replies in your voice. You approve, edit, and post.
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 520 }}>
+            <div
+              style={{
+                border: "1px solid rgba(148,163,184,0.30)",
+                borderRadius: 12,
+                padding: 14,
+                background: "rgba(15,23,42,0.5)",
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>
+                Recommended: Connect via Google (OAuth)
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 10 }}>
+                Full review access, multi-location supported. Best for production use.
+              </div>
+              <a
+                href="/connect/google"
+                style={{
+                  display: "inline-block",
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(148,163,184,0.45)",
+                  background: "#0f172a",
+                  color: "#e2e8f0",
+                  textDecoration: "none",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                Connect with Google →
+              </a>
+            </div>
+
+            <div
+              style={{
+                border: "1px solid rgba(148,163,184,0.20)",
+                borderRadius: 12,
+                padding: 14,
+                background: "rgba(15,23,42,0.3)",
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>
+                Or paste a Google Place ID
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10 }}>
+                Quick setup using our current MVP integration. Limited to a recent sample of reviews.
+              </div>
+              <a
+                href="/onboard"
+                style={{
+                  display: "inline-block",
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(148,163,184,0.30)",
+                  background: "rgba(226,232,240,0.06)",
+                  color: "#e2e8f0",
+                  textDecoration: "none",
+                  fontWeight: 600,
+                  fontSize: 13,
+                }}
+              >
+                Use Place ID →
+              </a>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12, opacity: 0.65, marginTop: 14 }}>
+            Review Concierge drafts replies — it never posts anything for you without your approval.
+          </div>
+        </div>
+      )}
+
       {/* ✅ C3 Sync status card */}
       {hasGoogleConnected && (
         <div
@@ -1133,7 +1225,7 @@ export default function DashboardPage() {
                   : COPY.syncStatusNone}
               </span>
 
-              {/* FIX: never render a “dead” button — allow click, guard inside handler */}
+              {/* FIX: never render a "dead" button — allow click, guard inside handler */}
               <button
                 type="button"
                 onClick={async () => {
