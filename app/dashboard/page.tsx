@@ -1127,7 +1127,7 @@ export default function DashboardPage() {
                 Full review access, multi-location supported. Best for production use.
               </div>
               <a
-                href="/connect/google"
+                href="/api/google/oauth/start"
                 style={{
                   display: "inline-block",
                   padding: "10px 14px",
