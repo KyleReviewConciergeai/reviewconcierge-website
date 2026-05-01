@@ -7,9 +7,9 @@ import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
 import crypto from "crypto";
 
-const PROMPT_VERSION      = "draft-reply-v6";
+const PROMPT_VERSION      = "draft-reply-v7";
 const BANNED_LIST_VERSION = "banned-v5";
-const POST_CLEAN_VERSION  = "postclean-v8";
+const POST_CLEAN_VERSION  = "postclean-v9";
 
 // ─── Research references (informational — traceable decisions) ─────────────────
 //
@@ -92,7 +92,10 @@ function stripEmojis(text: string) {
 }
 
 function removeQuotations(text: string) {
-  return text.replace(/["""'']/g, "");
+  // Strip ONLY double quotes (straight + curly).
+  // Single quotes / apostrophes are preserved so possessives like "Hosny's"
+  // and contractions like "we're" survive into the apostrophe-repair pipeline.
+  return text.replace(/["""]/g, "");
 }
 
 function collapseWhitespace(text: string) {
@@ -854,14 +857,19 @@ Write for BOTH audiences simultaneously. Prospective customers care most about:
     // [R4] Integrated: acknowledge the feeling AND mirror the specific detail.
     // [R6] SEO: naturally include business name.
     // [R7] Return invitation drives repeat visits.
-    ratingStrategy = `5-STAR STRATEGY — Specific mirroring + warmth + natural return invite
-- Lead by mirroring something SPECIFIC they mentioned: a dish, a moment, a staff name, a detail.
+    ratingStrategy = `5-STAR STRATEGY — Owner gratitude + specific acknowledgment + natural return invite
+- You are the OWNER, not a fellow guest. Do not describe the experience back to them.
+- Lead by acknowledging something SPECIFIC they noticed — a dish, a moment, a staff name, a detail.
+  Frame it as "we're so glad you noticed X" or "hearing that X resonated means a lot" —
+  NEVER as "X really does shine through" or "X is exactly what makes Y special" (peer voice).
 - Combine warmth (emotional) with the specific fact (rational) — integrated responses
   are 5–10× more effective at driving recommendations than either alone.
 - Close with a natural, low-pressure invitation to return. Make it specific if possible:
   "next time you're in the neighborhood" or reference a season/event — not a generic
   "hope to see you again."
-- Do NOT be effusive or over-the-top. Genuine beats enthusiastic.`;
+- Do NOT be effusive or over-the-top. Genuine beats enthusiastic.
+- BAD opening (peer voice): "Hosny's passion for Egypt's history really does come through..."
+- GOOD opening (owner voice): "Hearing that Hosny's depth of knowledge stood out to you means a lot — that's exactly why we partner with Egyptologist guides."`;
   } else if (rating === 4) {
     // [R3] Full, customized response yields highest satisfaction.
     // [R4] Integrated: acknowledge what worked AND the gap.
@@ -1242,6 +1250,7 @@ export async function POST(req: Request) {
         system: [
           "You are a professional hospitality reputation manager writing Google review replies for a white-glove concierge service.",
           "You write as the business owner — specific, warm, accountable, and never corporate.",
+          "PERSPECTIVE LOCK (most important rule): You are the OWNER thanking or responding to YOUR guest. You were NOT on the tour, at the table, in the room, or part of the experience they describe. NEVER narrate the guest's experience back to them in present tense (e.g. 'Hosny's passion really comes through when he's walking you past the pyramids'). That is testimonial/peer voice and is forbidden. Lead from the OWNER seat: thank them for noticing, express what it means to you that they had that experience, or take ownership of what went wrong. Reference details from their review only as things you're glad they noticed or sorry they encountered — never as things you're describing or observing.",
           "CRITICAL GRAMMAR RULES that must never be violated:",
           "1. Every contraction must have an apostrophe: we're / didn't / that's / you're / I'd / I'll / won't / can't / we've.",
           "2. Every sentence must begin with a capital letter. After every period, '! ', or '? ', the next word is capitalised.",
