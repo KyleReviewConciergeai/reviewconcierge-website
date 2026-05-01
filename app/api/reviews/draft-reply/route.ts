@@ -7,9 +7,9 @@ import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
 import crypto from "crypto";
 
-const PROMPT_VERSION      = "draft-reply-v7";
+const PROMPT_VERSION = "draft-reply-v8";
 const BANNED_LIST_VERSION = "banned-v5";
-const POST_CLEAN_VERSION  = "postclean-v9";
+const POST_CLEAN_VERSION = "postclean-v9";
 
 // ─── Research references (informational — traceable decisions) ─────────────────
 //
@@ -784,29 +784,29 @@ function buildPrompt(params: {
   const langInstruction = languageInstruction(owner_language);
 
   const universalBanned = [
-    "thank you for your feedback","we appreciate your feedback","we appreciate your thoughts",
-    "we appreciate your comments","thank you for taking the time","thank you for sharing",
-    "we strive","we will look into this","we take this seriously","please accept our apologies",
-    "valued customer","valued guest","did not meet expectations","fell short of",
-    "we understand your frustration","we hear you","we recognize","it's disappointing to hear",
-    "it's concerning to hear","we'll keep that in mind","we aim to","we strive to",
-    "our goal is to","we work hard to","we regret","we were busy","short-staffed","understaffed",
-    "i'd like to hear more about what happened","tell us more about your experience",
-    "please share more details","we'd love to learn more about what went wrong",
-    "gracias por tu comentario","gracias por tu opinión","agradecemos tu comentario",
-    "agradecemos tu opinión","agradecemos tu feedback","lamentamos profundamente",
-    "nos disculpamos sinceramente","nos disculpamos profundamente","entendemos tu frustración",
-    "entendemos tu decepción","entiendo tu frustración","entiendo la frustración",
-    "comprendo tu frustración","comprendo la frustración","tomamos esto muy en serio",
-    "tomaremos en cuenta","trabajamos para mejorar","nos esforzamos","nuestro objetivo es",
-    "esperamos verte pronto","esperamos que nos des otra oportunidad",
-    "agradecemos o seu comentário","agradecemos o seu feedback","lamentamos profundamente",
-    "pedimos desculpas sinceramente","entendemos a sua frustração","nos esforçamos",
-    "merci pour votre commentaire","nous vous remercions","nous nous excusons sincèrement",
-    "nous comprenons votre frustration","nous nous efforçons",
-    "grazie per il tuo feedback","ci scusiamo sinceramente","ci impegniamo",
-    "danke für ihr feedback","wir entschuldigen uns aufrichtig","wir bemühen uns",
-    "that's on us","thats on us","that is on us","it's on us","its on us",
+    "thank you for your feedback", "we appreciate your feedback", "we appreciate your thoughts",
+    "we appreciate your comments", "thank you for taking the time", "thank you for sharing",
+    "we strive", "we will look into this", "we take this seriously", "please accept our apologies",
+    "valued customer", "valued guest", "did not meet expectations", "fell short of",
+    "we understand your frustration", "we hear you", "we recognize", "it's disappointing to hear",
+    "it's concerning to hear", "we'll keep that in mind", "we aim to", "we strive to",
+    "our goal is to", "we work hard to", "we regret", "we were busy", "short-staffed", "understaffed",
+    "i'd like to hear more about what happened", "tell us more about your experience",
+    "please share more details", "we'd love to learn more about what went wrong",
+    "gracias por tu comentario", "gracias por tu opinión", "agradecemos tu comentario",
+    "agradecemos tu opinión", "agradecemos tu feedback", "lamentamos profundamente",
+    "nos disculpamos sinceramente", "nos disculpamos profundamente", "entendemos tu frustración",
+    "entendemos tu decepción", "entiendo tu frustración", "entiendo la frustración",
+    "comprendo tu frustración", "comprendo la frustración", "tomamos esto muy en serio",
+    "tomaremos en cuenta", "trabajamos para mejorar", "nos esforzamos", "nuestro objetivo es",
+    "esperamos verte pronto", "esperamos que nos des otra oportunidad",
+    "agradecemos o seu comentário", "agradecemos o seu feedback", "lamentamos profundamente",
+    "pedimos desculpas sinceramente", "entendemos a sua frustração", "nos esforçamos",
+    "merci pour votre commentaire", "nous vous remercions", "nous nous excusons sincèrement",
+    "nous comprenons votre frustration", "nous nous efforçons",
+    "grazie per il tuo feedback", "ci scusiamo sinceramente", "ci impegniamo",
+    "danke für ihr feedback", "wir entschuldigen uns aufrichtig", "wir bemühen uns",
+    "that's on us", "thats on us", "that is on us", "it's on us", "its on us",
   ].join(" | ");
 
   const exclamationRule = voice.allow_exclamation
@@ -873,17 +873,21 @@ Write for BOTH audiences simultaneously. Prospective customers care most about:
   } else if (rating === 4) {
     // [R3] Full, customized response yields highest satisfaction.
     // [R4] Integrated: acknowledge what worked AND the gap.
-    ratingStrategy = `4-STAR STRATEGY — Appreciation + gentle gap acknowledgment + specific warmth
-- Lead with genuine appreciation — but make it SPECIFIC to what they enjoyed.
-- If the review hints at something imperfect, acknowledge it briefly and naturally.
-  Do not ignore it — prospective customers notice when owners dodge the gap.
+    ratingStrategy = `4-STAR STRATEGY — Owner appreciation + specific acknowledgment + gentle gap
+- You are the OWNER, not a fellow guest. Do not describe the experience back to them or generalize about how the tour/meal/stay affects "people" or "guests."
+- OPEN with an explicit acknowledgment frame: "Hearing that...", "Knowing that you noticed...", "Reading your review...", "We're so glad you...", or "It means a lot that...".
+- Lead with appreciation SPECIFIC to what they enjoyed — frame it as receiving their observation, not describing what they observed.
+- If the review hints at something imperfect, acknowledge it briefly and naturally. Do not ignore it — prospective customers notice when owners dodge the gap.
 - Close simply and warmly with a specific detail, not a generic closer.
-- Do not over-promise improvements. Calm confidence reads better than defensiveness.`;
+- Do not over-promise improvements. Calm confidence reads better than defensiveness.
+- BAD opening (peer/marketing voice): "Hosny's knowledge really means something to us — it's exactly the kind of depth that makes a day in Memphis stick with people."
+- GOOD opening (owner voice): "Hearing that Hosny's depth landed with you means a lot. He's an Egyptologist for a reason, and we're glad you got to experience that firsthand alongside the carpet weaving stop."`;
   } else if (rating === 3) {
     // [R1] Mixed complaints need balanced rational + emotional approach.
     // [R4] Integrated style.
     // [R9] Invite private resolution for the negative parts.
     ratingStrategy = `3-STAR STRATEGY — Balanced, calm ownership + specific acknowledgment
+- You are the OWNER, not a fellow guest. Open from the owner seat — acknowledge what they shared, do not describe the experience back to them.
 - Acknowledge the mixed experience without defensiveness.
 - Name BOTH what worked and what didn't — be specific about each. Prospective customers
   reading this want to see that you heard the nuance, not that you gave a generic response.
@@ -1158,14 +1162,14 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
 
-    const review_text       = cleanString((body as any)?.review_text, 5000);
-    const business_name     = cleanString((body as any)?.business_name, 200);
+    const review_text = cleanString((body as any)?.review_text, 5000);
+    const business_name = cleanString((body as any)?.business_name, 200);
     const reviewer_language = cleanLanguage((body as any)?.language);
-    const rating            = parseRating((body as any)?.rating);
-    const debug             = !!(body as any)?.debug;
+    const rating = parseRating((body as any)?.rating);
+    const debug = !!(body as any)?.debug;
 
-    const review_id          = cleanString((body as any)?.review_id, 80) || null;
-    const google_review_id   = cleanString((body as any)?.google_review_id, 140) || null;
+    const review_id = cleanString((body as any)?.review_id, 80) || null;
+    const google_review_id = cleanString((body as any)?.google_review_id, 140) || null;
     const google_location_id =
       cleanString((body as any)?.google_location_id, 240) ||
       cleanString((body as any)?.location_id, 240) ||
@@ -1182,8 +1186,8 @@ export async function POST(req: Request) {
     }
 
     const clientToneRaw = parseClientTone((body as any)?.tone);
-    const clientTone    = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
-    const clientRules   = parseClientRules((body as any)?.rules);
+    const clientTone = clientToneRaw ? clampToneForRating(clientToneRaw, rating) : null;
+    const clientRules = parseClientRules((body as any)?.rules);
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
@@ -1193,11 +1197,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const orgSettings        = await loadOrgReplySettings();
-    const owner_language     = orgSettings.owner_language || "en";
+    const orgSettings = await loadOrgReplySettings();
+    const owner_language = orgSettings.owner_language || "en";
     const org_reply_tone_raw = orgSettings.reply_tone || "warm";
-    const reply_signature    = orgSettings.reply_signature ?? null;
-    const business_category  = orgSettings.business_category ?? null;
+    const reply_signature = orgSettings.reply_signature ?? null;
+    const business_category = orgSettings.business_category ?? null;
 
     const { samples: voiceSamples, sampleIds: voiceSampleIds } = await loadVoiceSamplesForOrg({
       maxItems: 5,
@@ -1206,7 +1210,7 @@ export async function POST(req: Request) {
     });
 
     const orgVoice = await loadVoiceProfile();
-    const merged   = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
+    const merged = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
     const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
 
     const voice = normalizeVoice({
@@ -1219,7 +1223,7 @@ export async function POST(req: Request) {
     const reviewStyle = classifyReviewStyle(review_text);
 
     const temperature = rating <= 2 ? 0.15 : 0.25;
-    const model       = "claude-haiku-4-5-20251001";
+    const model = "claude-haiku-4-5-20251001";
 
     const prompt = buildPrompt({
       business_name,
@@ -1228,11 +1232,11 @@ export async function POST(req: Request) {
       review_text,
       voice,
       reply_signature,
-      client_tone:       clientTone,
-      client_rules:      clientRules,
-      voice_samples:     voiceSamples,
-      failure_type:      failureType,
-      review_style:      reviewStyle,
+      client_tone: clientTone,
+      client_rules: clientRules,
+      voice_samples: voiceSamples,
+      failure_type: failureType,
+      review_style: reviewStyle,
       business_category: business_category,
     });
 
@@ -1250,7 +1254,7 @@ export async function POST(req: Request) {
         system: [
           "You are a professional hospitality reputation manager writing Google review replies for a white-glove concierge service.",
           "You write as the business owner — specific, warm, accountable, and never corporate.",
-          "PERSPECTIVE LOCK (most important rule): You are the OWNER thanking or responding to YOUR guest. You were NOT on the tour, at the table, in the room, or part of the experience they describe. NEVER narrate the guest's experience back to them in present tense (e.g. 'Hosny's passion really comes through when he's walking you past the pyramids'). That is testimonial/peer voice and is forbidden. Lead from the OWNER seat: thank them for noticing, express what it means to you that they had that experience, or take ownership of what went wrong. Reference details from their review only as things you're glad they noticed or sorry they encountered — never as things you're describing or observing.",
+          "PERSPECTIVE LOCK (most important rule, applies to ALL ratings): You are the OWNER thanking or responding to YOUR guest. You were NOT on the tour, at the table, in the room, or part of the experience they describe. THREE things are FORBIDDEN: (1) Narrating the guest's experience back to them, e.g. 'Hosny's passion really comes through when he's walking you past the pyramids' (testimonial voice). (2) Generalizing about how the experience affects 'people' or 'guests' or 'visitors,' e.g. 'the kind of depth that makes a day in Memphis stick with people' (peer-recommending-to-other-customers voice). (3) Marketing-style descriptions of what makes your business good, e.g. 'it's exactly the kind of authenticity that defines us' (brochure voice). Instead, OPEN with an explicit acknowledgment of the guest's observation — phrases like 'Hearing that...', 'Knowing that you noticed...', 'Reading your review reminded us...', 'We're so glad you...', 'It means a lot that you...'. Reference details from their review only as things you're glad they noticed or sorry they encountered — never as things you're describing or observing.",
           "CRITICAL GRAMMAR RULES that must never be violated:",
           "1. Every contraction must have an apostrophe: we're / didn't / that's / you're / I'd / I'll / won't / can't / we've.",
           "2. Every sentence must begin with a capital letter. After every period, '! ', or '? ', the next word is capitalised.",
@@ -1267,7 +1271,7 @@ export async function POST(req: Request) {
 
     const rawText = await upstream.text();
     let upstreamJson: any = null;
-    try { upstreamJson = JSON.parse(rawText); } catch {}
+    try { upstreamJson = JSON.parse(rawText); } catch { }
 
     if (!upstream.ok) {
       return NextResponse.json(
@@ -1338,22 +1342,22 @@ export async function POST(req: Request) {
       );
 
       const auditRow: any = {
-        organization_id:     organizationId,
-        rating:              Math.round(Number(rating)),
-        review_hash:         reviewHash,
-        prompt_fingerprint:  promptFingerprint,
-        prompt_version:      PROMPT_VERSION,
+        organization_id: organizationId,
+        rating: Math.round(Number(rating)),
+        review_hash: reviewHash,
+        prompt_fingerprint: promptFingerprint,
+        prompt_version: PROMPT_VERSION,
         banned_list_version: BANNED_LIST_VERSION,
         model,
         temperature,
-        voice_sample_count:  voiceSampleIds.length,
-        voice_sample_ids:    voiceSampleIds,
-        review_id:           review_id,
-        google_review_id:    google_review_id,
-        google_location_id:  google_location_id,
-        location_id:         google_location_id,
-        failure_type:        failureType,
-        review_style:        reviewStyle,
+        voice_sample_count: voiceSampleIds.length,
+        voice_sample_ids: voiceSampleIds,
+        review_id: review_id,
+        google_review_id: google_review_id,
+        google_location_id: google_location_id,
+        location_id: google_location_id,
+        failure_type: failureType,
+        review_style: reviewStyle,
       };
 
       if (
@@ -1376,19 +1380,19 @@ export async function POST(req: Request) {
         meta: {
           owner_language,
           reviewer_language,
-          reply_tone:         org_reply_tone_raw,
-          reply_signature:    reply_signature ?? null,
+          reply_tone: org_reply_tone_raw,
+          reply_signature: reply_signature ?? null,
           google_location_id: google_location_id ?? null,
-          failure_type:       failureType,
-          review_style:       reviewStyle,
+          failure_type: failureType,
+          review_style: reviewStyle,
           ...(debug
             ? {
-                enforcement: {
-                  post_clean_version: POST_CLEAN_VERSION,
-                  closer_stripped:    closerStrip.stripped,
-                  business_category:  business_category,
-                },
-              }
+              enforcement: {
+                post_clean_version: POST_CLEAN_VERSION,
+                closer_stripped: closerStrip.stripped,
+                business_category: business_category,
+              },
+            }
             : {}),
         },
       },
