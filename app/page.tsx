@@ -81,6 +81,7 @@ export default function Home() {
         how: "How it works",
         what: "What it does",
         pricing: "Pricing",
+        tryFree: "Try it free",
         login: "Log in",
         getStarted: "Get started",
       },
@@ -257,6 +258,7 @@ export default function Home() {
         how: "Cómo funciona",
         what: "Qué hace",
         pricing: "Precios",
+        tryFree: "Probar gratis",
         login: "Iniciar sesión",
         getStarted: "Empezar",
       },
@@ -432,6 +434,7 @@ subtitleB:
         how: "Como funciona",
         what: "O que faz",
         pricing: "Preços",
+        tryFree: "Experimentar grátis",
         login: "Entrar",
         getStarted: "Começar",
       },
@@ -703,6 +706,7 @@ subtitleB:
             <a href="#how-it-works">{t.nav.how}</a>
             <a href="#features">{t.nav.what}</a>
             <a href="#pricing">{t.nav.pricing}</a>
+            <a href="/try" style={{ color: "#5B8FF9", fontWeight: 600 }}>{t.nav.tryFree}</a>
           </nav>
 
           <div className="nav-actions">
@@ -749,12 +753,11 @@ subtitleB:
 
             {/* ✅ Updated CTA hierarchy */}
             <div className="hero-ctas">
-              <a className="primary-btn" href="/signup">
-                {t.cta.trial}
+              <a className="primary-btn" href="/try">
+                {t.nav.tryFree}
               </a>
-
               <a className="trial-btn" href="/signup">
-                {t.cta.primary}
+                {t.cta.trial}
               </a>
 
               <div className="cta-note">
