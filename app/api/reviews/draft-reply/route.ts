@@ -7,7 +7,23 @@ import { requireActiveSubscription } from "@/lib/subscriptionServer";
 import { requireOrgContext } from "@/lib/orgServer";
 import crypto from "crypto";
 
-const PROMPT_VERSION = "draft-reply-v8";
+// ─── VERSION HISTORY ──────────────────────────────────────────────────────────
+// v9 (2026-05-08): Voice fidelity fix.
+//   1. voiceSamplesBlock rewritten to explicitly instruct the model to mirror
+//      opening and closing patterns from samples, with override priority over
+//      rating-strategy opener examples.
+//   2. antiRoteBlock made conditional on voice samples — when samples exist,
+//      the "do not start with Thank you" rule is replaced with "follow the
+//      sample opening pattern."
+//   3. System prompt rule #5 made conditional on voice samples (same logic).
+//   4. stripTemplatedOpeners() post-processor only runs when no voice samples
+//      are loaded (otherwise it deletes openers that match the customer voice).
+//   5. GROUNDING RULE added to STANDARD 2 — model must use only details from
+//      the review or voice samples, not inferred geographic / training-data
+//      knowledge. Prevents hallucinations like "Overberg" appearing in replies
+//      to a Hemel-en-Aarde Valley review.
+// v8: prior baseline — see git history.
+const PROMPT_VERSION = "draft-reply-v9";
 const BANNED_LIST_VERSION = "banned-v5";
 const POST_CLEAN_VERSION = "postclean-v9";
 
@@ -95,7 +111,7 @@ function removeQuotations(text: string) {
   // Strip ONLY double quotes (straight + curly).
   // Single quotes / apostrophes are preserved so possessives like "Hosny's"
   // and contractions like "we're" survive into the apostrophe-repair pipeline.
-  return text.replace(/["""]/g, "");
+  return text.replace(/["“”]/g, "");
 }
 
 function collapseWhitespace(text: string) {
@@ -319,7 +335,7 @@ function classifyFailureType(reviewText: string): FailureType {
   return "mixed";
 }
 
-// ─── Review style classifier (NEW) ───────────────────────────────────────────
+// ─── Review style classifier ─────────────────────────────────────────────────
 // Research basis: [R5] 2025 ScienceDirect — subjective/emotional reviews benefit
 // from empathetic replies; objective/factual reviews benefit from thoughtful,
 // detail-oriented replies. [R4] Columbia (Wu & Morwitz) — integrated responses
@@ -696,7 +712,7 @@ function sentencePolicyForRating(rating: number, reviewWordCount?: number) {
   return 2;
 }
 
-// ─── SEO keyword helper (NEW) ────────────────────────────────────────────────
+// ─── SEO keyword helper ──────────────────────────────────────────────────────
 // Research basis: [R6] Widewail — Include business name + category keywords
 // naturally in positive (4–5 star) responses. Google bolds matched keywords
 // in review responses, improving local search visibility. For negative (1–2
@@ -724,7 +740,7 @@ function buildSeoInstruction(params: {
   return "";
 }
 
-// ─── Review style instruction (NEW) ──────────────────────────────────────────
+// ─── Review style instruction ────────────────────────────────────────────────
 // Research basis: [R5] Subjective reviews → empathetic reply first; objective
 // reviews → detail-oriented reply. [R4] Integrated approach always wins.
 
@@ -776,6 +792,9 @@ function buildPrompt(params: {
     business_category = null,
   } = params;
 
+  // v9: Whether voice samples are present drives several conditional blocks below.
+  const hasVoiceSamples = !!(voice_samples && voice_samples.length > 0);
+
   const who =
     voice.reply_as === "owner" || voice.reply_as === "manager"
       ? 'Write in first-person singular ("I") as the owner.'
@@ -815,10 +834,28 @@ function buildPrompt(params: {
 
   const signatureRule = reply_signature ? `Close with: — ${reply_signature}` : "";
 
-  const voiceSamplesBlock =
-    voice_samples && voice_samples.length > 0
-      ? `VOICE REFERENCE — match this writing style only, do not copy content:\n${voice_samples.map((s, i) => `${i + 1}. ${s}`).join("\n")}`
-      : "";
+  // v9: Stronger voice samples block. Tells the model to mirror opening and
+  // closing patterns explicitly, and overrides the rating-strategy opener
+  // examples when in conflict.
+  const voiceSamplesBlock = hasVoiceSamples
+    ? `OWNER VOICE — these are real replies this owner has written. Your reply must feel like it could have been written by the same person.
+
+MIRROR these patterns from the samples:
+- The OPENING phrase pattern (first 3–5 words)
+- Sentence STRUCTURE and length
+- The CLOSING phrase pattern
+- Register, formality, warmth level
+- Specific phrases the owner uses repeatedly
+
+Do NOT copy specific details (guest names, dishes, dates, staff names) from the samples themselves.
+DO reuse phrasing patterns. If the samples open with "Thank you so much for...", you should too.
+If the samples close with "We hope to welcome you back...", you should too.
+
+These patterns OVERRIDE the rating-strategy opener examples shown above when in conflict.
+
+Samples:
+${(voice_samples ?? []).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
+    : "";
 
   const userRulesBlock =
     client_rules && client_rules.length > 0
@@ -834,8 +871,17 @@ function buildPrompt(params: {
   // ── Review style instruction [R4, R5] ─────────────────────────────────────
   const styleInstruction = buildStyleInstruction(review_style, failure_type, rating);
 
-  // ── Anti-rote diversity instruction [R2] ──────────────────────────────────
-  const antiRoteBlock = `ANTI-REPETITION (critical for perceived authenticity):
+  // v9: Anti-rote instructions are conditional on whether voice samples exist.
+  // When samples are present, we want the model to follow the sample opening
+  // pattern rather than fight it. Without samples, the original anti-template
+  // instructions apply.
+  const antiRoteBlock = hasVoiceSamples
+    ? `ANTI-REPETITION (critical for perceived authenticity):
+- Follow the opening pattern shown in the OWNER VOICE samples below. Do not invent a different opener style.
+- Within that pattern, vary the specific words so each reply feels one-off, not a template.
+- Research proves that rote/boilerplate responses DECREASE future review volume and LOWER
+  future ratings. Prospective customers can detect templated language instantly.`
+    : `ANTI-REPETITION (critical for perceived authenticity):
 - Do NOT start with "Thank you" or any greeting formula.
 - Vary your opening: start with a specific detail, an acknowledgment, a reflection, or
   jump straight into the substance. Every reply must feel like a one-off, not a template.
@@ -972,6 +1018,13 @@ promised service, or named incident. Do not summarise in categories.
 
   ✗ Generic: "We're sorry your experience didn't meet expectations."
   ✓ Specific: "Having to re-request every order twice isn't what we're about."
+
+GROUNDING RULE (critical): Use ONLY details that appear in the review itself or the OWNER VOICE
+samples below. Do NOT infer or invent geographic context, district names, region names, historical
+facts, regional product attributes, or business specifics that the reviewer did not mention.
+If the review mentions "the Valley", reference "the Valley" — do not add the broader region name.
+If the review names one wine or dish, do not name others. Your training-data knowledge of the
+area, industry, or business is NOT a source. The review and the voice samples are the only sources.
 
 STANDARD 3 — HUMAN VOICE. NOT A PRESS RELEASE.
 
@@ -1125,7 +1178,7 @@ function stripRepetitiveClosers(reply: string, rating: number) {
   return { text: out || reply, stripped: true };
 }
 
-// ─── SEO keyword stripping for negative responses (NEW) [R6] ────────────────
+// ─── SEO keyword stripping for negative responses [R6] ──────────────────────
 // For 1–2 star replies, remove any accidental inclusion of the business name.
 // Widewail's proven strategy: don't give Google keywords to associate with
 // negative content.
@@ -1209,6 +1262,9 @@ export async function POST(req: Request) {
       maxTotalChars: 1800,
     });
 
+    // v9: Used for conditional prompt blocks and conditional post-processing.
+    const hasVoiceSamples = voiceSamples.length > 0;
+
     const orgVoice = await loadVoiceProfile();
     const merged = { ...orgVoice, ...(((body as any)?.voice ?? {}) as any) };
     const toneFromOrg = normalizeToneFromOrg(org_reply_tone_raw);
@@ -1240,6 +1296,13 @@ export async function POST(req: Request) {
       business_category: business_category,
     });
 
+    // v9: System prompt rule #5 is now conditional on whether voice samples
+    // are loaded. Without samples, the original anti-greeting rule applies.
+    // With samples, we tell the model to mirror the sample patterns instead.
+    const rule5 = hasVoiceSamples
+      ? "5. If owner voice samples are provided in the user message, mirror their opening and closing patterns. Otherwise, vary your openings — avoid defaulting to 'Thank you' generic templates."
+      : "5. NEVER start with 'Thank you' or any greeting formula. Start with substance.";
+
     const upstream = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -1260,7 +1323,7 @@ export async function POST(req: Request) {
           "2. Every sentence must begin with a capital letter. After every period, '! ', or '? ', the next word is capitalised.",
           "3. Every sentence must be grammatically complete — subject, verb, end punctuation. No fragments.",
           "4. Output ONLY the reply text. No labels, no preamble, no explanation.",
-          "5. NEVER start with 'Thank you' or any greeting formula. Start with substance.",
+          rule5,
           "6. This reply is read by prospective customers deciding whether to visit. Write accordingly.",
           "7. Never use the phrase 'that's on us' or 'it's on us' — vary accountability language every time.",
         ].join(" "),
@@ -1292,7 +1355,16 @@ export async function POST(req: Request) {
     content = removeQuotations(content);
     content = stripEmojis(content);
     content = collapseWhitespace(content);
-    content = stripTemplatedOpeners(content);
+
+    // v9: Only strip templated openers when no voice samples are loaded.
+    // When voice samples are present, the customer's actual voice may legitimately
+    // open with "Thank you so much for..." — stripping that would break voice
+    // fidelity. The prompt already instructs the model to follow the sample
+    // pattern, so we trust the model output here.
+    if (!hasVoiceSamples) {
+      content = stripTemplatedOpeners(content);
+    }
+
     content = sanitizeCorporatePhrases(content);
     content = fixApostrophes(content);                // universal apostrophe repair
     content = fixSentenceCapitalisation(content);     // capitalisation repair — first pass
@@ -1391,6 +1463,7 @@ export async function POST(req: Request) {
                 post_clean_version: POST_CLEAN_VERSION,
                 closer_stripped: closerStrip.stripped,
                 business_category: business_category,
+                has_voice_samples: hasVoiceSamples,
               },
             }
             : {}),
