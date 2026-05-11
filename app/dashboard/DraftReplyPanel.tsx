@@ -471,6 +471,7 @@ export default function DraftReplyPanel({ businessName }: DraftReplyPanelProps) 
             location_id: selectedReview?.google_location_id?.trim() || "",
             tone,
             rules: DRAFT_RULES,
+            reviewer_name: selectedReview?.authorName?.trim() || "",
           }),
         }
       );

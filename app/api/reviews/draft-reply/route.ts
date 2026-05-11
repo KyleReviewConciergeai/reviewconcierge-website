@@ -23,9 +23,9 @@ import crypto from "crypto";
 //      knowledge. Prevents hallucinations like "Overberg" appearing in replies
 //      to a Hemel-en-Aarde Valley review.
 // v8: prior baseline — see git history.
-const PROMPT_VERSION = "draft-reply-v9";
+const PROMPT_VERSION = "draft-reply-v10";
 const BANNED_LIST_VERSION = "banned-v5";
-const POST_CLEAN_VERSION = "postclean-v9";
+const POST_CLEAN_VERSION = "postclean-v10";
 
 // ─── Research references (informational — traceable decisions) ─────────────────
 //
@@ -707,9 +707,21 @@ function clampToneForRating(tone: VoiceProfile["tone"], rating: number): VoicePr
 
 function sentencePolicyForRating(rating: number, reviewWordCount?: number) {
   const words = reviewWordCount ?? 0;
+  if (words === 0) return 2;   // star-only review: max 2 short sentences
+  if (words < 15) return 2;    // ultra-short ("Great place!"): max 2 short sentences
   if (words > 120) return 4;
   if (words > 60) return 3;
   return 2;
+}
+
+// v10: Returns a human-readable length category for the debug response.
+// Helps verify the length-matching rule is firing correctly per review.
+function lengthCategoryForReview(reviewWordCount: number): "star_only" | "ultra_short" | "short" | "medium" | "long" {
+  if (reviewWordCount === 0) return "star_only";
+  if (reviewWordCount < 15) return "ultra_short";
+  if (reviewWordCount > 120) return "long";
+  if (reviewWordCount > 60) return "medium";
+  return "short";
 }
 
 // ─── SEO keyword helper ──────────────────────────────────────────────────────
@@ -762,6 +774,82 @@ function buildStyleInstruction(reviewStyle: ReviewStyle, failureType: FailureTyp
   return `REVIEW STYLE: This review mixes emotion and facts. Mirror that: acknowledge how they felt AND address the specific issue. Integrated responses (emotional + rational) are the most effective at rebuilding trust.`;
 }
 
+// ─── Structural scaffold (v10) ────────────────────────────────────────────────
+// When voice samples are absent or thin (<3), the model has no concrete pattern
+// to mirror and drifts toward generic AI-shaped replies. The scaffold gives
+// it a structural frame to fill in. When 3+ voice samples exist, the samples
+// themselves provide the pattern and the scaffold is suppressed.
+
+function buildStructuralScaffold(params: {
+  rating: number;
+  voice_sample_count: number;
+  is_star_only: boolean;
+  is_ultra_short: boolean;
+  has_reply_signature: boolean;
+}): string {
+  const { rating, voice_sample_count, is_star_only, is_ultra_short, has_reply_signature } = params;
+
+  // Suppress scaffold when 3+ voice samples exist; let the samples drive structure.
+  if (voice_sample_count >= 3) return "";
+
+  const signoffLine = has_reply_signature
+    ? "Sign-off line (the signature is appended automatically — do NOT include it in your reply text)."
+    : "Sign-off line is omitted (no signature configured).";
+
+  // Star-only and ultra-short get a tighter scaffold
+  if (is_star_only) {
+    return `STRUCTURAL SCAFFOLD (use this shape — no voice samples loaded, or sample count is thin):
+
+  Sentence 1: Brief warm acknowledgement of the rating. No invented details.
+  Sentence 2 (optional): One-line invitation back, generic and warm.
+  ${signoffLine}
+
+  This is a fallback frame because the owner has fewer than 3 voice samples loaded. Once they paste more samples, the system will rely on those patterns instead.`;
+  }
+
+  if (is_ultra_short) {
+    return `STRUCTURAL SCAFFOLD (use this shape — no voice samples loaded, or sample count is thin):
+
+  Sentence 1: Acknowledge the sentiment ("We're so glad..." / "Thank you for...") without inventing details.
+  Sentence 2: A brief grounded note tied to what the reviewer wrote, OR a return invitation.
+  ${signoffLine}`;
+  }
+
+  // 4-5 star: warmth + specific echo + close
+  if (rating >= 4) {
+    return `STRUCTURAL SCAFFOLD (use this shape — no voice samples loaded, or sample count is thin):
+
+  Sentence 1: Owner-voice acknowledgement that echoes a SPECIFIC detail from the review.
+    Pattern: "Hearing that [SPECIFIC_DETAIL] means a lot to us..." or
+             "Thank you so much for [SPECIFIC_OBSERVATION]..."
+  Sentence 2: A brief expansion or honest note tied to that detail. Stay grounded in the review.
+  Sentence 3 (optional, only for reviews ${rating === 4 ? "with a gentle gap to acknowledge" : "longer than ~60 words"}): A natural return invitation or warm close.
+  ${signoffLine}
+
+  This is a fallback frame because the owner has fewer than 3 voice samples loaded. The shape is honest, warm, and specific — but it is a default, not a fingerprint. Once more voice samples are loaded the system will mirror those patterns instead.`;
+  }
+
+  // 3-star: balanced acknowledgement
+  if (rating === 3) {
+    return `STRUCTURAL SCAFFOLD (use this shape — no voice samples loaded, or sample count is thin):
+
+  Sentence 1: Acknowledge BOTH what worked and what didn't — be specific about each.
+  Sentence 2: Brief ownership of the gap without over-explaining.
+  Sentence 3 (optional): Invitation to reach out directly to resolve, if the gap is actionable.
+  ${signoffLine}`;
+  }
+
+  // 1-2 star: accountability scaffold
+  return `STRUCTURAL SCAFFOLD (use this shape — no voice samples loaded, or sample count is thin):
+
+  Sentence 1: Name the specific failure concretely, using the reviewer's own framing.
+  Sentence 2: One direct apology. One sentence of accountability. No defensiveness.
+  Sentence 3 (optional): Invite private resolution — provide a way to reach you directly.
+  ${signoffLine}
+
+  This is a fallback frame because the owner has fewer than 3 voice samples loaded. Calm, specific, accountable. Do not pad.`;
+}
+
 // ─── Prompt builder ───────────────────────────────────────────────────────────
 
 function buildPrompt(params: {
@@ -777,6 +865,7 @@ function buildPrompt(params: {
   failure_type?: FailureType;
   review_style?: ReviewStyle;
   business_category?: string | null;
+  reviewer_name?: string;
 }) {
   const {
     business_name,
@@ -790,10 +879,22 @@ function buildPrompt(params: {
     failure_type = "mixed",
     review_style = "integrated",
     business_category = null,
+    reviewer_name = "",
   } = params;
 
   // v9: Whether voice samples are present drives several conditional blocks below.
   const hasVoiceSamples = !!(voice_samples && voice_samples.length > 0);
+  const voiceSampleCount = voice_samples?.length ?? 0;
+
+  // v10: Compute structural scaffold (returns empty string if voice samples are sufficient).
+  const reviewWordCountInBuildPrompt = review_text.trim() ? review_text.trim().split(/\s+/).length : 0;
+  const scaffoldBlock = buildStructuralScaffold({
+    rating,
+    voice_sample_count: voiceSampleCount,
+    is_star_only: reviewWordCountInBuildPrompt === 0,
+    is_ultra_short: reviewWordCountInBuildPrompt > 0 && reviewWordCountInBuildPrompt < 15,
+    has_reply_signature: !!reply_signature,
+  });
 
   const who =
     voice.reply_as === "owner" || voice.reply_as === "manager"
@@ -834,9 +935,9 @@ function buildPrompt(params: {
 
   const signatureRule = reply_signature ? `Close with: — ${reply_signature}` : "";
 
-  // v9: Stronger voice samples block. Tells the model to mirror opening and
-  // closing patterns explicitly, and overrides the rating-strategy opener
-  // examples when in conflict.
+  // v10: Voice samples now explicitly take priority over the rating-strategy block
+  // for criticism handling, tone, register, and structural patterns. The strategy
+  // is reference material; the samples are the owner's actual fingerprint.
   const voiceSamplesBlock = hasVoiceSamples
     ? `OWNER VOICE — these are real replies this owner has written. Your reply must feel like it could have been written by the same person.
 
@@ -846,12 +947,17 @@ MIRROR these patterns from the samples:
 - The CLOSING phrase pattern
 - Register, formality, warmth level
 - Specific phrases the owner uses repeatedly
+- HOW this owner handles criticism, gaps, or negative observations (whether they apologize first, acknowledge first, redirect, or take ownership)
+- HOW this owner expresses warmth (effusive vs restrained, brief vs detailed, formal vs conversational)
 
 Do NOT copy specific details (guest names, dishes, dates, staff names) from the samples themselves.
 DO reuse phrasing patterns. If the samples open with "Thank you so much for...", you should too.
 If the samples close with "We hope to welcome you back...", you should too.
 
-These patterns OVERRIDE the rating-strategy opener examples shown above when in conflict.
+PRIORITY: These patterns OVERRIDE the rating-strategy block ENTIRELY when in conflict.
+That includes opener style, accountability framing, criticism handling, and closing patterns.
+The rating strategy describes what the literature says works on average; the samples describe
+what this specific owner actually does. The samples win every time.
 
 Samples:
 ${(voice_samples ?? []).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
@@ -863,10 +969,52 @@ ${(voice_samples ?? []).map((s, i) => `${i + 1}. ${s}`).join("\n\n")}`
       : "";
 
   const reviewWordCount = review_text.trim().split(/\s+/).length;
-  const maxSentences = reviewWordCount > 120 ? 4 : reviewWordCount > 60 ? 3 : 2;
+  const isStarOnly = reviewWordCount === 0 || !review_text.trim();
+  const isUltraShort = reviewWordCount > 0 && reviewWordCount < 15;
+  const maxSentences = isStarOnly || isUltraShort ? 2 : reviewWordCount > 120 ? 4 : reviewWordCount > 60 ? 3 : 2;
+
+  // v10: length guidance describes the TARGET shape of the reply,
+  // not just the cap. Prevents the model from producing 2 long sentences
+  // when the review is one line.
+  const lengthGuidance = isStarOnly
+    ? "The review is a star rating with no text. Reply with 1-2 short sentences only. A brief warm acknowledgement plus a return note. Do NOT pad. Do NOT invent details that weren't given."
+    : isUltraShort
+    ? `The review is ${reviewWordCount} words. Match that brevity. 1-2 short sentences. A one-line review gets a one-line reply.`
+    : reviewWordCount > 120
+    ? `The review is ${reviewWordCount} words (long, detailed). Up to 4 sentences. Engage with the specific points raised; do not summarise generically.`
+    : reviewWordCount > 60
+    ? `The review is ${reviewWordCount} words (medium length). 2-3 sentences. Match the level of detail they offered.`
+    : `The review is ${reviewWordCount} words (short). 2 sentences. Tight, specific, no padding.`;
 
   // ── SEO instruction [R6] ──────────────────────────────────────────────────
   const seoInstruction = buildSeoInstruction({ rating, business_name, business_category });
+
+  // v10 follow-up: When inviting private resolution on negative reviews,
+  // the model tends to produce paraphrased variants of "tell us more" —
+  // semantic violations of the rule that the reviewer already shared their
+  // experience. Give the model explicit approved alternatives and banned
+  // variants, plus permission to stay brief when no contact channel exists.
+  const privateResolutionGuidance = rating <= 2
+    ? `The reviewer already explained their experience. Asking them to re-explain — even softened — is a violation. The goal of inviting private resolution is to express openness to making it right, NOT to extract more information.
+
+BANNED — these phrasings ask the reviewer to re-explain, even when softened:
+  - "We'd like to understand what happened"
+  - "We'd genuinely like to understand what happened"
+  - "We'd love the opportunity to learn more"
+  - "If you'd be willing to share what went wrong"
+  - "Tell us more about what happened"
+  - "Please share more details"
+  - "We'd love to hear more about your experience"
+  - ANY variant that asks the reviewer to elaborate, share, explain, describe, or detail what occurred. The semantic intent of "extract more info" is banned regardless of surface phrasing.
+
+APPROVED — use one of these patterns or stay silent. Silence beats a softened banned variant:
+  - "We're sorry. We can do better."
+  - "That's not the experience we want anyone to have here."
+  - "If you're open to it, we'd welcome the chance to make this right." (offering to act, not asking for info)
+  - End the reply after the apology with NO invitation at all.
+
+DEFAULT WHEN UNCERTAIN: omit the invitation entirely. Brevity with dignity beats a softened version of a banned pattern. A short, accountable reply is stronger than a longer reply that asks the reviewer to do more work.`
+    : "";
 
   // ── Review style instruction [R4, R5] ─────────────────────────────────────
   const styleInstruction = buildStyleInstruction(review_style, failure_type, rating);
@@ -1013,24 +1161,67 @@ Scan your reply word by word before outputting. Fix any broken contraction or un
 
 STANDARD 2 — SPECIFICITY: PROVE YOU READ THE REVIEW.
 
-Reference at least ONE concrete detail from the review — a specific dish, wait time, staff interaction,
-promised service, or named incident. Do not summarise in categories.
+Reference at least ONE concrete detail from the review, and reference it EARLY (sentence 1 or 2).
+Pick something specific the reviewer mentioned: a dish, a staff name, a moment, a feature, a feeling.
+Echo it in your own words. Do not summarise in categories.
 
   ✗ Generic: "We're sorry your experience didn't meet expectations."
   ✓ Specific: "Having to re-request every order twice isn't what we're about."
 
-GROUNDING RULE (critical): Use ONLY details that appear in the review itself or the OWNER VOICE
-samples below. Do NOT infer or invent geographic context, district names, region names, historical
-facts, regional product attributes, or business specifics that the reviewer did not mention.
-If the review mentions "the Valley", reference "the Valley" — do not add the broader region name.
-If the review names one wine or dish, do not name others. Your training-data knowledge of the
-area, industry, or business is NOT a source. The review and the voice samples are the only sources.
+ECHO RULE (v10): When you reference a detail from the review, MIRROR what they said.
+Do not extrapolate, embellish, or editorialize ON TOP of their words.
+
+  Reviewer said: "The Pinot Noir was outstanding."
+  ✓ Good echo: "Hearing the Pinot Noir landed for you means a lot."
+  ✗ Over-reach: "We're so glad the Pinot Noir stood out — it's the wine that put our region on the map."
+    (The reviewer did not claim the wine put the region on the map. Do not invent that.)
+
+  Reviewer said: "Pricing is on the higher end."
+  ✓ Good echo: "You're right that the Valley isn't the cheapest wine region."
+  ✗ Over-reach: "We hear you on pricing — we're confident the region will continue to find its footing."
+    (The reviewer made a pricing observation; do not editorialize about the region's trajectory.)
+
+GROUNDING RULE (critical, strict): Use ONLY details and phrasings that appear in the review itself
+or the OWNER VOICE samples below. Do NOT add geographic context, historical facts, market commentary,
+forward-looking statements about the business or region, claims about industry trends, or anything
+else that didn't come directly from the review or samples.
+
+If the review mentions "the Valley", reference "the Valley". Do not add the broader region name.
+If the review names one wine or dish, do not name others.
+If the review describes one moment, do not invent surrounding moments.
+If the reviewer makes a critical observation, acknowledge it but do not editorialize on its causes
+or future trajectory — that is the owner inserting their own narrative on top of the reviewer's words.
+
+Your training-data knowledge of the area, industry, business, or region is NOT a source.
+The review and the voice samples are the only sources.
 
 STANDARD 3 — HUMAN VOICE. NOT A PRESS RELEASE.
 
 Write the way a thoughtful owner would — warm, direct, accountable. Not corporate. Not scripted.
 
-STANDARD 4 — LENGTH: ${maxSentences} sentences MAXIMUM.
+STANDARD 4 — LENGTH: MATCH THE REVIEW.
+
+${lengthGuidance}
+
+Hard cap: ${maxSentences} sentences. But length should TRACK the review, not default to the cap.
+Short review = short reply. Long review = appropriately detailed reply.
+A one-line review getting a 4-sentence reply reads as templated and overwrought.
+
+${reviewer_name ? `STANDARD 5 — REVIEWER NAME: USE IT, NATURALLY.
+
+The reviewer's name is "${reviewer_name}". Use it ONCE in the reply, typically in the opener, the way a real owner would when responding personally.
+
+  Good: "Thank you so much for your thoughtful review, Jonathan, we really appreciate you visiting."
+  Good: "Hi Verena, hearing that the wines landed for you means a lot."
+
+Rules:
+- Use the FIRST NAME ONLY when there is a clear first name (e.g., "Jonathan Royds" becomes "Jonathan", "Yannik Bayha" becomes "Yannik").
+- If the name is initials or a handle (e.g., "GB", "E. Stawinoga", "ABC123"), SKIP name use entirely. Do not force it.
+- If the name looks non-personal (e.g., "Local Guide", "Google User", "Anonymous"), SKIP name use.
+- Use the name ONCE. Do not repeat it. Repeating reads as obsequious.
+- For very short replies (1-2 sentences) the name can feel overly intimate. Exercise judgment. Skip if it feels forced.
+- If voice samples below consistently use or skip reviewer names, follow that sample pattern (samples override this rule).
+` : ""}
 
 ════════════════════════════════════════════════════
   AUDIENCE & ANTI-REPETITION
@@ -1046,12 +1237,12 @@ ${antiRoteBlock}
 
 ${universalBanned}
 
+${scaffoldBlock ? `════════════════════════════════════\n  STRUCTURAL SCAFFOLD\n════════════════════════════════════\n${scaffoldBlock}\n` : ""}════════════════════════════════════
+  RATING STRATEGY${voiceSampleCount >= 3 ? " (REFERENCE — voice samples take priority)" : ""}
 ════════════════════════════════════
-  RATING STRATEGY
-════════════════════════════════════
-${ratingStrategy}
+${voiceSampleCount >= 3 ? `NOTE: The owner has ${voiceSampleCount} voice samples loaded below. Those samples show how this specific owner actually handles reviews — including critical or negative reviews. If the samples and the strategy below conflict, FOLLOW THE SAMPLES. The strategy below is reference material for the general shape; the samples are the owner's actual fingerprint.\n\n` : ""}${ratingStrategy}
 
-${styleInstruction ? `════════════════════════════════════\n  REVIEW STYLE ADAPTATION\n════════════════════════════════════\n${styleInstruction}\n` : ""}${seoInstruction ? `════════════════════════════════════\n  SEO\n════════════════════════════════════\n${seoInstruction}\n` : ""}════════════════════════════════════
+${styleInstruction ? `════════════════════════════════════\n  REVIEW STYLE ADAPTATION\n════════════════════════════════════\n${styleInstruction}\n` : ""}${seoInstruction ? `════════════════════════════════════\n  SEO\n════════════════════════════════════\n${seoInstruction}\n` : ""}${privateResolutionGuidance ? `════════════════════════════════════\n  PRIVATE RESOLUTION PHRASING\n════════════════════════════════════\n${privateResolutionGuidance}\n` : ""}════════════════════════════════════
   HARD CONSTRAINTS
 ════════════════════════════════════
 - ${exclamationRule}
@@ -1099,6 +1290,29 @@ function stripTemplatedOpeners(text: string) {
   for (const re of patterns) t = t.replace(re, "");
   return t.trim();
 }
+
+// v10 follow-up: Strip ENTIRE sentences that contain a banned semantic pattern.
+// The existing .replace() approach in sanitizeCorporatePhrases strips just the
+// matched phrase, which leaves grammatical fragments when the banned phrase
+// is embedded in a longer sentence. This helper strips the whole sentence.
+function stripSentencesContainingPatterns(text: string, patterns: RegExp[]): string {
+  const sentences = splitSentences(text);
+  if (sentences.length === 0) return text;
+  const kept = sentences.filter((s) => !patterns.some((re) => re.test(s)));
+  return kept.length === 0 ? text : kept.join(" ").trim();
+}
+
+// v10 follow-up: paraphrased variants of "tell us more" / "share what happened"
+// — semantic violations of the rule that the reviewer already shared. These
+// patterns catch the most common improvisations the model produces in absence
+// of a concrete contact channel.
+const askForReExplanationPatterns: RegExp[] = [
+  /\b(i'd|we'd|i\s+would|we\s+would)\s+(genuinely\s+|truly\s+|really\s+|love\s+to\s+)?(like|love|appreciate|want)?\s*(to\s+)?(hear|learn|know|understand)\s+(more|what)\b/i,
+  /\b(if\s+you('d|'re|\s+would|\s+are))\s+(willing|open|happy|comfortable)\s+to\s+(share|tell|explain|describe)\b/i,
+  /\bwe\s+(would|'d)\s+(love|like|welcome|appreciate)\s+(the\s+)?(chance|opportunity)\s+to\s+(hear|learn|understand|know)\b/i,
+  /\b(please\s+)?(share|tell)\s+(us|me)\s+(more|further|the\s+details|what)\b/i,
+  /\bwe('d|\s+would)?\s+(genuinely\s+|truly\s+)?(like|love)\s+to\s+understand\s+what\s+happened\b/i,
+];
 
 function sanitizeCorporatePhrases(text: string) {
   let t = text;
@@ -1219,7 +1433,11 @@ export async function POST(req: Request) {
     const business_name = cleanString((body as any)?.business_name, 200);
     const reviewer_language = cleanLanguage((body as any)?.language);
     const rating = parseRating((body as any)?.rating);
-    const debug = !!(body as any)?.debug;
+    const debug = !!(body as any)?.debug || process.env.NODE_ENV !== "production";
+
+    // v10 Change #1: reviewer name from Google review displayName (frontend passes from selectedReview.authorName).
+    // Optional. Gracefully handled if absent or empty.
+    const reviewer_name = cleanString((body as any)?.reviewer_name, 100);
 
     const review_id = cleanString((body as any)?.review_id, 80) || null;
     const google_review_id = cleanString((body as any)?.google_review_id, 140) || null;
@@ -1278,6 +1496,15 @@ export async function POST(req: Request) {
     const failureType = classifyFailureType(review_text);
     const reviewStyle = classifyReviewStyle(review_text);
 
+    // v10: compute review word count here so it can be exposed in debug output
+    const reviewWordCount = review_text.trim() ? review_text.trim().split(/\s+/).length : 0;
+    const maxSentences = (() => {
+      if (reviewWordCount === 0 || reviewWordCount < 15) return 2;
+      if (reviewWordCount > 120) return 4;
+      if (reviewWordCount > 60) return 3;
+      return 2;
+    })();
+
     const temperature = rating <= 2 ? 0.15 : 0.25;
     const model = "claude-haiku-4-5-20251001";
 
@@ -1294,6 +1521,7 @@ export async function POST(req: Request) {
       failure_type: failureType,
       review_style: reviewStyle,
       business_category: business_category,
+      reviewer_name,
     });
 
     // v9: System prompt rule #5 is now conditional on whether voice samples
@@ -1318,6 +1546,7 @@ export async function POST(req: Request) {
           "You are a professional hospitality reputation manager writing Google review replies for a white-glove concierge service.",
           "You write as the business owner — specific, warm, accountable, and never corporate.",
           "PERSPECTIVE LOCK (most important rule, applies to ALL ratings): You are the OWNER thanking or responding to YOUR guest. You were NOT on the tour, at the table, in the room, or part of the experience they describe. THREE things are FORBIDDEN: (1) Narrating the guest's experience back to them, e.g. 'Hosny's passion really comes through when he's walking you past the pyramids' (testimonial voice). (2) Generalizing about how the experience affects 'people' or 'guests' or 'visitors,' e.g. 'the kind of depth that makes a day in Memphis stick with people' (peer-recommending-to-other-customers voice). (3) Marketing-style descriptions of what makes your business good, e.g. 'it's exactly the kind of authenticity that defines us' (brochure voice). Instead, OPEN with an explicit acknowledgment of the guest's observation — phrases like 'Hearing that...', 'Knowing that you noticed...', 'Reading your review reminded us...', 'We're so glad you...', 'It means a lot that you...'. Reference details from their review only as things you're glad they noticed or sorry they encountered — never as things you're describing or observing.",
+          "ECHO DISCIPLINE (v10): When you reference a specific point the reviewer made, MIRROR what they said. Do not extrapolate, embellish, or add your own commentary on top of their observation. If they made a pricing critique, acknowledge the pricing point — do NOT add forward-looking statements about the region, industry, or business trajectory. If they praised a wine, acknowledge the wine — do NOT claim the wine 'put the region on the map' or similar embellishments. Your knowledge of the business, industry, or region is NOT a source. The review text is the only source of facts.",
           "CRITICAL GRAMMAR RULES that must never be violated:",
           "1. Every contraction must have an apostrophe: we're / didn't / that's / you're / I'd / I'll / won't / can't / we've.",
           "2. Every sentence must begin with a capital letter. After every period, '! ', or '? ', the next word is capitalised.",
@@ -1366,6 +1595,13 @@ export async function POST(req: Request) {
     }
 
     content = sanitizeCorporatePhrases(content);
+
+    // v10 follow-up: strip whole sentences asking the reviewer to re-explain.
+    // Only for negative reviews where this pattern is most damaging.
+    if (rating <= 2) {
+      content = stripSentencesContainingPatterns(content, askForReExplanationPatterns);
+    }
+
     content = fixApostrophes(content);                // universal apostrophe repair
     content = fixSentenceCapitalisation(content);     // capitalisation repair — first pass
     content = removeExcuseSentencesIfInvented({ reply: content, rating, review_text });
@@ -1377,7 +1613,6 @@ export async function POST(req: Request) {
     // [R6] Strip business name from negative replies for SEO protection
     content = stripBusinessNameFromNegativeReply(content, rating, business_name);
 
-    const reviewWordCount = review_text.trim().split(/\s+/).length;
     content = limitSentences(content, sentencePolicyForRating(rating, reviewWordCount));
 
     // Exclamation enforcement
@@ -1460,10 +1695,21 @@ export async function POST(req: Request) {
           ...(debug
             ? {
               enforcement: {
+                prompt_version: PROMPT_VERSION,
                 post_clean_version: POST_CLEAN_VERSION,
                 closer_stripped: closerStrip.stripped,
                 business_category: business_category,
                 has_voice_samples: hasVoiceSamples,
+                review_word_count: reviewWordCount,
+                length_category: lengthCategoryForReview(reviewWordCount),
+                max_sentences: maxSentences,
+                voice_sample_count: voiceSamples.length,
+                scaffold_applied: voiceSamples.length < 3,
+                echo_discipline_active: true,
+                rating_strategy_demoted: voiceSamples.length >= 3,
+                private_resolution_guidance_active: rating <= 2,
+                reviewer_name_provided: !!reviewer_name,
+                reviewer_name_value: reviewer_name || null,
               },
             }
             : {}),

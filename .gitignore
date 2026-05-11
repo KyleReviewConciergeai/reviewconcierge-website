@@ -42,3 +42,4 @@ next-env.d.ts
 
 # Local backup files from manual edits
 *.backup
+*.backup-*
