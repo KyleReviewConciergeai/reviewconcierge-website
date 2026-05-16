@@ -9,6 +9,9 @@
 //
 // Limits enforced server-side via try_leads table (per IP hash + per email,
 // whichever is hit first), so localStorage clears can't bypass.
+//
+// UTM capture: utm_source and utm_campaign are forwarded from the client (read
+// from the page URL) and persisted on every draft row for attribution.
 
 export const runtime = "nodejs";
 
@@ -41,6 +44,14 @@ function isValidEmail(email: string) {
   if (!email || email.length > 200) return false;
   // Permissive validation — server-side gate, not the only line of defense
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function cleanUtm(v: unknown) {
+  // UTM values are arbitrary text from a URL param. Sanitize: trim, length-cap,
+  // strip control chars. Return null for empty/invalid so DB stores NULL.
+  if (typeof v !== "string") return null;
+  const cleaned = v.trim().slice(0, 200).replace(/[\x00-\x1f\x7f]/g, "");
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function hashIp(ip: string) {
@@ -104,6 +115,8 @@ export async function POST(req: Request) {
     const rating        = parseRating((body as any)?.rating);
     const emailRaw      = cleanString((body as any)?.email, 200).toLowerCase();
     const email         = isValidEmail(emailRaw) ? emailRaw : null;
+    const utm_source    = cleanUtm((body as any)?.utm_source);
+    const utm_campaign  = cleanUtm((body as any)?.utm_campaign);
 
     // ── Validation ──────────────────────────────────────────────────────────
     if (!review_text) {
@@ -259,6 +272,8 @@ Write the reply now. Output ONLY the reply — no labels, no preamble.`;
       language,
       draft_text: draft,
       draft_number: newDraftNumber,
+      utm_source,
+      utm_campaign,
     });
 
     if (insertErr) {

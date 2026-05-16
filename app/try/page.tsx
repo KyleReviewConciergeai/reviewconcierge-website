@@ -151,6 +151,16 @@ export default function TryPage() {
   useEffect(() => setLocale(readLocaleCookie()), []);
   const t = COPY[locale];
 
+  // UTM capture (read once on mount from URL query string)
+  const [utmSource, setUtmSource] = useState<string | null>(null);
+  const [utmCampaign, setUtmCampaign] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    setUtmSource(params.get("utm_source"));
+    setUtmCampaign(params.get("utm_campaign"));
+  }, []);
+
   // Sample carousel
   const [sampleIdx, setSampleIdx] = useState(0);
   const currentSample = SAMPLES[sampleIdx];
@@ -207,6 +217,8 @@ export default function TryPage() {
           rating,
           language,
           email: emailSubmitted ? email : undefined,
+          utm_source: utmSource,
+          utm_campaign: utmCampaign,
         }),
       });
 
